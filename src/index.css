@@ -1,0 +1,99 @@
+@import './styles/variables.css';
+@import './styles/forms.css';
+@import './styles/ui-components.css';
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  font-family: var(--font-sans);
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  margin: 0 0 0.5em 0;
+  line-height: 1.2;
+}
+
+button {
+  cursor: pointer;
+  font-family: inherit;
+}
+
+a {
+  text-decoration: none;
+  color: inherit;
+}
+
+/* ===========================================
+   GLOBAL PRINT STYLES
+   =========================================== */
+@media print {
+
+  /* Hide app chrome */
+  .sidebar,
+  .layout-sidebar,
+  .layout-header,
+  .topbar,
+  .header,
+  nav,
+  .no-print,
+  .report-action-bar,
+  .report-page-header,
+  .report-tabs,
+  .btn-primary,
+  .btn-secondary {
+    display: none !important;
+  }
+
+  /* Reset layout */
+  body {
+    background: white !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .layout,
+  .layout-content,
+  .main-content,
+  .status-report-page,
+  .report-content-area {
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    overflow: visible !important;
+    position: static !important;
+  }
+
+  /* Make the report visible and full width */
+  #status-report-printable {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: white !important;
+    border: none !important;
+    box-shadow: none !important;
+  }
+
+  /* Page settings */
+  @page {
+    margin: 0.4in;
+    size: letter portrait;
+  }
+}

@@ -1,0 +1,136 @@
+.task-table-container {
+    overflow-x: auto;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
+}
+
+.task-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+}
+
+.task-table thead {
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.task-table th {
+    text-align: left;
+    padding: 1rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.task-table th.sortable {
+    cursor: pointer;
+    user-select: none;
+    transition: color 0.2s;
+}
+
+.task-table th.sortable:hover {
+    color: var(--accent-primary);
+}
+
+.sort-icon {
+    margin-left: 0.35rem;
+    vertical-align: middle;
+}
+
+.sort-icon.inactive {
+    opacity: 0.3;
+}
+
+.sort-icon.active {
+    color: var(--accent-primary);
+}
+
+.task-table tbody tr {
+    border-bottom: 1px solid var(--border-color);
+    transition: background 0.15s;
+    cursor: pointer;
+}
+
+.task-table tbody tr:hover {
+    background: var(--bg-secondary);
+}
+
+.task-table tbody tr:last-child {
+    border-bottom: none;
+}
+
+.task-table td {
+    padding: 1rem;
+    color: var(--text-primary);
+}
+
+.task-title-cell {
+    font-weight: 500;
+}
+
+.task-row.overdue {
+    background: hsla(0, 84%, 60%, 0.05);
+}
+
+.task-row.overdue .task-title-cell {
+    color: #ef4444;
+}
+
+/* Priority Badge */
+.priority-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.25rem 0.6rem;
+    border-radius: 99px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: capitalize;
+}
+
+/* Status Dropdown */
+.status-dropdown {
+    padding: 0.35rem 0.5rem;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    background: var(--bg-card);
+    color: var(--text-primary);
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+
+.status-dropdown:focus {
+    outline: none;
+    border-color: var(--accent-primary);
+}
+
+/* Due Date */
+.due-date-cell {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--text-secondary);
+}
+
+.overdue-date {
+    color: #ef4444 !important;
+}
+
+.overdue-date .due-date-cell {
+    color: #ef4444;
+}
+
+.no-date {
+    color: var(--text-tertiary);
+}
+
+.empty-row {
+    text-align: center;
+    color: var(--text-tertiary);
+    padding: 3rem 1rem !important;
+}

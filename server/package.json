@@ -1,0 +1,24 @@
+{
+    "name": "digital-health-atlas-api",
+    "version": "1.0.0",
+    "description": "Express API for Digital Health Atlas with SQL Server",
+    "main": "index.js",
+    "type": "module",
+    "scripts": {
+        "start": "node index.js",
+        "dev": "node --watch index.js"
+    },
+    "dependencies": {
+        "compression": "^1.8.1",
+        "cors": "^2.8.5",
+        "dotenv": "^17.2.4",
+        "express": "^5.2.1",
+        "express-rate-limit": "^8.2.1",
+        "helmet": "^8.1.0",
+        "jwks-rsa": "^3.2.2",
+        "mssql": "^12.2.0",
+        "node-cache": "^5.1.2",
+        "passport": "^0.7.0",
+        "passport-jwt": "^4.0.1"
+    }
+}

@@ -1,0 +1,314 @@
+/* Reports Module Styles */
+
+.reports-container {
+    display: flex;
+    height: 100%;
+    gap: 1.5rem;
+    overflow: hidden;
+}
+
+/* Left Pane: Filter Tree */
+.report-sidebar {
+    width: 320px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    flex-shrink: 0;
+}
+
+.report-sidebar-header {
+    padding: 1rem;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.report-sidebar-header h3 {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.report-tree-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 1rem;
+}
+
+/* Filter Tree Items */
+.tree-item {
+    margin-bottom: 0.5rem;
+}
+
+.tree-item-content {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.35rem 0.5rem;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.tree-item-content:hover {
+    background: var(--bg-tertiary);
+}
+
+.tree-item.selected>.tree-item-content {
+    background: hsla(var(--hue-primary), 70%, 50%, 0.1);
+}
+
+.tree-children {
+    margin-left: 1.5rem;
+    margin-top: 0.25rem;
+    border-left: 1px solid var(--border-color);
+    padding-left: 0.5rem;
+}
+
+.tree-checkbox {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+}
+
+.tree-label {
+    flex: 1;
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+}
+
+.tree-count {
+    font-size: 0.75rem;
+    color: var(--text-tertiary);
+    background: var(--bg-secondary);
+    padding: 0.1rem 0.4rem;
+    border-radius: 99px;
+}
+
+/* Report Tag Filter */
+.report-tag-filter-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.report-tag-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.78rem;
+}
+
+.report-tag-toggle.active {
+    border-color: var(--accent-primary);
+    color: var(--accent-primary);
+}
+
+.report-tag-toggle.has-selection {
+    border-color: var(--accent-primary);
+    background: hsla(var(--hue-indigo), 60%, 60%, 0.1);
+}
+
+.report-tag-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 16px;
+    height: 16px;
+    border-radius: 99px;
+    background: var(--accent-primary);
+    color: white;
+    font-size: 0.6rem;
+    font-weight: 700;
+}
+
+.report-clear-tags {
+    margin-left: auto;
+    font-size: 0.7rem !important;
+    color: #ef4444 !important;
+    border-color: rgba(239, 68, 68, 0.3) !important;
+    padding: 0.2rem 0.5rem !important;
+}
+
+.report-clear-tags:hover {
+    background: rgba(239, 68, 68, 0.1) !important;
+}
+
+.report-tag-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    margin-bottom: 0.75rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.report-tag-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+}
+
+.report-tag-group-label {
+    font-size: 0.65rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-tertiary);
+}
+
+.report-tag-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+}
+
+/* Right Pane: Preview */
+.report-preview-pane {
+    flex: 1;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.preview-header {
+    padding: 1rem;
+    border-bottom: 1px solid var(--border-color);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.preview-actions {
+    display: flex;
+    gap: 0.75rem;
+}
+
+.preview-content {
+    flex: 1;
+    overflow-y: auto;
+    background: #525659;
+    padding: 2rem;
+    display: block;
+    /* Changed from flex to block to fix scrolling/height issues */
+}
+
+/* The Paper Sheet */
+.preview-sheet {
+    width: 100%;
+    max-width: 100%;
+    min-height: 11in;
+    padding: 0.5in;
+    background: white;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+    color: #1f2937;
+    font-family: 'Segoe UI', 'Inter', sans-serif;
+    font-size: 11px;
+    line-height: 1.4;
+    margin: 0 0 2rem 0;
+    height: auto;
+    overflow: visible;
+}
+
+@media print {
+    .preview-sheet {
+        width: 8.5in;
+        max-width: 8.5in;
+        margin: 0 auto;
+    }
+}
+
+/* Internal Print Styles (Replicating StatusReportView inline styles for the Summary) */
+.report-summary-header {
+    background: #1f2937;
+    color: white;
+    padding: 1rem;
+    text-align: center;
+    font-size: 1.5rem;
+    font-weight: 700;
+    margin-bottom: 2rem;
+}
+
+.hierarchy-section {
+    display: contents;
+    /* Seamless flow - children render directly */
+}
+
+.hierarchy-header {
+    background: linear-gradient(135deg, #374151, #4b5563);
+    color: white;
+    padding: 8px 12px;
+    font-size: 1rem;
+    font-weight: 600;
+    border-radius: 0;
+}
+
+.project-summary-card {
+    border: 1px solid #d1d5db;
+    page-break-inside: avoid;
+}
+
+.summary-card-header {
+    background: linear-gradient(135deg, #0ea5e9, #38bdf8);
+    color: white;
+    padding: 0.5rem;
+    font-weight: 600;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.summary-card-body {
+    padding: 0.75rem;
+}
+
+.summary-row {
+    margin-bottom: 0.5rem;
+}
+
+.summary-label {
+    font-weight: 700;
+    color: #374151;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    display: block;
+    margin-bottom: 0.25rem;
+}
+
+.summary-value {
+    color: #4b5563;
+}
+
+/* Print Media Query */
+@media print {
+    body * {
+        visibility: hidden;
+    }
+
+    #report-print-content,
+    #report-print-content * {
+        visibility: visible;
+    }
+
+    #report-print-content {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 100%;
+    }
+
+    .preview-sheet {
+        box-shadow: none;
+        width: 100%;
+        margin: 0;
+        padding: 0;
+    }
+}

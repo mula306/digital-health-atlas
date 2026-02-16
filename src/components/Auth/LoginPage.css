@@ -1,0 +1,135 @@
+.login-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    background: linear-gradient(135deg, #f0f4f8 0%, #d9e2ec 100%);
+    position: relative;
+    overflow: hidden;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+/* Abstract background shapes */
+.login-background-overlay::before,
+.login-background-overlay::after {
+    content: '';
+    position: absolute;
+    border-radius: 50%;
+    z-index: 0;
+}
+
+.login-background-overlay::before {
+    width: 600px;
+    height: 600px;
+    background: radial-gradient(circle, rgba(14, 165, 233, 0.1) 0%, rgba(14, 165, 233, 0) 70%);
+    top: -200px;
+    right: -200px;
+}
+
+.login-background-overlay::after {
+    width: 500px;
+    height: 500px;
+    background: radial-gradient(circle, rgba(99, 102, 241, 0.1) 0%, rgba(99, 102, 241, 0) 70%);
+    bottom: -150px;
+    left: -150px;
+}
+
+.login-card {
+    background: white;
+    padding: 3rem;
+    border-radius: 16px;
+    box-shadow:
+        0 4px 6px -1px rgba(0, 0, 0, 0.1),
+        0 2px 4px -1px rgba(0, 0, 0, 0.06),
+        0 20px 25px -5px rgba(0, 0, 0, 0.1);
+    width: 100%;
+    max-width: 420px;
+    z-index: 10;
+    text-align: center;
+    transition: transform 0.3s ease;
+}
+
+.login-header {
+    margin-bottom: 2.5rem;
+}
+
+.login-logo {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 1.5rem;
+}
+
+.login-header h1 {
+    font-size: 1.75rem;
+    font-weight: 700;
+    color: #1e293b;
+    margin: 0 0 0.5rem 0;
+    letter-spacing: -0.025em;
+}
+
+.login-subtitle {
+    color: #64748b;
+    font-size: 1rem;
+    font-weight: 500;
+    margin: 0;
+}
+
+.login-body {
+    margin-bottom: 2.5rem;
+}
+
+.login-instruction {
+    color: #475569;
+    margin-bottom: 1.5rem;
+    font-size: 0.95rem;
+    line-height: 1.5;
+}
+
+.org-login-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    background-color: #0ea5e9;
+    /* Sky 500 */
+    color: white;
+    border: 1px solid #0ea5e9;
+    padding: 12px 24px;
+    font-size: 1rem;
+    font-weight: 600;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    gap: 12px;
+}
+
+.org-login-btn:hover {
+    background-color: #0284c7;
+    /* Sky 600 */
+    border-color: #0284c7;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(14, 165, 233, 0.25);
+}
+
+.org-login-btn:active {
+    transform: translateY(0);
+}
+
+.login-footer {
+    border-top: 1px solid #e2e8f0;
+    padding-top: 1.5rem;
+}
+
+.login-footer p {
+    color: #94a3b8;
+    font-size: 0.75rem;
+    margin: 0.25rem 0;
+}
+
+/* Responsiveness */
+@media (max-width: 480px) {
+    .login-card {
+        padding: 2rem;
+        margin: 1rem;
+    }
+}

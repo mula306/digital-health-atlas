@@ -1,0 +1,388 @@
+.goals-view {
+    max-width: 1000px;
+    margin: 0 auto;
+}
+
+.view-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 2.5rem;
+}
+
+.header-actions {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.expand-controls {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.btn-sm {
+    padding: 0.4rem 0.75rem;
+    font-size: 0.8rem;
+}
+
+.btn-secondary {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    border: 1px solid var(--border-color);
+    padding: 0.5rem 1rem;
+    border-radius: var(--radius-md);
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.btn-secondary:hover {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border-color: var(--accent-primary);
+}
+
+
+
+.goals-tree-container {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+.goal-item-container {
+    position: relative;
+    /* Indentation logic */
+    margin-left: calc(var(--level) * 2.5rem);
+    margin-bottom: 0.5rem;
+}
+
+/* ========== VISUAL HIERARCHY DEPTH ========== */
+
+/* Level-based background shading for depth perception */
+.goal-item-container[data-level="0"] .goal-card {
+    background: var(--bg-card);
+    border-left: 4px solid var(--accent-primary);
+}
+
+.goal-item-container[data-level="1"] .goal-card {
+    background: linear-gradient(135deg, var(--bg-card) 0%, rgba(16, 185, 129, 0.03) 100%);
+    border-left: 4px solid #10b981;
+}
+
+.goal-item-container[data-level="2"] .goal-card {
+    background: linear-gradient(135deg, var(--bg-card) 0%, rgba(245, 158, 11, 0.03) 100%);
+    border-left: 4px solid #f59e0b;
+}
+
+.goal-item-container[data-level="3"] .goal-card {
+    background: linear-gradient(135deg, var(--bg-card) 0%, rgba(236, 72, 153, 0.03) 100%);
+    border-left: 4px solid #ec4899;
+}
+
+/* Vertical connector line - more visible */
+.goal-item-container::before {
+    content: '';
+    position: absolute;
+    top: -0.75rem;
+    left: -1.25rem;
+    width: 2px;
+    height: calc(100% + 0.75rem);
+    background: linear-gradient(180deg, var(--border-color) 0%, transparent 100%);
+    border-radius: 2px;
+    display: block;
+}
+
+/* Horizontal connector branch */
+.goal-item-container::after {
+    content: '';
+    position: absolute;
+    top: 1.5rem;
+    left: -1.25rem;
+    width: 1.25rem;
+    height: 2px;
+    background: var(--border-color);
+    border-radius: 2px;
+    display: block;
+}
+
+/* Hide connectors for root level */
+.goal-item-container[data-level="0"]::before,
+.goal-item-container[data-level="0"]::after {
+    display: none;
+}
+
+/* Level indicator dot on connector */
+.goal-item-container:not([data-level="0"])::after {
+    background: linear-gradient(90deg, var(--border-color) 0%, var(--border-color) 80%, transparent 100%);
+}
+
+.goal-card {
+    padding: 1.25rem;
+    padding-left: 1.5rem;
+    border-radius: var(--radius-md);
+    transition: all 0.3s cubic-bezier(0.2, 0, 0, 1);
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    box-shadow: var(--shadow-sm);
+    position: relative;
+    z-index: 2;
+}
+
+.goal-card:hover {
+    transform: translateY(-2px) translateX(2px);
+    box-shadow: var(--shadow-lg);
+    border-color: rgba(99, 102, 241, 0.3);
+}
+
+
+.goal-header {
+    display: flex;
+    gap: 1rem;
+}
+
+.expand-btn {
+    background: transparent;
+    width: 24px;
+    height: 24px;
+    border: none;
+    color: var(--text-tertiary);
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    margin-top: 2px;
+    transition: all 0.2s;
+}
+
+.expand-btn:hover {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+}
+
+.expand-btn.hidden {
+    visibility: hidden;
+}
+
+.goal-info {
+    flex: 1;
+}
+
+.goal-top-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5rem;
+}
+
+.goal-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-shrink: 0;
+}
+
+.goal-type-badge {
+    /* This class is now global in ui-components, but we can override locally if needed */
+    font-size: 0.65rem;
+}
+
+.goal-title {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0.25rem 0;
+    letter-spacing: -0.01em;
+}
+
+.goal-desc {
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    margin-bottom: 1rem;
+    line-height: 1.5;
+    font-weight: 400;
+}
+
+.goal-progress-bar {
+    height: 6px;
+    background: var(--bg-secondary);
+    border-radius: 99px;
+    overflow: hidden;
+    margin-bottom: 0.5rem;
+    /* Visible outline so 0% progress doesn't look broken */
+    box-shadow: inset 0 0 0 1px var(--border-color);
+}
+
+
+.progress-fill {
+    height: 100%;
+    border-radius: 99px;
+    background-image: linear-gradient(90deg, currentColor, white);
+    /* We use background-color inline, so this gradient might be tricky. 
+     Let's just trust the background color from inline styles but add a sheen. */
+    background-image: linear-gradient(90deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.3));
+}
+
+.goal-progress-text {
+    font-size: 0.8rem;
+    color: var(--text-tertiary);
+    font-weight: 500;
+}
+
+/* Project count button on goal cards */
+.project-count-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.25rem 0.5rem;
+    background: hsla(var(--hue-indigo), 60%, 60%, 0.1);
+    border: 1px solid hsla(var(--hue-indigo), 60%, 60%, 0.3);
+    border-radius: 99px;
+    color: var(--accent-primary);
+    font-size: 0.75rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.project-count-btn:hover {
+    background: var(--accent-primary);
+    color: white;
+    border-color: var(--accent-primary);
+}
+
+/* KPI indicator badge */
+.kpi-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.25rem 0.5rem;
+    background: rgba(16, 185, 129, 0.1);
+    border: 1px solid rgba(16, 185, 129, 0.3);
+    border-radius: 99px;
+    color: #10b981;
+    font-size: 0.75rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.kpi-indicator:hover {
+    background: #10b981;
+    color: white;
+    border-color: #10b981;
+}
+
+/* Dropdown Menu */
+.goal-menu-container {
+    position: relative;
+}
+
+.goal-dropdown-menu {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    margin-top: 0.5rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-lg);
+    min-width: 160px;
+    z-index: 50;
+    overflow: hidden;
+}
+
+.menu-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    width: 100%;
+    padding: 0.75rem 1rem;
+    border: none;
+    background: transparent;
+    color: var(--text-primary);
+    font-size: 0.9rem;
+    text-align: left;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.menu-item:hover {
+    background: var(--bg-secondary);
+}
+
+.menu-item.danger {
+    color: #ef4444;
+}
+
+.menu-item.danger:hover {
+    background: hsla(0, 84%, 60%, 0.1);
+}
+
+.menu-item.danger.confirm {
+    background: #ef4444;
+    color: white;
+}
+
+.menu-item.danger.confirm:hover {
+    background: #dc2626;
+}
+
+.goal-children {
+    margin-top: 1rem;
+    /* Connector handling */
+}
+
+/* Responsive Adjustments */
+@media (max-width: 768px) {
+    .view-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 1.5rem;
+        margin-bottom: 1.5rem;
+    }
+
+    .header-actions {
+        width: 100%;
+        justify-content: space-between;
+    }
+
+    .goals-tree-container {
+        overflow-x: auto;
+        padding-bottom: 0.5rem;
+        margin-left: -1rem;
+        margin-right: -1rem;
+        padding-left: 1rem;
+        padding-right: 1rem;
+    }
+
+    .goal-item-container {
+        margin-left: calc(var(--level) * 1.25rem);
+        /* Reduced indentation */
+        min-width: 280px;
+        /* Ensure cards don't get too narrow */
+    }
+
+    .goal-item-container::before,
+    .goal-item-container::after {
+        left: -0.625rem;
+        width: 0.625rem;
+    }
+
+    .goal-card {
+        padding: 1rem;
+    }
+
+    .goal-title {
+        font-size: 1rem;
+    }
+
+    .goal-desc {
+        font-size: 0.85rem;
+    }
+}

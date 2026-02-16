@@ -1,0 +1,241 @@
+.exec-dashboard {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+    padding: 1rem;
+    overflow: hidden;
+}
+
+/* Search Bar - Matches Layout.css */
+.search-bar {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
+.search-bar svg {
+    position: absolute;
+    left: 12px;
+    color: var(--text-tertiary);
+    pointer-events: none;
+}
+
+.search-bar input {
+    width: 220px;
+    padding: 0.6rem 0.75rem 0.6rem 2.5rem;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    /* var(--radius-md) */
+    font-size: 0.9rem;
+    color: var(--text-primary);
+    transition: all 0.2s;
+}
+
+.search-bar input:focus {
+    outline: none;
+    border-color: var(--accent-primary);
+    background: var(--bg-card);
+    width: 280px;
+}
+
+.search-bar input::placeholder {
+    color: var(--text-tertiary);
+}
+
+.dashboard-filters {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    padding: 1rem;
+    border-radius: 8px;
+    margin-bottom: 2rem;
+}
+
+.exec-filter-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+
+.exec-tag-toggle {
+    position: relative;
+}
+
+.exec-tag-toggle.active {
+    border-color: var(--accent-primary);
+    color: var(--accent-primary);
+}
+
+.exec-tag-toggle.has-selection {
+    border-color: var(--accent-primary);
+    background: hsla(var(--hue-indigo), 60%, 60%, 0.1);
+}
+
+.exec-tag-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 18px;
+    border-radius: 99px;
+    background: var(--accent-primary);
+    color: white;
+    font-size: 0.65rem;
+    font-weight: 700;
+    margin-left: 0.25rem;
+}
+
+.exec-clear-btn {
+    margin-left: auto;
+    color: #ef4444 !important;
+    border-color: rgba(239, 68, 68, 0.3) !important;
+}
+
+.exec-clear-btn:hover {
+    background: rgba(239, 68, 68, 0.1) !important;
+}
+
+/* Tag filter panel */
+.exec-tag-filter-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--border-color);
+}
+
+.exec-tag-group {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+}
+
+.exec-tag-group-label {
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-tertiary);
+    min-width: 100px;
+    padding-top: 0.35rem;
+    flex-shrink: 0;
+}
+
+.exec-tag-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+}
+
+
+.filter-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.filter-group label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.filter-group select {
+    padding: 0.5rem;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+    font-size: 0.9rem;
+}
+
+.table-container {
+    flex: 1;
+    overflow: auto;
+    border-radius: 8px;
+    padding: 0;
+}
+
+.exec-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+}
+
+.exec-table th {
+    background-color: var(--bg-secondary);
+    color: var(--text-secondary);
+    font-weight: 600;
+    text-align: left;
+    padding: 1rem;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    border-bottom: 2px solid var(--border-color);
+    white-space: nowrap;
+}
+
+.exec-table td {
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--border-color);
+    vertical-align: top;
+}
+
+.org-header-row td {
+    background-color: var(--bg-tertiary);
+    color: var(--text-primary);
+    font-weight: 700;
+    font-size: 1rem;
+    padding: 1rem 1rem 0.5rem 1rem;
+    border-bottom: none;
+    letter-spacing: 0.02em;
+}
+
+.div-header-row td {
+    background-color: var(--bg-primary);
+    /* Slight contrast */
+    color: var(--text-secondary);
+    font-weight: 600;
+    font-size: 0.9rem;
+    padding: 0.5rem 1rem 0.5rem 2rem;
+    /* Indented */
+    border-bottom: 1px dashed var(--border-color);
+    font-style: italic;
+}
+
+.exec-table tr:hover {
+    background-color: rgba(255, 255, 255, 0.03);
+}
+
+.clickable-row {
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+}
+
+.status-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    display: inline-block;
+    box-shadow: 0 0 4px rgba(0, 0, 0, 0.2);
+}
+
+/* Scrollbar styling */
+.table-container::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+.table-container::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.table-container::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 4px;
+}

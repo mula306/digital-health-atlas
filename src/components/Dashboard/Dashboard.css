@@ -1,0 +1,421 @@
+.dashboard {
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+/* Filter Bar */
+.dashboard .filter-bar {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    margin-bottom: 1.5rem;
+    padding: 0.75rem 1rem;
+    background: var(--bg-secondary);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-color);
+}
+
+.dashboard .filter-group {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    color: var(--text-secondary);
+}
+
+.dashboard .filter-select {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    padding: 0.5rem 0.75rem;
+    color: var(--text-primary);
+    font-size: 0.9rem;
+    min-width: 200px;
+}
+
+.dashboard .filter-select:focus {
+    outline: none;
+    border-color: var(--accent-primary);
+}
+
+.dashboard .clear-filter-btn {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 50%;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.dashboard .clear-filter-btn:hover {
+    background: #ef4444;
+    color: white;
+    border-color: #ef4444;
+}
+
+.dashboard .reset-data-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-left: auto;
+    padding: 0.5rem 0.75rem;
+    background: transparent;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.dashboard .reset-data-btn:hover {
+    background: #ef4444;
+    color: white;
+    border-color: #ef4444;
+}
+
+.dashboard .metrics-grid {
+    display: grid;
+    /* Force 4 columns on large screens to avoid wrapping */
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1rem;
+    margin-bottom: 2.5rem;
+}
+
+.dashboard .metric-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    padding: 1.5rem;
+    display: flex;
+    align-items: center;
+    gap: 1.25rem;
+    box-shadow: var(--shadow-sm);
+    transition: all 0.2s;
+}
+
+.dashboard .metric-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+}
+
+.dashboard .metric-icon {
+    width: 56px;
+    height: 56px;
+    border-radius: var(--radius-md);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.dashboard .metric-info {
+    display: flex;
+    flex-direction: column;
+}
+
+.dashboard .metric-value {
+    font-size: 1.75rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    line-height: 1.2;
+}
+
+.dashboard .metric-label {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+/* Progress Section */
+.dashboard-section {
+    margin-bottom: 2rem;
+}
+
+.section-title {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 1rem;
+}
+
+.section-title.danger {
+    color: #ef4444;
+}
+
+.progress-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 1rem;
+}
+
+.progress-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: 1.25rem;
+}
+
+.progress-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.75rem;
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+}
+
+.progress-percent {
+    font-weight: 700;
+    color: var(--accent-primary);
+}
+
+.progress-bar-track {
+    height: 8px;
+    background: var(--bg-secondary);
+    border-radius: 99px;
+    overflow: hidden;
+    /* Visible outline so 0% progress doesn't look broken */
+    box-shadow: inset 0 0 0 1px var(--border-color);
+}
+
+.progress-bar-fill {
+    height: 100%;
+    background: var(--accent-gradient);
+    border-radius: 99px;
+    transition: width 0.5s ease;
+    /* Ensure minimum visibility even at very low % */
+    min-width: 0;
+}
+
+/* Task Lists */
+.dashboard-lists {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 1.5rem;
+}
+
+.task-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.task-list-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.875rem 1rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    margin-bottom: 0.5rem;
+    transition: all 0.15s;
+}
+
+.task-list-item:hover {
+    border-color: var(--accent-primary);
+}
+
+.task-list-item.overdue {
+    border-left: 3px solid #ef4444;
+}
+
+.task-title {
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.task-due {
+    font-size: 0.8rem;
+    color: #ef4444;
+    font-weight: 500;
+}
+
+.empty-message {
+    color: var(--text-tertiary);
+    font-size: 0.9rem;
+    padding: 1rem;
+    text-align: center;
+    background: var(--bg-secondary);
+    border-radius: var(--radius-sm);
+}
+
+/* Enhanced Empty State */
+.empty-state-enhanced {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem 1rem;
+    background: var(--bg-secondary);
+    border: 1px dashed var(--border-color);
+    border-radius: var(--radius-md);
+    text-align: center;
+}
+
+.empty-state-icon {
+    color: var(--text-tertiary);
+    margin-bottom: 0.75rem;
+    opacity: 0.6;
+}
+
+.empty-state-title {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin: 0 0 0.25rem 0;
+}
+
+.empty-state-hint {
+    font-size: 0.8rem;
+    color: var(--text-tertiary);
+    margin: 0;
+}
+
+
+/* KPI Summary Section */
+.kpi-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+.kpi-summary-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: 1rem;
+}
+
+.kpi-summary-header {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.25rem;
+    margin-bottom: 0.5rem;
+}
+
+.kpi-summary-name {
+    font-weight: 600;
+    font-size: 1.1rem;
+    color: var(--text-primary);
+    line-height: 1.3;
+}
+
+.kpi-summary-goal {
+    font-size: 0.7rem;
+    color: var(--text-tertiary);
+}
+
+.kpi-summary-values {
+    margin-bottom: 0.5rem;
+}
+
+.kpi-summary-current {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.kpi-summary-target {
+    font-size: 0.85rem;
+    color: var(--text-tertiary);
+}
+
+.kpi-summary-bar {
+    height: 6px;
+    background: var(--bg-secondary);
+    border-radius: 99px;
+    overflow: hidden;
+    margin-bottom: 0.35rem;
+    /* Visible outline so 0% progress doesn't look broken */
+    box-shadow: inset 0 0 0 1px var(--border-color);
+}
+
+
+.kpi-summary-fill {
+    height: 100%;
+    border-radius: 99px;
+    transition: width 0.3s ease;
+}
+
+.kpi-summary-fill.on-track {
+    background: linear-gradient(90deg, #10b981, #34d399);
+}
+
+.kpi-summary-fill.behind {
+    background: linear-gradient(90deg, #f59e0b, #fbbf24);
+}
+
+.kpi-summary-percent {
+    font-size: 0.9rem;
+    font-weight: 600;
+    margin-top: 0.5rem;
+    display: block;
+}
+
+.kpi-summary-stats {
+    display: flex;
+    gap: 1.5rem;
+}
+
+.kpi-summary-stats .stat {
+    font-size: 0.85rem;
+    font-weight: 500;
+}
+
+.kpi-summary-stats .stat.on-track {
+    color: #10b981;
+}
+
+.kpi-summary-stats .stat.behind {
+    color: #f59e0b;
+}
+
+/* Responsive Adjustments */
+@media (max-width: 1100px) {
+    .dashboard .metrics-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+@media (max-width: 768px) {
+    .dashboard .filter-bar {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 1rem;
+    }
+
+    .dashboard .reset-data-btn {
+        margin-left: 0;
+        justify-content: center;
+    }
+
+    .dashboard .metrics-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .dashboard .metric-card {
+        padding: 1.25rem;
+    }
+
+    .dashboard-lists {
+        grid-template-columns: 1fr;
+    }
+
+    .progress-cards {
+        grid-template-columns: 1fr;
+    }
+
+    .kpi-summary-grid {
+        grid-template-columns: 1fr;
+    }
+}

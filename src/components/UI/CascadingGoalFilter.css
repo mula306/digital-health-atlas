@@ -1,0 +1,16 @@
+.cascading-filter {
+    display: flex;
+    align-items: center;
+}
+
+.cascading-filter-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.cascading-filter .filter-icon {
+    color: var(--text-tertiary);
+    flex-shrink: 0;
+}

@@ -1,0 +1,99 @@
+:root {
+  /* Font Family - Ensure it loads/is available or fallbacks gracefully */
+  --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+
+  /* HSL Base Values */
+  --hue-slate: 220;
+  /* Cool Gray/Slate */
+  --hue-indigo: 245;
+  /* Deep Indigo */
+  --hue-violet: 260;
+  /* Vibrant Violet */
+
+  /* Light Mode Palette (Slate-based) */
+  --bg-primary: hsl(var(--hue-slate), 20%, 97%);
+  /* Almost white, very cool gray */
+  --bg-secondary: hsl(var(--hue-slate), 30%, 92%);
+  /* Lighter gray for sidebar */
+  --bg-card: #ffffff;
+  /* pure white for cards gives best pop */
+
+  --bg-glass: rgba(255, 255, 255, 0.65);
+  /* High transparency */
+  --bg-glass-heavy: rgba(255, 255, 255, 0.85);
+
+  --text-primary: hsl(var(--hue-slate), 40%, 15%);
+  --text-secondary: hsl(var(--hue-slate), 25%, 45%);
+  --text-tertiary: hsl(var(--hue-slate), 20%, 65%);
+  --text-inverse: #ffffff;
+
+  /* Accent Gradients & Colors */
+  --accent-primary: hsl(var(--hue-indigo), 85%, 60%);
+  --accent-hover: hsl(var(--hue-indigo), 85%, 50%);
+  --accent-gradient: linear-gradient(135deg, hsl(var(--hue-indigo), 85%, 60%), hsl(var(--hue-violet), 85%, 60%));
+
+  --border-color: hsla(var(--hue-slate), 25%, 80%, 0.4);
+  --border-glass: rgba(255, 255, 255, 0.5);
+
+  /* Shadows - Layered for depth */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -2px rgba(0, 0, 0, 0.025);
+  --shadow-glass: 0 8px 32px 0 rgba(31, 38, 135, 0.07);
+
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+}
+
+[data-theme='dark'] {
+  /* Dark Mode Palette (Slate-950 base) */
+  --bg-primary: hsl(var(--hue-slate), 40%, 7%);
+  --bg-secondary: hsl(var(--hue-slate), 35%, 11%);
+  --bg-card: hsl(var(--hue-slate), 30%, 14%);
+
+  --bg-glass: hsla(var(--hue-slate), 30%, 14%, 0.6);
+  --bg-glass-heavy: hsla(var(--hue-slate), 30%, 14%, 0.85);
+
+  --text-primary: hsl(var(--hue-slate), 20%, 96%);
+  --text-secondary: hsl(var(--hue-slate), 15%, 70%);
+  --text-tertiary: hsl(var(--hue-slate), 15%, 50%);
+
+  /* Accents pop more in dark mode */
+  --accent-primary: hsl(var(--hue-indigo), 85%, 65%);
+  --accent-hover: hsl(var(--hue-indigo), 85%, 75%);
+
+  --border-color: hsla(var(--hue-slate), 20%, 80%, 0.08);
+  --border-glass: hsla(255, 100%, 100%, 0.08);
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4);
+}
+
+body {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  margin: 0;
+  transition: background-color 0.4s ease, color 0.3s ease;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Glass Utilities */
+.glass {
+  background: var(--bg-glass);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--border-color);
+  box-shadow: var(--shadow-sm);
+}
+
+.glass-panel {
+  background: var(--bg-glass-heavy);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--border-color);
+  box-shadow: var(--shadow-glass);
+}

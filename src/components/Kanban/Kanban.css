@@ -1,0 +1,487 @@
+.kanban-board-container {
+    height: 100%;
+    /* Fill parent container */
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    /* Critical for flex children to scroll */
+    overflow: hidden;
+}
+
+.board-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-bottom: 2rem;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+    /* Allow wrapping on mobile */
+}
+
+@media (max-width: 768px) {
+    .board-header {
+        flex-direction: column;
+        align-items: flex-start;
+        padding-bottom: 1.5rem;
+    }
+
+    .board-title h2 {
+        font-size: 1.5rem;
+    }
+
+    .board-actions {
+        width: 100%;
+        justify-content: space-between;
+        gap: 0.5rem;
+    }
+
+    .view-toggle {
+        flex: 1;
+        overflow-x: auto;
+    }
+
+    .view-toggle-btn {
+        flex: 1;
+        padding: 0.5rem;
+    }
+}
+
+.board-actions {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.view-toggle {
+    display: flex;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: 0.25rem;
+}
+
+.view-toggle-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.5rem 0.75rem;
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--text-tertiary);
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.view-toggle-btn:hover {
+    color: var(--text-primary);
+}
+
+.view-toggle-btn.active {
+    background: var(--bg-card);
+    color: var(--accent-primary);
+    box-shadow: var(--shadow-sm);
+}
+
+.back-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    font-weight: 600;
+    font-size: 0.9rem;
+    padding: 0.5rem 0;
+    cursor: pointer;
+    transition: color 0.2s;
+}
+
+.back-btn:hover {
+    color: var(--accent-primary);
+}
+
+.board-title h2 {
+    margin: 0;
+    font-size: 1.75rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+}
+
+.project-meta {
+    font-size: 0.9rem;
+    color: var(--text-tertiary);
+    margin-top: 0.25rem;
+    display: block;
+}
+
+.board-meta {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 0.35rem;
+}
+
+.meta-item {
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.meta-divider {
+    color: var(--text-tertiary);
+}
+
+.kanban-columns {
+    display: flex;
+    gap: 1.5rem;
+    overflow-x: auto;
+    overflow-y: hidden;
+    flex: 1;
+    padding-bottom: 1.5rem;
+    padding-left: 2px;
+    padding-right: 2rem;
+    /* Extra padding on right for last column visibility */
+    min-width: 0;
+    /* Important: Allow flex child to shrink below content size */
+}
+
+/* Horizontal scrollbar styling */
+.kanban-columns::-webkit-scrollbar {
+    height: 8px;
+}
+
+.kanban-columns::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.kanban-columns::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 4px;
+}
+
+.kanban-columns::-webkit-scrollbar-thumb:hover {
+    background: var(--text-tertiary);
+}
+
+.kanban-column {
+    flex: 1;
+    min-width: 280px;
+    display: flex;
+    flex-direction: column;
+    background: transparent;
+    border-radius: var(--radius-lg);
+}
+
+/* Column body contains the task cards */
+.kanban-column .column-body {
+    background: var(--bg-secondary);
+    border-radius: var(--radius-lg);
+    padding: 1rem;
+    flex: 1;
+    min-height: 300px;
+    /* Ensure column has visible height even when empty */
+    border: 1px solid var(--border-color);
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    overflow-y: auto;
+}
+
+.column-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+    padding: 0 0.5rem;
+}
+
+.column-indicator {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    box-shadow: 0 0 0 2px var(--bg-card), 0 0 0 3px var(--border-color);
+}
+
+.column-title {
+    font-size: 0.85rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+    letter-spacing: 0.05em;
+    flex: 1;
+}
+
+.column-count {
+    background: var(--bg-secondary);
+    padding: 0.15rem 0.6rem;
+    border-radius: 99px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.kanban-card {
+    padding: 1.25rem;
+    border-radius: var(--radius-md);
+    cursor: grab;
+    transition: all 0.2s cubic-bezier(0.2, 0, 0, 1);
+    background: var(--bg-card);
+    /* Pure white/dark card */
+    border: 1px solid transparent;
+    box-shadow: var(--shadow-sm);
+    position: relative;
+}
+
+.kanban-card:hover {
+    transform: translateY(-3px);
+    box-shadow: var(--shadow-md);
+    border-color: var(--border-color);
+}
+
+/* Drag and Drop States */
+.kanban-card.dragging {
+    opacity: 0.5;
+    transform: scale(0.98);
+    box-shadow: var(--shadow-lg);
+    border-color: var(--accent-primary);
+}
+
+.kanban-column.drag-over .column-body {
+    background: hsla(var(--hue-indigo), 60%, 60%, 0.08);
+    border-color: var(--accent-primary);
+    border-style: dashed;
+}
+
+/* Overdue and Due Soon states */
+.kanban-card.overdue {
+    border-left: 3px solid #ef4444;
+}
+
+.kanban-card.due-soon {
+    border-left: 3px solid #f59e0b;
+}
+
+/* Due date badge */
+.due-date-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    margin-top: 0.75rem;
+    padding: 0.25rem 0.5rem;
+    background: var(--bg-secondary);
+    border-radius: 99px;
+    font-size: 0.7rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+}
+
+.due-date-badge.overdue {
+    background: hsla(0, 84%, 60%, 0.15);
+    color: #ef4444;
+}
+
+.due-date-badge.due-soon {
+    background: hsla(38, 92%, 50%, 0.15);
+    color: #f59e0b;
+}
+
+.card-header {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 0.75rem;
+    align-items: center;
+}
+
+.priority-dot {
+    width: 24px;
+    height: 4px;
+    /* Bar instead of dot */
+    border-radius: 2px;
+    opacity: 0.8;
+}
+
+.card-title {
+    font-size: 1rem;
+    margin: 0;
+    line-height: 1.5;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.status-select {
+    font-size: 0.75rem;
+    padding: 0.25rem 0.5rem;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.status-select:hover {
+    background: var(--bg-card);
+    border-color: var(--text-tertiary);
+    color: var(--text-primary);
+}
+
+/* ==================== PROJECT ACTIVITY FEED ==================== */
+.project-activity-feed {
+    padding: 0.5rem 0;
+    animation: fadeIn 0.3s ease;
+}
+
+.activity-feed-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 1.5rem;
+}
+
+.activity-feed-header h3 {
+    margin: 0;
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.activity-count {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    background: var(--bg-secondary);
+    padding: 0.2rem 0.6rem;
+    border-radius: 99px;
+    font-weight: 500;
+}
+
+.activity-loading {
+    text-align: center;
+    padding: 3rem;
+    color: var(--text-secondary);
+}
+
+.activity-empty {
+    text-align: center;
+    padding: 3rem;
+    color: var(--text-secondary);
+}
+
+.activity-empty svg {
+    margin-bottom: 0.75rem;
+    opacity: 0.4;
+}
+
+.activity-empty p {
+    margin: 0 0 0.25rem 0;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.activity-empty span {
+    font-size: 0.85rem;
+}
+
+.activity-date-sep {
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-secondary);
+    padding: 0.75rem 0 0.5rem 2.75rem;
+}
+
+.activity-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    padding: 0.6rem 0;
+}
+
+.activity-dot {
+    flex-shrink: 0;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-top: 2px;
+}
+
+.activity-dot.create {
+    background: hsla(142, 71%, 45%, 0.15);
+    color: #22c55e;
+}
+
+.activity-dot.update {
+    background: hsla(217, 91%, 60%, 0.15);
+    color: #3b82f6;
+}
+
+.activity-dot.delete {
+    background: hsla(0, 84%, 60%, 0.15);
+    color: #ef4444;
+}
+
+.activity-dot.other {
+    background: hsla(280, 60%, 55%, 0.15);
+    color: #a855f7;
+}
+
+.activity-body {
+    flex: 1;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    min-width: 0;
+    gap: 0.75rem;
+}
+
+.activity-text {
+    font-size: 0.88rem;
+    color: var(--text-primary);
+    line-height: 1.5;
+}
+
+.activity-text strong {
+    font-weight: 600;
+}
+
+.activity-text em {
+    font-style: normal;
+    color: var(--text-secondary);
+}
+
+.activity-time {
+    font-size: 0.75rem;
+    color: var(--text-tertiary);
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.activity-load-more {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.35rem;
+    width: 100%;
+    padding: 0.75rem;
+    margin-top: 0.75rem;
+    border: 1px dashed var(--border-color);
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.activity-load-more:hover:not(:disabled) {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    border-color: var(--accent-primary);
+}
+
+.activity-load-more:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}

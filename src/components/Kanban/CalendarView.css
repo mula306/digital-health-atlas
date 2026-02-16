@@ -1,0 +1,318 @@
+.calendar-view {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-card);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border-color);
+    overflow: hidden;
+}
+
+.calendar-header {
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid var(--border-color);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--bg-secondary);
+}
+
+.calendar-nav {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.current-month {
+    font-size: 1.1rem;
+    font-weight: 700;
+    margin: 0;
+    min-width: 180px;
+    text-align: center;
+    color: var(--text-primary);
+}
+
+.nav-btn {
+    background: transparent;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: 0.25rem;
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+}
+
+.nav-btn:hover {
+    background: var(--bg-card);
+    color: var(--text-primary);
+    border-color: var(--text-tertiary);
+}
+
+.today-btn {
+    background: transparent;
+    border: 1px solid var(--border-color);
+    padding: 0.35rem 0.75rem;
+    border-radius: var(--radius-md);
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.today-btn:hover {
+    background: var(--bg-card);
+    color: var(--accent-primary);
+    border-color: var(--accent-primary);
+}
+
+.calendar-grid {
+    flex: 1;
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    grid-auto-rows: minmax(120px, auto);
+    overflow-y: auto;
+}
+
+.calendar-day-header {
+    padding: 0.75rem;
+    text-align: center;
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: var(--text-tertiary);
+    border-bottom: 1px solid var(--border-color);
+    border-right: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+    grid-row: 1;
+}
+
+.calendar-day-header:last-child {
+    border-right: none;
+}
+
+.calendar-day {
+    border-right: 1px solid var(--border-color);
+    border-bottom: 1px solid var(--border-color);
+    /* Remove padding to allow tasks to span full width */
+    min-height: 100px;
+    transition: background 0.2s;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+}
+
+.calendar-day:nth-child(7n) {
+    border-right: none;
+}
+
+.calendar-day.empty {
+    background: var(--bg-secondary);
+    opacity: 0.3;
+}
+
+.calendar-day.today {
+    background: hsla(var(--hue-indigo), 60%, 60%, 0.05);
+}
+
+.calendar-day.today .day-number {
+    background: var(--accent-primary);
+    color: white;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+}
+
+.day-number {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin: 0.5rem;
+    /* Add margin to replace padding */
+    display: inline-block;
+    width: fit-content;
+}
+
+.day-tasks-container {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    flex: 1;
+    /* Allow it to fill space */
+    padding-bottom: 0.75rem;
+    /* Bottom padding for cell */
+}
+
+/* Spanning tasks overlay */
+.calendar-tasks-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    grid-auto-rows: minmax(120px, auto);
+    pointer-events: none;
+}
+
+.spanning-task {
+    padding: 4px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: white;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+    transition: all 0.15s;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    position: absolute;
+    top: 0;
+    left: 0;
+}
+
+.spanning-task:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+    z-index: 10;
+}
+
+.spanning-task.completed {
+    opacity: 0.6;
+    text-decoration: line-through;
+}
+
+.spanning-task .task-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Mobile Responsiveness */
+@media (max-width: 768px) {
+    .calendar-grid {
+        min-width: 700px;
+        /* Force horizontal scroll on small screens */
+    }
+
+    .calendar-day {
+        min-height: 80px;
+    }
+
+    .spanning-task {
+        font-size: 0.75rem;
+        padding: 2px 6px;
+    }
+}
+
+/* Consistent item height for alignment */
+.spanning-task,
+.calendar-more-btn,
+.calendar-spacer {
+    height: 28px;
+    /* Fixed uniform height */
+    box-sizing: border-box;
+    margin-bottom: 0;
+    /* Gap handled by container */
+}
+
+.calendar-spacer {
+    visibility: hidden;
+}
+
+/* Overflow Button */
+.calendar-more-btn {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    padding: 2px 4px;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    margin-top: 2px;
+}
+
+.calendar-more-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+/* Modal Content Styles */
+.day-modal-tasks {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    max-height: 60vh;
+    overflow-y: auto;
+}
+
+.modal-task-item {
+    display: flex;
+    align-items: stretch;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.modal-task-item:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    border-color: var(--text-tertiary);
+}
+
+.modal-task-priority {
+    width: 6px;
+    flex-shrink: 0;
+}
+
+.modal-task-content {
+    padding: 0.75rem 1rem;
+    flex: 1;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.modal-task-title {
+    font-size: 0.95rem;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.modal-task-status {
+    font-size: 0.75rem;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    text-transform: capitalize;
+}
+
+.no-tasks-message {
+    text-align: center;
+    padding: 2rem;
+    color: var(--text-tertiary);
+}
+
+.task-slot-wrapper {
+    position: relative;
+    height: 28px;
+    width: 100%;
+    flex-shrink: 0;
+}

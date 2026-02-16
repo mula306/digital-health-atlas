@@ -1,0 +1,147 @@
+.kpi-manager {
+    padding: 1rem 0;
+}
+
+.kpi-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.kpi-header h4 {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.95rem;
+    color: var(--text-primary);
+    margin: 0;
+}
+
+.kpi-add-form {
+    background: var(--bg-secondary);
+    padding: 1rem;
+    border-radius: var(--radius-md);
+    margin-bottom: 1rem;
+    border: 1px solid var(--border-color);
+}
+
+.kpi-form-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr 80px;
+    gap: 0.75rem;
+    margin-bottom: 0.75rem;
+}
+
+.form-input.unit-input {
+    text-align: center;
+}
+
+.kpi-form-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+}
+
+.kpi-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.kpi-item {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: 0.75rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.kpi-item-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+
+.kpi-values {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.9rem;
+}
+
+.kpi-unit-prefix,
+.kpi-unit-suffix {
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.kpi-current-input {
+    width: 60px;
+    padding: 0.25rem 0.5rem;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    text-align: right;
+    font-weight: 600;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+}
+
+.kpi-separator {
+    color: var(--text-tertiary);
+    margin: 0 0.25rem;
+}
+
+.kpi-target {
+    color: var(--text-secondary);
+}
+
+.kpi-progress-bar {
+    height: 6px;
+    background: var(--bg-secondary);
+    border-radius: 99px;
+    overflow: hidden;
+    margin-top: 0.25rem;
+}
+
+.kpi-progress-fill {
+    height: 100%;
+    border-radius: 99px;
+    transition: width 0.3s ease;
+}
+
+.kpi-progress-fill.on-track {
+    background: #10b981;
+}
+
+.kpi-progress-fill.behind {
+    background: #f59e0b;
+}
+
+.kpi-percent {
+    font-size: 0.75rem;
+    font-weight: 600;
+    align-self: flex-end;
+}
+
+.kpi-percent.on-track {
+    color: #10b981;
+}
+
+.kpi-percent.behind {
+    color: #f59e0b;
+}
+
+.kpi-empty {
+    text-align: center;
+    color: var(--text-tertiary);
+    font-size: 0.9rem;
+    padding: 1rem;
+    font-style: italic;
+}
