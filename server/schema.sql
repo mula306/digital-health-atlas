@@ -4,11 +4,11 @@
 -- Create database
 IF NOT EXISTS (SELECT * FROM sys.databases WHERE name = 'ProjectKanban')
 BEGIN
-    CREATE DATABASE ProjectKanban;
+    CREATE DATABASE DHAtlas;
 END
 GO
 
-USE ProjectKanban;
+USE DHAtlas;
 GO
 
 -- Goals table (hierarchical with Org→Div→Dept→Branch)
@@ -129,5 +129,5 @@ CREATE INDEX IX_IntakeSubmissions_FormId ON IntakeSubmissions(formId);
 CREATE INDEX IX_IntakeSubmissions_Status ON IntakeSubmissions(status);
 GO
 
-PRINT 'ProjectKanban database schema created successfully!';
+PRINT 'DHAtlas database schema created successfully!';
 GO
