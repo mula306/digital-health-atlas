@@ -1,5 +1,5 @@
 // Run the tag migration script using the existing DB connection
-import { getPool, sql } from './db.js';
+import { getPool } from './db.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -12,7 +12,9 @@ async function runMigration() {
         const pool = await getPool();
 
         console.log('Reading migration script...');
-        const sqlScript = fs.readFileSync(path.join(__dirname, 'migrate_tags.sql'), 'utf8');
+        // Default to migrate_users.sql for this run, or generic logic
+        const scriptName = process.argv[2] || 'migrate_users.sql';
+        const sqlScript = fs.readFileSync(path.join(__dirname, scriptName), 'utf8');
 
         // Split by GO statements (MSSQL batch separator)
         const batches = sqlScript.split(/^\s*GO\s*$/mi).filter(b => b.trim());

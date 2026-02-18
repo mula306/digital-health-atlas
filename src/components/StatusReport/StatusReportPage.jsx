@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Plus, FileText, History, Eye, RefreshCw } from 'lucide-react';
 import { useData } from '../../context/DataContext';
-import { useAuth } from '../../hooks/useAuth';
+
 import { Modal } from '../UI/Modal';
 import { StatusReportEditor } from './StatusReportEditor';
 import { StatusReportView } from './StatusReportView';
@@ -9,9 +9,9 @@ import { StatusReportHistory } from './StatusReportHistory';
 import { StatusReportCompare } from './StatusReportCompare';
 import './StatusReport.css';
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+import { API_BASE } from '../../apiClient';
 
-export function StatusReportPage({ project, onClose }) {
+export function StatusReportPage({ project, onClose: _onClose }) {
     const { authFetch } = useData();
     const [reports, setReports] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -20,7 +20,7 @@ export function StatusReportPage({ project, onClose }) {
     const [comparingReports, setComparingReports] = useState(null);
 
     // Fetch reports on mount
-    const fetchReports = async () => {
+    const fetchReports = useCallback(async () => {
         // console.log("StatusReportPage: Fetching reports for project", project.id);
         setLoading(true);
         try {
@@ -37,11 +37,11 @@ export function StatusReportPage({ project, onClose }) {
         } finally {
             setLoading(false);
         }
-    };
+    }, [project.id, authFetch]);
 
     useEffect(() => {
         fetchReports();
-    }, [project.id]);
+    }, [fetchReports]);
 
     const latestReport = reports.length > 0 ? reports[0] : null; // API returns sorted DESC
     useEffect(() => {

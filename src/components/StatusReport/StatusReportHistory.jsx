@@ -7,7 +7,7 @@ export function StatusReportHistory({
     projectId,
     reports,
     onViewReport,
-    onRestoreReport,
+    onRestoreReport: _onRestoreReport,
     onCompare
 }) {
     const { restoreStatusReport } = useData();

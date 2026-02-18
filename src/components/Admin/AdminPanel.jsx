@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { useAuth } from '../../hooks/useAuth';
 import { useData } from '../../context/DataContext';
-import { Save, Shield, Check, AlertTriangle, RefreshCw, Tag, Activity } from 'lucide-react';
+import { Save, Shield, AlertTriangle, RefreshCw, Tag, Activity } from 'lucide-react';
 import { useToast } from '../../context/ToastContext';
 import { TagManager } from './TagManager';
 import { AuditLogView } from './AuditLogView';

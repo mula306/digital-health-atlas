@@ -1,5 +1,6 @@
 import { useState, useEffect, Suspense, lazy } from 'react';
 import { useData } from '../context/DataContext';
+import { useToast } from '../context/ToastContext';
 import { Layout } from './Layout/Layout';
 import { ToastContainer } from './UI/Toast';
 import KanbanView from './Kanban/KanbanView';
@@ -27,7 +28,15 @@ export function AppContent() {
     const [projectFilter, setProjectFilter] = useState(null);
     const [metricsFilter, setMetricsFilter] = useState(null);
     const [intakeParams, setIntakeParams] = useState(null);
-    const { hasPermission } = useData();
+    const { hasPermission, error } = useData();
+    const toast = useToast();
+
+    // Show global data errors
+    useEffect(() => {
+        if (error) {
+            toast.error(error);
+        }
+    }, [error, toast]);
 
     // Handle hash-based routing for public intake forms
     useEffect(() => {
@@ -127,7 +136,9 @@ export function AppContent() {
                                 <IntakePage /> :
                                 <div className="p-4">Access Denied</div>;
                         case 'admin':
-                            return <AdminPanel />;
+                            return (hasPermission('can_manage_users') || hasPermission('can_manage_tags') || hasPermission('can_view_audit_log')) ?
+                                <AdminPanel /> :
+                                <div className="p-4">Access Denied</div>;
                         case 'public-intake':
                             return intakeParams ? (
                                 <IntakeFormView

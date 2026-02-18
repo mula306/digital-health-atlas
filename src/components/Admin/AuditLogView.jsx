@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import './AuditLogView.css';
 
-const API_BASE = `http://${window.location.hostname}:3001/api`;
+import { API_BASE } from '../../apiClient';
 
 // Human-readable action labels
 const ACTION_LABELS = {

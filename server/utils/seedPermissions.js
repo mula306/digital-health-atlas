@@ -20,7 +20,17 @@ export async function seedPermissions() {
             // Intake Submitter
             { role: 'IntakeSubmit', permission: 'can_view_intake', isAllowed: 1 },
             { role: 'IntakeSubmit', permission: 'can_view_incoming_requests', isAllowed: 0 }, // Explicitly deny
-            { role: 'IntakeSubmit', permission: 'can_manage_intake_forms', isAllowed: 0 }
+            { role: 'IntakeSubmit', permission: 'can_manage_intake_forms', isAllowed: 0 },
+
+            // Standard User (Default Role)
+            { role: 'User', permission: 'can_view_projects', isAllowed: 1 },
+            { role: 'User', permission: 'can_view_goals', isAllowed: 1 },
+            { role: 'User', permission: 'can_view_tasks', isAllowed: 1 },
+            { role: 'User', permission: 'can_view_dashboard', isAllowed: 1 },
+            { role: 'User', permission: 'can_view_exec_dashboard', isAllowed: 1 },
+            { role: 'User', permission: 'can_view_reports', isAllowed: 1 },
+            { role: 'User', permission: 'can_view_intake', isAllowed: 1 },
+            { role: 'User', permission: 'can_view_incoming_requests', isAllowed: 1 }
         ];
 
         for (const p of permissions) {

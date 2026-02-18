@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { Settings, LayoutGrid, Table, GanttChart, FileText, Calendar, Activity } from 'lucide-react';
 import { useData } from '../../context/DataContext';
 import { KanbanColumn } from './KanbanColumn';
@@ -25,7 +25,7 @@ const PRIORITY_ORDER = { high: 0, medium: 1, low: 2 };
 import { useAuth } from '../../hooks/useAuth';
 
 export function KanbanBoard({ project, onBack, goalTitle }) {
-    const { moveTask } = useData();
+    const { moveTask: _moveTask } = useData();
     const { canEdit } = useAuth();
     const [showAddModal, setShowAddModal] = useState(false);
     const [showEditModal, setShowEditModal] = useState(false);
@@ -66,15 +66,15 @@ export function KanbanBoard({ project, onBack, goalTitle }) {
     }, []);
 
     // Keep selectedTask in sync with project updates (e.g. after editing)
-    useEffect(() => {
-        if (selectedTask) {
-            const updatedTask = project.tasks.find(t => t.id === selectedTask.id);
-            // If task exists and has changed, update local state
-            if (updatedTask && JSON.stringify(updatedTask) !== JSON.stringify(selectedTask)) {
-                setSelectedTask(updatedTask);
-            }
+    // Keep selectedTask in sync with project updates (Derived State Pattern)
+    if (selectedTask) {
+        const updatedTask = project.tasks.find(t => t.id === selectedTask.id);
+        // If task exists and has changed, update local state
+        // Note: We use JSON.stringify for deep comparison as per original logic, though it has performance cost.
+        if (updatedTask && JSON.stringify(updatedTask) !== JSON.stringify(selectedTask)) {
+            setSelectedTask(updatedTask);
         }
-    }, [project.tasks, selectedTask]);
+    }
 
     return (
         <div className="kanban-board-container">

@@ -2,84 +2,9 @@ import { useRef, useState, useMemo, memo } from 'react';
 import { Printer, Download } from 'lucide-react';
 import './StatusReport.css';
 
-export const StatusReportView = memo(function StatusReportView({ report, projectTitle, onExportPdf, hideActions = false }) {
+export const StatusReportView = memo(function StatusReportView({ report, projectTitle, onExportPdf: _onExportPdf, hideActions = false }) {
     const reportRef = useRef(null);
-
-    // Debug logging
-    // console.log("StatusReportView received:", { report, projectTitle });
-
-    if (!report) return null;
-
-    const formatDate = (dateStr) => {
-        if (!dateStr) return '-';
-        return new Date(dateStr).toLocaleDateString('en-US', {
-            month: 'long',
-            day: 'numeric',
-            year: 'numeric'
-        });
-    };
-
-    const formatShortDate = (dateStr) => {
-        if (!dateStr) return '-';
-        return new Date(dateStr).toLocaleDateString('en-US', {
-            month: '2-digit',
-            day: '2-digit',
-            year: 'numeric'
-        });
-    };
-
-    const getStatusColor = (status) => {
-        switch (status) {
-            case 'green': return '#10b981';
-            case 'yellow': return '#f59e0b';
-            case 'red': return '#ef4444';
-            default: return '#6b7280';
-        }
-    };
-
     const [isExporting, setIsExporting] = useState(false);
-
-    const handlePrint = () => {
-        window.print();
-    };
-
-    const handleExportPdf = async () => {
-        if (!reportRef.current || isExporting) return;
-
-        try {
-            setIsExporting(true);
-            const html2pdf = (await import('html2pdf.js')).default;
-
-            const element = reportRef.current;
-            const filename = `Status_Report_${projectTitle.replace(/\s+/g, '_')}_v${report.version}.pdf`;
-
-            const opt = {
-                margin: [0.3, 0.3, 0.3, 0.3], // inches: top, left, bottom, right
-                filename: filename,
-                image: { type: 'jpeg', quality: 0.98 },
-                html2canvas: {
-                    scale: 2,
-                    useCORS: true,
-                    letterRendering: true,
-                    logging: false
-                },
-                jsPDF: {
-                    unit: 'in',
-                    format: 'letter',
-                    orientation: 'portrait'
-                },
-                pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
-            };
-
-            await html2pdf().set(opt).from(element).save();
-        } catch (error) {
-            console.error('PDF export failed:', error);
-            // Fallback to print
-            window.print();
-        } finally {
-            setIsExporting(false);
-        }
-    };
 
     const getStatusGradient = (status) => {
         switch (status) {
@@ -91,6 +16,7 @@ export const StatusReportView = memo(function StatusReportView({ report, project
     };
 
     // Inline styles for print reliability - FULL WIDTH
+    // NOTE: Must be called before early return to satisfy Rules of Hooks
     const styles = useMemo(() => ({
         wrapper: {
             display: 'flex',
@@ -311,7 +237,78 @@ export const StatusReportView = memo(function StatusReportView({ report, project
             display: 'flex',
             gap: '8px'
         }
-    }), [report.overallStatus]);
+    }), [report?.overallStatus]);
+
+    // Early return AFTER all hooks have been called (Rules of Hooks)
+    if (!report) return null;
+
+    const formatDate = (dateStr) => {
+        if (!dateStr) return '-';
+        return new Date(dateStr).toLocaleDateString('en-US', {
+            month: 'long',
+            day: 'numeric',
+            year: 'numeric'
+        });
+    };
+
+    const formatShortDate = (dateStr) => {
+        if (!dateStr) return '-';
+        return new Date(dateStr).toLocaleDateString('en-US', {
+            month: '2-digit',
+            day: '2-digit',
+            year: 'numeric'
+        });
+    };
+
+    const getStatusColor = (status) => {
+        switch (status) {
+            case 'green': return '#10b981';
+            case 'yellow': return '#f59e0b';
+            case 'red': return '#ef4444';
+            default: return '#6b7280';
+        }
+    };
+
+    const handlePrint = () => {
+        window.print();
+    };
+
+    const handleExportPdf = async () => {
+        if (!reportRef.current || isExporting) return;
+
+        try {
+            setIsExporting(true);
+            const html2pdf = (await import('html2pdf.js')).default;
+
+            const element = reportRef.current;
+            const filename = `Status_Report_${projectTitle.replace(/\s+/g, '_')}_v${report.version}.pdf`;
+
+            const opt = {
+                margin: [0.3, 0.3, 0.3, 0.3],
+                filename: filename,
+                image: { type: 'jpeg', quality: 0.98 },
+                html2canvas: {
+                    scale: 2,
+                    useCORS: true,
+                    letterRendering: true,
+                    logging: false
+                },
+                jsPDF: {
+                    unit: 'in',
+                    format: 'letter',
+                    orientation: 'portrait'
+                },
+                pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
+            };
+
+            await html2pdf().set(opt).from(element).save();
+        } catch (error) {
+            console.error('PDF export failed:', error);
+            window.print();
+        } finally {
+            setIsExporting(false);
+        }
+    };
 
     const getMilestoneDiamondStyle = (status) => {
         const base = { ...styles.milestoneDiamond };

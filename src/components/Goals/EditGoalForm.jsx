@@ -3,7 +3,7 @@ import { useData } from '../../context/DataContext';
 import { useToast } from '../../context/ToastContext';
 
 export function EditGoalForm({ goal, onClose }) {
-    const { updateGoal, goals } = useData();
+    const { updateGoal } = useData();
     const { success } = useToast();
     const [title, setTitle] = useState(goal.title || '');
     const [description, setDescription] = useState(goal.description || '');

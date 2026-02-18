@@ -7,11 +7,11 @@ import { AddGoalForm } from './AddGoalForm';
 import { EditGoalForm } from './EditGoalForm';
 import { KPIManager } from './KPIManager';
 import './KPI.css';
-import { getDescendantGoalIds } from '../UI/CascadingGoalFilter';
+import { getDescendantGoalIds } from '../../utils/goalHelpers';
 
 import { useAuth } from '../../hooks/useAuth';
 
-export function GoalItem({ goal, level = 0, onNavigateToProjects, onNavigateToMetrics, forceExpand }) {
+export function GoalItem({ goal, level = 0, onNavigateToProjects, onNavigateToMetrics, forceExpand, selectedTags = [] }) {
     const { goals, deleteGoal, projects } = useData();
     const { canEdit, canDelete } = useAuth();
     const toast = useToast();
@@ -24,20 +24,30 @@ export function GoalItem({ goal, level = 0, onNavigateToProjects, onNavigateToMe
     const menuRef = useRef(null);
 
     // Respond to forceExpand prop from parent
-    useEffect(() => {
+    // Respond to forceExpand prop from parent (Derived State Pattern)
+    const [prevForceExpand, setPrevForceExpand] = useState(forceExpand);
+    if (forceExpand !== prevForceExpand) {
+        setPrevForceExpand(forceExpand);
         if (forceExpand !== null && forceExpand !== undefined) {
             setIsExpanded(forceExpand);
             setChildrenCollapsed(forceExpand ? null : false);
         }
-    }, [forceExpand]);
+    }
 
     const childGoals = goals.filter(g => g.parentId === goal.id);
     const hasChildren = childGoals.length > 0;
 
-    const descendantIds = getDescendantGoalIds(goals, goal.id);
-    const allRelatedGoalIds = [goal.id, ...descendantIds];
-    const linkedProjects = projects.filter(p => allRelatedGoalIds.includes(p.goalId));
-    const projectCount = linkedProjects.length;
+    // Use pre-calculated counts from DataContext (server-backed)
+    // When tags are selected, compute count client-side from loaded projects
+    const projectCount = (() => {
+        if (selectedTags.length === 0) return goal.totalProjectCount || 0;
+        // Get all goal IDs in this subtree (this goal + descendants)
+        const allGoalIds = [goal.id, ...getDescendantGoalIds(goals, goal.id)];
+        return projects.filter(p =>
+            allGoalIds.includes(p.goalId) &&
+            p.tags && p.tags.some(t => selectedTags.includes(String(t.id)))
+        ).length;
+    })();
 
     const typeLabels = {
         org: 'Organization',
@@ -126,14 +136,14 @@ export function GoalItem({ goal, level = 0, onNavigateToProjects, onNavigateToMe
                             </span>
                             <div className="goal-actions">
                                 {/* KPI indicator */}
-                                {goal.kpis && goal.kpis.length > 0 && (
+                                {(goal.totalKpiCount > 0 || (goal.kpis && goal.kpis.length > 0)) && (
                                     <button
                                         className="kpi-indicator"
-                                        title={`View ${goal.kpis.length} KPI(s) in Metrics`}
+                                        title={`View ${goal.totalKpiCount} Total KPI(s) (including sub-goals)`}
                                         onClick={handleKpiClick}
                                     >
                                         <Activity size={14} />
-                                        <span>{goal.kpis.length}</span>
+                                        <span>{goal.totalKpiCount || goal.kpis?.length || 0}</span>
                                     </button>
                                 )}
                                 {/* Project count link */}
@@ -207,6 +217,7 @@ export function GoalItem({ goal, level = 0, onNavigateToProjects, onNavigateToMe
                             onNavigateToProjects={onNavigateToProjects}
                             onNavigateToMetrics={onNavigateToMetrics}
                             forceExpand={childrenCollapsed !== null ? childrenCollapsed : forceExpand}
+                            selectedTags={selectedTags}
                         />
                     ))}
 

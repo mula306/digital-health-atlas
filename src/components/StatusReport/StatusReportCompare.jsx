@@ -1,7 +1,7 @@
 import { ArrowLeft, Calendar, User } from 'lucide-react';
 import './StatusReport.css';
 
-export function StatusReportCompare({ report1, report2, projectTitle, onClose }) {
+export function StatusReportCompare({ report1, report2, projectTitle: _projectTitle, onClose }) {
     const formatDate = (dateStr) => {
         return new Date(dateStr).toLocaleDateString('en-US', {
             month: 'short',
@@ -10,7 +10,7 @@ export function StatusReportCompare({ report1, report2, projectTitle, onClose })
         });
     };
 
-    const compareValue = (val1, val2, label) => {
+    const _compareValue = (val1, val2, label) => {
         if (val1 === val2) return null;
         return (
             <div className="compare-change">
@@ -43,7 +43,7 @@ export function StatusReportCompare({ report1, report2, projectTitle, onClose })
 
     // Risk changes
     const r1Ids = new Set(report1.risks?.map(r => r.id) || []);
-    const r2Ids = new Set(report2.risks?.map(r => r.id) || []);
+    const _r2Ids = new Set(report2.risks?.map(r => r.id) || []);
     const addedRisks = report2.risks?.filter(r => !r1Ids.has(r.id)) || [];
     const closedRisks = report2.risks?.filter(r => {
         const prev = report1.risks?.find(pr => pr.id === r.id);

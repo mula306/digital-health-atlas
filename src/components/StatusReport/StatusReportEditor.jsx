@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import {
     Plus, Trash2, ChevronDown, ChevronUp, Users,
     Target, AlertTriangle, CheckCircle, FileText
@@ -9,7 +9,7 @@ import './StatusReport.css';
 
 // No static milestone types - milestones are now fully dynamic
 
-export function StatusReportEditor({ projectId, projectTitle, previousReport, onSave, onCancel }) {
+export function StatusReportEditor({ projectId, projectTitle: _projectTitle, previousReport, onSave, onCancel }) {
     const { addStatusReport } = useData();
     const { success } = useToast();
 
@@ -114,7 +114,7 @@ export function StatusReportEditor({ projectId, projectTitle, previousReport, on
         setRisks(risks.map(r => r.id === id ? { ...r, [field]: value } : r));
     };
 
-    const closeRisk = (id, rationale) => {
+    const _closeRisk = (id, rationale) => {
         setRisks(risks.map(r => r.id === id ? {
             ...r,
             status: 'closed',
@@ -180,14 +180,15 @@ export function StatusReportEditor({ projectId, projectTitle, previousReport, on
         }
     };
 
-    const SectionHeader = ({ title, section, icon: Icon }) => (
+    // eslint-disable-next-line no-unused-vars
+    const renderSectionHeader = (title, section, SectionIcon) => (
         <button
             type="button"
             className="section-accordion-header"
             onClick={() => toggleSection(section)}
         >
             <div className="section-header-left">
-                <Icon size={18} />
+                <SectionIcon size={18} />
                 <span>{title}</span>
             </div>
             {expandedSections[section] ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
@@ -198,7 +199,7 @@ export function StatusReportEditor({ projectId, projectTitle, previousReport, on
         <form onSubmit={handleSubmit} className="status-report-editor">
             {/* Header Section */}
             <div className="editor-section">
-                <SectionHeader title="Report Header" section="header" icon={FileText} />
+                {renderSectionHeader("Report Header", "header", FileText)}
                 {expandedSections.header && (
                     <div className="section-content">
                         <div className="form-row-3">
@@ -243,7 +244,7 @@ export function StatusReportEditor({ projectId, projectTitle, previousReport, on
 
             {/* Purpose Section */}
             <div className="editor-section">
-                <SectionHeader title="Project Purpose" section="purpose" icon={Target} />
+                {renderSectionHeader("Project Purpose", "purpose", Target)}
                 {expandedSections.purpose && (
                     <div className="section-content">
                         <div className="form-group">
@@ -261,7 +262,7 @@ export function StatusReportEditor({ projectId, projectTitle, previousReport, on
 
             {/* Executive Summary - Current State Section */}
             <div className="editor-section">
-                <SectionHeader title="Executive Summary - Current State" section="executiveSummary" icon={FileText} />
+                {renderSectionHeader("Executive Summary - Current State", "executiveSummary", FileText)}
                 {expandedSections.executiveSummary && (
                     <div className="section-content">
                         <div className="form-group">
@@ -279,7 +280,7 @@ export function StatusReportEditor({ projectId, projectTitle, previousReport, on
 
             {/* Contacts Section */}
             <div className="editor-section">
-                <SectionHeader title="Key Contacts" section="contacts" icon={Users} />
+                {renderSectionHeader("Key Contacts", "contacts", Users)}
                 {expandedSections.contacts && (
                     <div className="section-content">
                         {contacts.map(contact => (
@@ -316,7 +317,7 @@ export function StatusReportEditor({ projectId, projectTitle, previousReport, on
 
             {/* Milestones Section */}
             <div className="editor-section">
-                <SectionHeader title="Milestone Timeline" section="milestones" icon={Target} />
+                {renderSectionHeader("Milestone Timeline", "milestones", Target)}
                 {expandedSections.milestones && (
                     <div className="section-content">
                         {milestones.map(milestone => (
@@ -359,7 +360,7 @@ export function StatusReportEditor({ projectId, projectTitle, previousReport, on
 
             {/* Workstreams Section */}
             <div className="editor-section">
-                <SectionHeader title="Workstream Status" section="workstreams" icon={CheckCircle} />
+                {renderSectionHeader("Workstream Status", "workstreams", CheckCircle)}
                 {expandedSections.workstreams && (
                     <div className="section-content">
                         {workstreams.map(ws => (
@@ -422,7 +423,7 @@ export function StatusReportEditor({ projectId, projectTitle, previousReport, on
 
             {/* Risks Section */}
             <div className="editor-section">
-                <SectionHeader title="Risk Register" section="risks" icon={AlertTriangle} />
+                {renderSectionHeader("Risk Register", "risks", AlertTriangle)}
                 {expandedSections.risks && (
                     <div className="section-content">
                         {risks.map(risk => (
@@ -495,7 +496,7 @@ export function StatusReportEditor({ projectId, projectTitle, previousReport, on
 
             {/* Decisions Section */}
             <div className="editor-section">
-                <SectionHeader title="Decision Log" section="decisions" icon={CheckCircle} />
+                {renderSectionHeader("Decision Log", "decisions", CheckCircle)}
                 {expandedSections.decisions && (
                     <div className="section-content">
                         {decisions.map(decision => (
@@ -561,7 +562,7 @@ export function StatusReportEditor({ projectId, projectTitle, previousReport, on
 
             {/* Freeform Sections */}
             <div className="editor-section">
-                <SectionHeader title="Additional Sections" section="freeform" icon={FileText} />
+                {renderSectionHeader("Additional Sections", "freeform", FileText)}
                 {expandedSections.freeform && (
                     <div className="section-content">
                         <div className="form-group">

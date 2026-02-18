@@ -1,76 +1,83 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useData } from '../../context/DataContext';
-import { BarChart3, Target, Folder, CheckSquare, AlertTriangle, TrendingUp, Activity, PlayCircle, Coffee } from 'lucide-react';
-import { CascadingGoalFilter, getDescendantGoalIds } from '../UI/CascadingGoalFilter';
+import { BarChart3, Target, Folder, CheckSquare, AlertTriangle, TrendingUp, Activity, Coffee } from 'lucide-react';
+import { getDescendantGoalIds } from '../../utils/goalHelpers';
+import { FilterBar } from '../UI/FilterBar';
+import { formatKpiValue } from '../../utils';
 import './Dashboard.css';
 
+import { API_BASE } from '../../apiClient';
+
 export function Dashboard() {
-    const { goals, projects } = useData();
+    const { goals, authFetch } = useData();
     const [goalFilter, setGoalFilter] = useState('');
+    const [selectedTags, setSelectedTags] = useState([]);
+    const [stats, setStats] = useState(null);
+    const [loading, setLoading] = useState(true);
+
+    // Fetch stats from server
+    useEffect(() => {
+        const fetchStats = async () => {
+            setLoading(true);
+            try {
+                // Get all descendant goal IDs
+                let goalIds = '';
+                if (goalFilter) {
+                    const ids = [goalFilter, ...getDescendantGoalIds(goals, goalFilter)];
+                    goalIds = ids.join(',');
+                }
+
+                const tagParam = selectedTags.length > 0 ? `&tagIds=${selectedTags.join(',')}` : '';
+                const res = await authFetch(`${API_BASE}/dashboard/stats?goalIds=${goalIds}${tagParam}`);
+                if (res.ok) {
+                    const data = await res.json();
+                    setStats(data);
+                } else {
+                    console.error("Failed to load dashboard stats");
+                }
+            } catch (err) {
+                console.error("Error fetching stats:", err);
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        fetchStats();
+    }, [goalFilter, selectedTags, goals, authFetch]);
 
 
-
-    // Get all goal IDs to filter by (selected + descendants)
+    // Filter goals locally for the "Total Goals" count (since that data is fully loaded)
     const getFilterGoalIds = () => {
         if (!goalFilter) return null;
-        const ids = [goalFilter, ...getDescendantGoalIds(goals, goalFilter)];
-        return ids;
+        return [goalFilter, ...getDescendantGoalIds(goals, goalFilter)];
     };
-
     const filterGoalIds = getFilterGoalIds();
-
-    // Filter projects by goal (including descendants)
-    const filteredProjects = filterGoalIds
-        ? projects.filter(p => filterGoalIds.includes(p.goalId))
-        : projects;
-
-    // Filter goals (including descendants)
     const filteredGoals = filterGoalIds
         ? goals.filter(g => filterGoalIds.includes(g.id))
         : goals;
-
-    // Calculate metrics based on filtered data
     const totalGoals = filteredGoals.length;
-    const totalProjects = filteredProjects.length;
-    // Use taskCount if available (from summary), otherwise fallback to tasks array length
-    // Use taskCount if available (from summary), otherwise fallback to tasks array length
-    const totalTasks = filteredProjects.reduce((sum, p) => sum + (p.taskCount || (p.tasks || []).length), 0);
 
-    // Use completedTaskCount if available (from summary), otherwise fallback to calculating from tasks array
-    const completedTasks = filteredProjects.reduce((sum, p) => {
-        if (p.completedTaskCount !== undefined) return sum + p.completedTaskCount;
-        return sum + (p.tasks || []).filter(t => t.status === 'done').length;
-    }, 0);
+
+    // Stats from Server (or 0/empty if loading)
+    const totalProjects = stats?.totalProjects || 0;
+    const totalTasks = stats?.totalTasks || 0;
+    const completedTasks = stats?.completedTasks || 0;
+    const overdueTasks = stats?.overdueTasks || [];
+    const overdueCount = stats?.overdueCount || 0;
+    const inProgressTasks = stats?.inProgressTasks || [];
+    const inProgressCount = stats?.inProgressCount || 0;
+    const avgProjectCompletion = stats?.avgProjectCompletion || 0;
+
     const taskCompletionRate = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
 
-    // Overdue tasks (use endDate, fallback to dueDate)
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const overdueTasks = filteredProjects.flatMap(p =>
-        (p.tasks || []).filter(t => {
-            const endDate = t.endDate || t.dueDate;
-            return endDate && new Date(endDate) < today && t.status !== 'done';
-        })
-    );
-
-    // In-progress tasks
-    const inProgressTasks = filteredProjects.flatMap(p =>
-        (p.tasks || []).filter(t => t.status === 'in-progress')
-    );
-
-    // Average goal progress
-    const avgGoalProgress = filteredGoals.length > 0
+    // Goal progress is still client-side aggregated because goals are fully loaded
+    // But individual goal.progress found in 'goals' might be inaccurate if DataContext calc is based on partial projects
+    // For now, let's allow "Goal Progress" to be what it is, but rely on "Task Completion" from server.
+    const _avgGoalProgress = filteredGoals.length > 0
         ? Math.round(filteredGoals.reduce((sum, g) => sum + (g.progress || 0), 0) / filteredGoals.length)
         : 0;
 
-    // Helper for formatting values with units
-    const formatKpiValue = (val, unit) => {
-        if (!val && val !== 0) return '-';
-        if (unit === '$') return `$${val.toLocaleString()}`;
-        if (unit === '%') return `${val.toLocaleString()}%`;
-        if (unit) return `${val.toLocaleString()} ${unit}`;
-        return val.toLocaleString();
-    };
+
 
     // All KPIs across filtered goals
     const allKpis = filteredGoals.flatMap(g =>
@@ -87,6 +94,71 @@ export function Dashboard() {
         ? goals.find(g => g.id === goalFilter)?.title
         : null;
 
+    if (loading && !stats) {
+        return (
+            <div className="dashboard">
+                <div className="view-header">
+                    <div>
+                        <h2>Dashboard</h2>
+                        <p className="view-subtitle">Overview of your goals, projects, and tasks.</p>
+                    </div>
+                </div>
+
+                <FilterBar
+                    goalFilter={goalFilter}
+                    onGoalFilterChange={setGoalFilter}
+                    selectedTags={selectedTags}
+                    onTagsChange={setSelectedTags}
+                />
+
+                {/* Skeleton Metric Cards */}
+                <div className="metrics-grid">
+                    {Array.from({ length: 4 }).map((_, i) => (
+                        <div key={i} className="metric-card" style={{ minHeight: '80px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                                <div className="animate-pulse" style={{ width: 48, height: 48, borderRadius: 12, background: 'var(--bg-secondary)' }}></div>
+                                <div style={{ flex: 1 }}>
+                                    <div className="animate-pulse" style={{ height: 24, width: '40%', borderRadius: 6, background: 'var(--bg-secondary)', marginBottom: 8 }}></div>
+                                    <div className="animate-pulse" style={{ height: 14, width: '60%', borderRadius: 4, background: 'var(--bg-secondary)' }}></div>
+                                </div>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+
+                {/* Skeleton Progress Section */}
+                <div className="dashboard-section">
+                    <div className="animate-pulse" style={{ height: 20, width: 160, borderRadius: 4, background: 'var(--bg-secondary)', marginBottom: '1rem' }}></div>
+                    <div className="progress-cards">
+                        {Array.from({ length: 2 }).map((_, i) => (
+                            <div key={i} className="progress-card">
+                                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+                                    <div className="animate-pulse" style={{ height: 14, width: '30%', borderRadius: 4, background: 'var(--bg-secondary)' }}></div>
+                                    <div className="animate-pulse" style={{ height: 14, width: 40, borderRadius: 4, background: 'var(--bg-secondary)' }}></div>
+                                </div>
+                                <div className="progress-bar-track">
+                                    <div className="animate-pulse" style={{ height: '100%', width: '45%', borderRadius: 4, background: 'var(--bg-secondary)' }}></div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+
+                {/* Skeleton Lists */}
+                <div className="dashboard-lists">
+                    {Array.from({ length: 2 }).map((_, i) => (
+                        <div key={i} className="dashboard-section">
+                            <div className="animate-pulse" style={{ height: 20, width: 180, borderRadius: 4, background: 'var(--bg-secondary)', marginBottom: '1rem' }}></div>
+                            {Array.from({ length: 3 }).map((_, j) => (
+                                <div key={j} className="animate-pulse" style={{ height: 40, borderRadius: 6, background: 'var(--bg-secondary)', marginBottom: 8 }}></div>
+                            ))}
+                        </div>
+                    ))}
+                </div>
+            </div>
+        );
+    }
+
     return (
         <div className="dashboard">
             <div className="view-header">
@@ -101,10 +173,13 @@ export function Dashboard() {
                 </div>
             </div>
 
-            {/* Cascading Goal Filter */}
-            <div className="filter-bar">
-                <CascadingGoalFilter value={goalFilter} onChange={setGoalFilter} />
-            </div>
+            {/* Filters */}
+            <FilterBar
+                goalFilter={goalFilter}
+                onGoalFilterChange={setGoalFilter}
+                selectedTags={selectedTags}
+                onTagsChange={setSelectedTags}
+            />
 
             {/* Metric Cards */}
             <div className="metrics-grid">
@@ -139,11 +214,11 @@ export function Dashboard() {
                 </div>
 
                 <div className="metric-card">
-                    <div className="metric-icon" style={{ background: overdueTasks.length > 0 ? 'hsla(0, 84%, 60%, 0.1)' : 'hsla(142, 70%, 45%, 0.1)', color: overdueTasks.length > 0 ? '#ef4444' : '#10b981' }}>
+                    <div className="metric-icon" style={{ background: overdueCount > 0 ? 'hsla(0, 84%, 60%, 0.1)' : 'hsla(142, 70%, 45%, 0.1)', color: overdueCount > 0 ? '#ef4444' : '#10b981' }}>
                         <AlertTriangle size={24} />
                     </div>
                     <div className="metric-info">
-                        <span className="metric-value">{overdueTasks.length}</span>
+                        <span className="metric-value">{overdueCount}</span>
                         <span className="metric-label">Overdue</span>
                     </div>
                 </div>
@@ -157,7 +232,7 @@ export function Dashboard() {
                         KPI Performance ({totalKpis} metrics)
                     </h3>
                     <div className="kpi-summary-grid">
-                        {allKpis.slice(0, 6).map(kpi => {
+                        {allKpis.slice(0, 5).map(kpi => {
                             const progress = kpi.target ? Math.round((kpi.current / kpi.target) * 100) : 0;
                             const isOnTrack = progress >= 50;
                             return (
@@ -209,13 +284,14 @@ export function Dashboard() {
                             <div className="progress-bar-fill" style={{ width: `${taskCompletionRate}%` }}></div>
                         </div>
                     </div>
+                    {/* Switched to avgProjectCompletion from server which is more accurate than potentially partial goal progress */}
                     <div className="progress-card">
                         <div className="progress-header">
-                            <span>Goal Progress (Avg)</span>
-                            <span className="progress-percent">{avgGoalProgress}%</span>
+                            <span>Project Completion (Avg)</span>
+                            <span className="progress-percent">{avgProjectCompletion}%</span>
                         </div>
                         <div className="progress-bar-track">
-                            <div className="progress-bar-fill" style={{ width: `${avgGoalProgress}%` }}></div>
+                            <div className="progress-bar-fill" style={{ width: `${avgProjectCompletion}%` }}></div>
                         </div>
                     </div>
                 </div>
@@ -227,16 +303,17 @@ export function Dashboard() {
                 <div className="dashboard-section">
                     <h3 className="section-title danger">
                         <AlertTriangle size={18} />
-                        Overdue Tasks ({overdueTasks.length})
+                        Overdue Tasks ({overdueCount})
                     </h3>
                     {overdueTasks.length === 0 ? (
                         <p className="empty-message">No overdue tasks! 🎉</p>
                     ) : (
                         <ul className="task-list">
-                            {overdueTasks.slice(0, 5).map(task => (
+                            {overdueTasks.map(task => (
                                 <li key={task.id} className="task-list-item overdue">
                                     <span className="task-title">{task.title}</span>
                                     <span className="task-due">End: {new Date(task.endDate || task.dueDate).toLocaleDateString()}</span>
+                                    <span className="task-project-tag">{task.projectTitle}</span>
                                 </li>
                             ))}
                         </ul>
@@ -247,7 +324,7 @@ export function Dashboard() {
                 <div className="dashboard-section">
                     <h3 className="section-title">
                         <BarChart3 size={18} />
-                        In Progress ({inProgressTasks.length})
+                        In Progress ({inProgressCount})
                     </h3>
                     {inProgressTasks.length === 0 ? (
                         <div className="empty-state-enhanced">
@@ -257,9 +334,10 @@ export function Dashboard() {
                         </div>
                     ) : (
                         <ul className="task-list">
-                            {inProgressTasks.slice(0, 5).map(task => (
+                            {inProgressTasks.map(task => (
                                 <li key={task.id} className="task-list-item">
                                     <span className="task-title">{task.title}</span>
+                                    <span className="task-project-tag">{task.projectTitle}</span>
                                 </li>
                             ))}
                         </ul>

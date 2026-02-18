@@ -2,7 +2,6 @@ import { useState, useRef, useEffect } from 'react';
 import { Clock, MessageSquare, Eye, Send, CheckCircle, XCircle } from 'lucide-react';
 import { useData } from '../../context/DataContext';
 import { Modal } from '../UI/Modal';
-import { useAuth } from '../../hooks/useAuth';
 import './Intake.css';
 
 const STATUS_LABELS = {
@@ -14,7 +13,6 @@ const STATUS_LABELS = {
 
 export function MySubmissionsList() {
     const { mySubmissions, intakeForms, addConversationMessage, markConversationRead } = useData();
-    const { account } = useAuth();
     const [selectedSubmission, setSelectedSubmission] = useState(null);
     const [newMessage, setNewMessage] = useState('');
     const conversationEndRef = useRef(null);
@@ -81,7 +79,7 @@ export function MySubmissionsList() {
             }));
 
             setNewMessage('');
-        } catch (err) {
+        } catch (_err) {
             alert('Failed to send message. Please try again.');
         }
     };

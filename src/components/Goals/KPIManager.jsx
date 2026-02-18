@@ -4,7 +4,7 @@ import { useToast } from '../../context/ToastContext';
 import { Plus, Trash2, TrendingUp, X } from 'lucide-react';
 import './KPI.css';
 
-export function KPIManager({ goalId, kpis = [], onClose }) {
+export function KPIManager({ goalId, kpis = [] }) {
     const { addKpi, updateKpi, deleteKpi } = useData();
     const { success } = useToast();
     const [showAddForm, setShowAddForm] = useState(false);

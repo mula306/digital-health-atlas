@@ -1,76 +1,56 @@
 import React, { useState, useMemo, useRef } from 'react';
 import { useData } from '../../context/DataContext';
-import { Search, Download, X, Tag } from 'lucide-react';
+import { Search, Download, X } from 'lucide-react';
 import { Modal } from '../UI/Modal';
 import { StatusReportView } from '../StatusReport/StatusReportView';
-import { CascadingGoalFilter, getDescendantGoalIds } from '../UI/CascadingGoalFilter';
+
+import { FilterBar } from '../UI/FilterBar';
 import html2pdf from 'html2pdf.js';
 import './ExecDashboard.css';
 
+import { formatCompactDate as formatShortDate } from '../../utils';
+import { API_BASE } from '../../apiClient';
+
+import { getDescendantGoalIds } from '../../utils/goalHelpers';
+
+// Helper to get hierarchy for a project
+const getProjectHierarchy = (goals, goalId) => {
+    const hierarchy = {
+        organization: '-',
+        division: '-',
+        department: '-',
+        branch: '-'
+    };
+
+    if (!goalId) return hierarchy;
+
+    const path = [];
+    // Loose equality for initial find to handle string/number mismatch
+    let current = goals.find(g => g.id == goalId);
+
+    // Traverse up using loose equality for parentId check
+    while (current) {
+        path.unshift(current);
+        if (!current.parentId) break;
+        current = goals.find(g => g.id == current.parentId);
+    }
+
+    // Map depth to levels
+    if (path[0]) hierarchy.organization = path[0].title;
+    if (path[1]) hierarchy.division = path[1].title;
+    if (path[2]) hierarchy.department = path[2].title;
+    if (path[3]) hierarchy.branch = path[3].title;
+
+    return hierarchy;
+};
+
 export function ExecDashboard() {
-    const { projects, goals, getLatestStatusReport, tagGroups } = useData();
+    const { projects, goals, getLatestStatusReport, fetchExecSummaryProjects, authFetch } = useData();
     const [searchTerm, setSearchTerm] = useState('');
     const [selectedGoalId, setSelectedGoalId] = useState('');
     const [selectedTags, setSelectedTags] = useState([]);
     const [selectedProject, setSelectedProject] = useState(null);
-    const [showTagFilter, setShowTagFilter] = useState(false);
     const tableRef = useRef(null);
-
-    // Get only active tags grouped for the filter UI
-    const activeTags = useMemo(() => {
-        if (!tagGroups || tagGroups.length === 0) return [];
-        return tagGroups
-            .map(group => ({
-                ...group,
-                tags: (group.tags || []).filter(t => t.status?.toLowerCase() === 'active')
-            }))
-            .filter(group => group.tags.length > 0);
-    }, [tagGroups]);
-
-    const toggleTag = (tagId) => {
-        setSelectedTags(prev =>
-            prev.includes(tagId)
-                ? prev.filter(id => id !== tagId)
-                : [...prev, tagId]
-        );
-    };
-
-    const clearAllFilters = () => {
-        setSelectedGoalId('');
-        setSelectedTags([]);
-        setSearchTerm('');
-    };
-
-    // Helper to get hierarchy for a project
-    const getProjectHierarchy = (goalId) => {
-        const hierarchy = {
-            organization: '-',
-            division: '-',
-            department: '-',
-            branch: '-'
-        };
-
-        if (!goalId) return hierarchy;
-
-        const path = [];
-        // Loose equality for initial find to handle string/number mismatch
-        let current = goals.find(g => g.id == goalId);
-
-        // Traverse up using loose equality for parentId check
-        while (current) {
-            path.unshift(current);
-            if (!current.parentId) break;
-            current = goals.find(g => g.id == current.parentId);
-        }
-
-        // Map depth to levels
-        if (path[0]) hierarchy.organization = path[0].title;
-        if (path[1]) hierarchy.division = path[1].title;
-        if (path[2]) hierarchy.department = path[2].title;
-        if (path[3]) hierarchy.branch = path[3].title;
-
-        return hierarchy;
-    };
 
     // Export to PDF
     const handleExportPDF = () => {
@@ -239,18 +219,97 @@ export function ExecDashboard() {
         html2pdf().set(opt).from(container).save();
     };
 
+    const [fullReport, setFullReport] = useState(null);
+    const [loadingReport, setLoadingReport] = useState(false);
+    const [allProjects, setAllProjects] = useState([]);
+    const [loadingSummary, setLoadingSummary] = useState(true);
+    const [fetchError, setFetchError] = useState(null);
+
+
+    // Fetch the full status report when user clicks a project row
+    const handleProjectClick = async (row) => {
+        setSelectedProject(row);
+        setFullReport(null);
+        setLoadingReport(true);
+        try {
+            const res = await authFetch(`${API_BASE}/projects/${row.id}/reports`);
+            if (res.ok) {
+                const reports = await res.json();
+                // API returns sorted DESC — first one is the latest
+                setFullReport(reports.length > 0 ? reports[0] : null);
+            }
+        } catch (err) {
+            console.error('Error fetching full report:', err);
+        } finally {
+            setLoadingReport(false);
+        }
+    };
+
+    // Helper functions moved outside component
+
+    // Fetch full executive summary data on mount
+    React.useEffect(() => {
+        let isMounted = true;
+
+        const fetchSummary = async () => {
+            setLoadingSummary(true);
+            setFetchError(null);
+            try {
+                // Add simple timeout
+                const timeoutPromise = new Promise((_, reject) =>
+                    setTimeout(() => reject(new Error('Request timed out (8s)')), 8000)
+                );
+
+                const data = await Promise.race([
+                    fetchExecSummaryProjects(),
+                    timeoutPromise
+                ]);
+
+                if (isMounted) {
+                    if (data && Array.isArray(data) && data.length > 0) {
+                        console.log(`ExecDashboard: Loaded ${data.length} projects successfully.`);
+                        setAllProjects(data);
+                    } else {
+                        console.warn("ExecDashboard: Fetched data was empty or invalid", data);
+                        // Don't show error for empty list, just use fallback
+                    }
+                }
+            } catch (err) {
+                console.error("ExecDashboard: Error fetching summary:", err);
+                if (isMounted) setFetchError(err.message);
+            } finally {
+                if (isMounted) setLoadingSummary(false);
+            }
+        };
+
+        fetchSummary();
+        return () => { isMounted = false; };
+    }, [fetchExecSummaryProjects]);
+
     // Process data using Cascading Filter logic
     const groupedData = useMemo(() => {
+        // Use allProjects if available, otherwise fallback to context projects (paginated)
+        const sourceProjects = allProjects.length > 0 ? allProjects : projects;
+
         // 1. Filter projects based on selected goal (and descendants)
         // Mimics logic from KanbanView.jsx
         // 1a. Filter by goal
-        let filteredProjects = selectedGoalId
-            ? projects.filter(p => {
-                if (p.goalId == selectedGoalId) return true;
-                const descendantIds = getDescendantGoalIds(goals, selectedGoalId);
-                return descendantIds.includes(p.goalId);
-            })
-            : projects;
+        let filteredProjects = sourceProjects;
+
+        if (selectedGoalId) {
+            const descendantIds = getDescendantGoalIds(goals, selectedGoalId);
+            // Normalize IDs to strings for comparison to avoid mismatches
+            const targetIds = [selectedGoalId, ...descendantIds].map(id => String(id));
+
+            console.log(`Filtering: Selected ${selectedGoalId}, Found ${descendantIds.length} descendants.`);
+
+            filteredProjects = sourceProjects.filter(p => {
+                if (!p.goalId) return false;
+                return targetIds.includes(String(p.goalId));
+            });
+
+            console.log(`Filtering Result: ${filteredProjects.length} / ${sourceProjects.length} projects match.`);
+        }
 
         // 1b. Filter by selected tags (AND logic — project must have ALL selected tags)
         if (selectedTags.length > 0) {
@@ -263,8 +322,9 @@ export function ExecDashboard() {
 
         // 2. Process and Map
         const mapped = filteredProjects.map(p => {
-            const h = getProjectHierarchy(p.goalId);
-            const report = getLatestStatusReport(p.id);
+            const h = getProjectHierarchy(goals, p.goalId);
+            // Use pre-fetched report if available, otherwise try context
+            const report = p.report || getLatestStatusReport(p.id);
             return {
                 id: p.id,
                 title: p.title,
@@ -303,7 +363,7 @@ export function ExecDashboard() {
         });
 
         return groups;
-    }, [projects, goals, getLatestStatusReport, searchTerm, selectedGoalId, selectedTags]);
+    }, [projects, allProjects, goals, getLatestStatusReport, searchTerm, selectedGoalId, selectedTags]);
 
     const getStatusColor = (status) => {
         switch (status) {
@@ -339,136 +399,170 @@ export function ExecDashboard() {
             </div>
 
             {/* Filters */}
-            <div className="dashboard-filters glass">
-                <div className="exec-filter-row">
-                    <CascadingGoalFilter value={selectedGoalId} onChange={setSelectedGoalId} />
-
-                    <button
-                        className={`btn-secondary btn-sm exec-tag-toggle ${showTagFilter ? 'active' : ''} ${selectedTags.length > 0 ? 'has-selection' : ''}`}
-                        onClick={() => setShowTagFilter(!showTagFilter)}
-                    >
-                        <Tag size={14} />
-                        Tags{selectedTags.length > 0 && <span className="exec-tag-count">{selectedTags.length}</span>}
+            <FilterBar
+                goalFilter={selectedGoalId}
+                onGoalFilterChange={setSelectedGoalId}
+                selectedTags={selectedTags}
+                onTagsChange={setSelectedTags}
+                countLabel={`${Object.values(groupedData).reduce((acc, org) => acc + Object.values(org).reduce((acc2, div) => acc2 + div.length, 0), 0)} project(s)`}
+            >
+                {searchTerm && (
+                    <button className="btn-secondary btn-sm shared-clear-btn" onClick={() => setSearchTerm('')}>
+                        <X size={14} /> Clear Search
                     </button>
-
-                    {(selectedGoalId || selectedTags.length > 0 || searchTerm) && (
-                        <button className="btn-secondary btn-sm exec-clear-btn" onClick={clearAllFilters}>
-                            <X size={14} /> Clear All
-                        </button>
-                    )}
-                </div>
-
-                {showTagFilter && activeTags.length > 0 && (
-                    <div className="exec-tag-filter-panel">
-                        {activeTags.map(group => (
-                            <div key={group.id} className="exec-tag-group">
-                                <span className="exec-tag-group-label">{group.name}</span>
-                                <div className="exec-tag-options">
-                                    {group.tags.map(tag => (
-                                        <button
-                                            key={tag.id}
-                                            className={`exec-tag-pill ${selectedTags.includes(String(tag.id)) ? 'selected' : ''}`}
-                                            onClick={() => toggleTag(String(tag.id))}
-                                            style={{
-                                                '--tag-color': tag.color || '#6366f1',
-                                            }}
-                                        >
-                                            <span className="exec-tag-dot" style={{ background: tag.color || '#6366f1' }}></span>
-                                            {tag.name}
-                                        </button>
-                                    ))}
-                                </div>
-                            </div>
-                        ))}
-                    </div>
                 )}
-            </div>
+            </FilterBar>
 
             {/* Table */}
             <div className="table-container glass">
+                {fetchError && (
+                    <div className="bg-red-50 border-l-4 border-red-500 p-4 mb-4 mx-4 mt-4">
+                        <div className="flex">
+                            <div className="flex-shrink-0">
+                                <svg className="h-5 w-5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
+                                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                                </svg>
+                            </div>
+                            <div className="ml-3">
+                                <p className="text-sm text-red-700">
+                                    Error loading full portfolio: {fetchError}
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                )}
                 <table className="exec-table" ref={tableRef}>
                     <thead>
                         <tr>
                             <th style={{ width: '25%' }}>Project Name</th>
                             <th style={{ width: '10%' }} className="text-center">Status</th>
-                            <th style={{ width: '65%' }}>Exec Current Status</th>
+                            <th style={{ width: '55%' }}>Exec Current Status</th>
+                            <th style={{ width: '10%' }}>Last Report</th>
                         </tr>
                     </thead>
                     <tbody>
-                        {Object.keys(groupedData).length === 0 ? (
+                        {loadingSummary ? (
+                            // Skeleton Loader Rows
+                            Array.from({ length: 5 }).map((_, idx) => (
+                                <tr key={`skeleton-${idx}`}>
+                                    <td style={{ padding: '1rem' }}>
+                                        <div className="h-4 bg-gray-200 rounded w-3/4 animate-pulse"></div>
+                                        <div className="h-3 bg-gray-100 rounded w-1/2 mt-2 animate-pulse"></div>
+                                    </td>
+                                    <td style={{ padding: '1rem' }}>
+                                        <div className="h-6 w-20 bg-gray-200 rounded mx-auto animate-pulse"></div>
+                                    </td>
+                                    <td style={{ padding: '1rem' }}>
+                                        <div className="space-y-2">
+                                            <div className="h-3 bg-gray-200 rounded w-full animate-pulse"></div>
+                                            <div className="h-3 bg-gray-200 rounded w-5/6 animate-pulse"></div>
+                                        </div>
+                                    </td>
+                                    <td style={{ padding: '1rem' }}>
+                                        <div className="h-3 bg-gray-200 rounded w-24 animate-pulse"></div>
+                                    </td>
+                                </tr>
+                            ))
+                        ) : Object.keys(groupedData).length === 0 ? (
                             <tr>
-                                <td colSpan={3} className="text-center py-8 text-secondary">
-                                    No projects found matching filters.
+                                <td colSpan={4} style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-tertiary)' }}>
+                                    No projects found matching your filters.
                                 </td>
                             </tr>
                         ) : (
-                            Object.keys(groupedData).sort().map(org => (
-                                <React.Fragment key={org}>
-                                    {/* Organization Header */}
-                                    <tr className="org-header-row">
-                                        <td colSpan={3}>{org}</td>
-                                    </tr>
-                                    {Object.keys(groupedData[org]).sort().map(div => (
-                                        <React.Fragment key={`${org}-${div}`}>
-                                            {/* Division Header */}
-                                            <tr className="div-header-row">
-                                                <td colSpan={3}>{div}</td>
-                                            </tr>
-                                            {groupedData[org][div].map(row => (
-                                                <tr
-                                                    key={row.id}
-                                                    onClick={() => setSelectedProject(row)}
-                                                    className="clickable-row"
-                                                >
-                                                    <td className="font-medium text-primary" style={{ paddingLeft: '2rem' }}>
-                                                        {row.title}
-                                                    </td>
-                                                    <td className="text-center">
-                                                        <div
-                                                            className="status-dot"
-                                                            style={{ backgroundColor: getStatusColor(row.overallStatus) }}
-                                                            title={row.overallStatus}
-                                                        />
-                                                    </td>
-                                                    <td className="text-sm text-secondary">{row.execSummary}</td>
-                                                </tr>
+                            Object.entries(groupedData)
+                                .sort(([a], [b]) => a.localeCompare(b))
+                                .map(([orgName, divisions]) => (
+                                    <React.Fragment key={orgName}>
+                                        {/* Organization Header */}
+                                        <tr className="org-header-row">
+                                            <td colSpan={4}>{orgName}</td>
+                                        </tr>
+                                        {/* Divisions */}
+                                        {Object.entries(divisions)
+                                            .sort(([a], [b]) => a.localeCompare(b))
+                                            .map(([divName, projects]) => (
+                                                <React.Fragment key={`${orgName}-${divName}`}>
+                                                    <tr className="div-header-row">
+                                                        <td colSpan={4}>{divName}</td>
+                                                    </tr>
+                                                    {/* Projects */}
+                                                    {projects.map(project => {
+                                                        const report = project.report || getLatestStatusReport(project.id);
+                                                        const statusColor = report ? getStatusColor(report.overallStatus) : '#e5e7eb';
+                                                        const statusLabel = report
+                                                            ? (report.overallStatus.charAt(0).toUpperCase() + report.overallStatus.slice(1))
+                                                            : 'No Report';
+
+                                                        const reportCountText = project.reportCount > 0 ? `${project.reportCount} reports` : '';
+
+                                                        return (
+                                                            <tr
+                                                                key={project.id}
+                                                                className="project-row"
+                                                                onClick={() => handleProjectClick(project)}
+                                                                style={{ cursor: 'pointer' }}
+                                                            >
+                                                                <td className="font-medium">
+                                                                    <div className="project-title">{project.title}</div>
+                                                                    {reportCountText && (
+                                                                        <div className="text-xs text-gray-500 mt-1">
+                                                                            {reportCountText}
+                                                                        </div>
+                                                                    )}
+                                                                </td>
+                                                                <td className="text-center">
+                                                                    <div
+                                                                        className="status-dot"
+                                                                        style={{ backgroundColor: statusColor }}
+                                                                        title={statusLabel}
+                                                                    />
+                                                                </td>
+                                                                <td className="text-sm text-gray-600 max-w-md truncate-cell">
+                                                                    {report?.executiveSummary || (
+                                                                        <span className="italic text-gray-400">No executive summary available</span>
+                                                                    )}
+                                                                </td>
+                                                                <td className="text-sm text-gray-500 whitespace-nowrap">
+                                                                    {report ? formatShortDate(report.updatedAt) : '-'}
+                                                                </td>
+                                                            </tr>
+                                                        );
+                                                    })}
+                                                </React.Fragment>
                                             ))}
-                                        </React.Fragment>
-                                    ))}
-                                </React.Fragment>
-                            ))
+                                    </React.Fragment>
+                                ))
                         )}
                     </tbody>
                 </table>
             </div>
 
-            {selectedProject && selectedProject.report && (
+            {selectedProject && (
                 <Modal
                     isOpen={!!selectedProject}
-                    onClose={() => setSelectedProject(null)}
+                    onClose={() => { setSelectedProject(null); setFullReport(null); }}
                     title={`Status Report: ${selectedProject.title}`}
                     size="xl"
                     closeOnOverlayClick={false}
                 >
                     <div style={{ maxHeight: '80vh', overflowY: 'auto' }}>
-                        <StatusReportView
-                            report={selectedProject.report}
-                            projectTitle={selectedProject.title}
-                            hideActions={true}
-                        />
-                    </div>
-                </Modal>
-            )}
-
-            {selectedProject && !selectedProject.report && (
-                <Modal
-                    isOpen={!!selectedProject}
-                    onClose={() => setSelectedProject(null)}
-                    title={`No Report Available`}
-                    closeOnOverlayClick={false}
-                >
-                    <div className="p-4">
-                        <p>No status report has been filed for <strong>{selectedProject.title}</strong> yet.</p>
+                        {loadingReport ? (
+                            <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600" style={{ margin: '0 auto 1rem' }}></div>
+                                Loading full report...
+                            </div>
+                        ) : fullReport ? (
+                            <StatusReportView
+                                report={fullReport}
+                                projectTitle={selectedProject.title}
+                                hideActions={true}
+                            />
+                        ) : (
+                            <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                                <p>No status report has been filed for <strong>{selectedProject.title}</strong> yet.</p>
+                            </div>
+                        )}
                     </div>
                 </Modal>
             )}

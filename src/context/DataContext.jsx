@@ -1,16 +1,13 @@
 import { createContext, useContext, useEffect, useState, useMemo, useCallback } from 'react';
 import { useMsal } from '@azure/msal-react';
 import { apiRequest } from '../authConfig';
+import { fetchWithAuth, ApiError, API_BASE } from '../apiClient';
 
 const DataContext = createContext();
 
-// Dynamically detect API URL - works from localhost or network
-const API_BASE = `http://${window.location.hostname}:3001/api`;
-
 // Helper: Calculate project completion percentage
 function calcProjectCompletion(project) {
-    // Use server-computed completion unless full details have been loaded
-    // (The initial project list only includes active tasks, not all tasks)
+    // ... (unchanged)
     if (!project._detailsLoaded) return project.completion || 0;
     if (!project.tasks || project.tasks.length === 0) return 0;
     const doneCount = project.tasks.filter(t => t.status === 'done').length;
@@ -18,33 +15,24 @@ function calcProjectCompletion(project) {
 }
 
 export function DataProvider({ children }) {
+    // ... State definitions (unchanged)
     const [goals, setGoals] = useState([]);
     const [projects, setProjects] = useState([]);
     const [projectsPagination, setProjectsPagination] = useState({
-        page: 1,
-        limit: 50,
-        total: 0,
-        totalPages: 0,
-        hasMore: false
+        page: 1, limit: 50, total: 0, totalPages: 0, hasMore: false
     });
     const [intakeForms, setIntakeForms] = useState([]);
     const [intakeSubmissions, setIntakeSubmissions] = useState([]);
     const [tagGroups, setTagGroups] = useState([]);
-    const [permissions, setPermissions] = useState([]); // Dynamic Role Permissions
+    const [permissions, setPermissions] = useState([]);
     const { instance } = useMsal();
     const [loading, setLoading] = useState(true);
     const [loadingMore, setLoadingMore] = useState(false);
     const [error, setError] = useState(null);
 
-    // Helper: Authenticated fetch wrapper
+    // Helper: Authenticated fetch wrapper using centralized client
     const authFetch = useCallback(async (url, options = {}) => {
-        const headers = new Headers(options.headers || {});
-
-        // standard headers
-        if (!headers.has('Content-Type') && !(options.body instanceof FormData)) {
-            headers.set('Content-Type', 'application/json');
-        }
-
+        let token = null;
         try {
             const account = instance.getActiveAccount();
             if (account) {
@@ -52,19 +40,14 @@ export function DataProvider({ children }) {
                     ...apiRequest,
                     account: account
                 });
-                headers.set('Authorization', `Bearer ${response.accessToken}`);
+                token = response.accessToken;
             }
         } catch (error) {
             console.error('Token acquisition failed', error);
-            // Fallback: Proceed without token (backend might reject) or redirect to login
+            // Proceed without token (backend will reject 401 if strict)
         }
 
-        const config = {
-            ...options,
-            headers: headers
-        };
-
-        return fetch(url, config);
+        return fetchWithAuth(url, token, options);
     }, [instance]);
 
     // Load more projects (pagination)
@@ -75,8 +58,7 @@ export function DataProvider({ children }) {
         try {
             const nextPage = projectsPagination.page + 1;
             const res = await authFetch(`${API_BASE}/projects?page=${nextPage}&limit=${projectsPagination.limit}`);
-            if (!res.ok) throw new Error('Failed to fetch more projects');
-
+            // fetchWithAuth throws on error, so res is OK here
             const data = await res.json();
             setProjects(prev => [...prev, ...data.projects]);
             setProjectsPagination(data.pagination);
@@ -87,78 +69,96 @@ export function DataProvider({ children }) {
         }
     }, [projectsPagination, loadingMore, authFetch]);
 
-    // Fetch all data on mount
+    // Fetch Exec Summary (All Projects)
+    const fetchExecSummaryProjects = useCallback(async () => {
+        const res = await authFetch(`${API_BASE}/projects/exec-summary`);
+        return await res.json();
+    }, [authFetch]);
+
+    // Fetch all data on mount (Permission-Aware)
     useEffect(() => {
         async function fetchData() {
             try {
                 console.log("DataContext: Starting data fetch...");
                 setLoading(true);
-                // We need to wait for MSAL to be ready/authenticated
-                // Use authFetch for these too
-                console.log("DataContext: Fetching critical data (Permissions, Goals, Projects)...");
 
-                // 1. Fetch Critical Data
-                const [permsRes, goalsRes, projectsRes] = await Promise.all([
-                    authFetch(`${API_BASE}/admin/permissions`),
-                    authFetch(`${API_BASE}/goals`),
-                    authFetch(`${API_BASE}/projects?page=1&limit=50`)
+                // 1. Fetch Permissions FIRST to determine what else to fetch
+                let currentPermissions = [];
+                try {
+                    const permsRes = await authFetch(`${API_BASE}/admin/permissions`);
+                    currentPermissions = await permsRes.json();
+                    setPermissions(currentPermissions);
+                } catch (err) {
+                    console.warn("DataContext: Failed to load permissions", err);
+                    // If 403/401, permissions remain empty
+                }
+
+                // Helper to check permission against the JUST loaded permissions
+                // (State update hasn't propagated yet)
+                const account = instance.getActiveAccount();
+                const roles = account?.idTokenClaims?.roles || [];
+                const checkPerm = (permKey) => {
+                    if (roles.includes('Admin')) return true;
+                    // Check if any user role has the permission allowed
+                    return currentPermissions.some(p => roles.includes(p.role) && p.permission === permKey && p.isAllowed);
+                };
+
+                // 2. Fetch Core Data (Goals, Projects)
+                // We use Promise.allSettled to allow partial failures
+                const [goalsResult, projectsResult] = await Promise.allSettled([
+                    checkPerm('can_view_goals') ? authFetch(`${API_BASE}/goals`) : Promise.reject('skipped'),
+                    checkPerm('can_view_projects') ? authFetch(`${API_BASE}/projects?page=1&limit=50`) : Promise.reject('skipped')
                 ]);
 
-                // Process Critical Data
-                if (permsRes.ok) {
-                    setPermissions(await permsRes.json());
-                } else {
-                    console.warn("DataContext: Failed to load permissions", permsRes.status);
-                    if (permsRes.status === 403) setPermissions([]);
-                }
-
-                if (goalsRes.ok) {
-                    setGoals(await goalsRes.json());
-                } else {
-                    if (goalsRes.status === 403) {
-                        console.info("DataContext: User does not have access to goals (403). Using empty list.");
+                if (goalsResult.status === 'fulfilled') {
+                    setGoals(await goalsResult.value.json());
+                } else if (goalsResult.reason !== 'skipped') {
+                    // Check if it was 403 (shouldn't happen if checkPerm works, but fallback)
+                    if (goalsResult.reason?.status === 403) {
                         setGoals([]);
                     } else {
-                        throw new Error(`Failed to load goals: ${goalsRes.status}`);
+                        console.error("Failed to load goals", goalsResult.reason);
                     }
                 }
 
-                if (projectsRes.ok) {
-                    const projectsData = await projectsRes.json();
-                    setProjects(projectsData.projects || projectsData); // Support both formats
-                    if (projectsData.pagination) {
-                        setProjectsPagination(projectsData.pagination);
-                    }
-                } else {
-                    if (projectsRes.status === 403) {
-                        console.info("DataContext: User does not have access to projects (403). Using empty list.");
+                if (projectsResult.status === 'fulfilled') {
+                    const projectsData = await projectsResult.value.json();
+                    setProjects(projectsData.projects || projectsData);
+                    if (projectsData.pagination) setProjectsPagination(projectsData.pagination);
+                } else if (projectsResult.reason !== 'skipped') {
+                    if (projectsResult.reason?.status === 403) {
                         setProjects([]);
-                        setProjectsPagination({ page: 1, limit: 50, total: 0, totalPages: 0, hasMore: false });
                     } else {
-                        throw new Error(`Failed to load projects: ${projectsRes.status}`);
+                        console.error("Failed to load projects", projectsResult.reason);
                     }
                 }
 
                 console.log("DataContext: Critical data loaded. Unblocking render.");
-                setLoading(false); // UI can render now
+                setLoading(false);
 
-                // 2. Fetch Secondary Data (Intake) - Background
-                console.log("DataContext: Fetching secondary data (Intake) in background...");
-                try {
-                    const [formsRes, subsRes, mySubsRes, tagsRes] = await Promise.all([
-                        authFetch(`${API_BASE}/intake/forms`),
-                        authFetch(`${API_BASE}/intake/submissions`),
-                        authFetch(`${API_BASE}/intake/my-submissions`),
-                        authFetch(`${API_BASE}/tags`)
-                    ]);
+                // 3. Fetch Secondary Data (Intake, Tags) - Background
+                const secondaryPromises = [];
 
-                    if (formsRes.ok) setIntakeForms(await formsRes.json());
-                    if (subsRes.ok) setIntakeSubmissions(await subsRes.json());
-                    if (mySubsRes.ok) setMySubmissions(await mySubsRes.json());
-                    if (tagsRes.ok) setTagGroups(await tagsRes.json());
-                } catch (bgErr) {
-                    console.warn("DataContext: Background fetch failed", bgErr);
+                // Tags (generally public/authenticated)
+                secondaryPromises.push(authFetch(`${API_BASE}/tags`).then(r => r.json()).then(setTagGroups).catch(e => console.warn('Tags fetch failed', e)));
+
+                // Intake Forms (if can view/manage)
+                if (checkPerm('can_view_intake') || checkPerm('can_manage_intake')) {
+                    secondaryPromises.push(authFetch(`${API_BASE}/intake/forms`).then(r => r.json()).then(setIntakeForms).catch(e => console.warn('Intake forms failed', e)));
                 }
+
+                // Submissions - ONLY if allowed
+                // 'can_view_incoming_requests' -> All submissions
+                if (checkPerm('can_view_incoming_requests')) {
+                    secondaryPromises.push(authFetch(`${API_BASE}/intake/submissions`).then(r => r.json()).then(setIntakeSubmissions).catch(e => console.warn('Submissions fetch failed', e)));
+                }
+
+                // My Submissions - Always allowed for authenticated users
+                if (account) {
+                    secondaryPromises.push(authFetch(`${API_BASE}/intake/my-submissions`).then(r => r.json()).then(setMySubmissions).catch(e => console.warn('My Submissions failed', e)));
+                }
+
+                await Promise.allSettled(secondaryPromises);
 
                 setError(null);
             } catch (err) {
@@ -167,13 +167,10 @@ export function DataProvider({ children }) {
                 setLoading(false);
             }
         }
-        // Only fetch if authenticated (which DataContext is wrapped in, but good check)
+
         const account = instance.getActiveAccount();
         if (account) {
-            console.log("DataContext: Authenticated user found, fetching data for:", account.username);
             fetchData();
-        } else {
-            console.log("DataContext: No active account found yet.");
         }
     }, [instance, authFetch]);
 
@@ -214,21 +211,11 @@ export function DataProvider({ children }) {
         }));
     }, [projects]);
 
-    // Derived: Goals with progress calculated from linked projects AND child goals
+    // Derived: Goals with progress calculated from server-provided stats (recursive aggregation)
     const goalsWithProgress = useMemo(() => {
-        // console.log('Recalculating goal progress...', { goalsCount: goals.length, projectsCount: projectsWithCompletion.length });
         if (goals.length === 0) return [];
 
-        // 1. Projects Lookup (O(P))
-        const projectsByGoal = projectsWithCompletion.reduce((acc, p) => {
-            if (p.goalId) {
-                if (!acc[p.goalId]) acc[p.goalId] = [];
-                acc[p.goalId].push(p);
-            }
-            return acc;
-        }, {});
-
-        // 2. Goal Hierarchy Lookup (O(G)) - Parent -> Children
+        // 1. Goal Hierarchy Lookup (O(G)) - Parent -> Children
         const goalChildrenMap = {};
         goals.forEach(g => {
             if (g.parentId) {
@@ -237,55 +224,56 @@ export function DataProvider({ children }) {
             }
         });
 
-        // 3. Recursive Project Aggregation with Memoization
-        const projectCache = {}; // Stores array of project objects for each goal (including descendants)
+        // 2. Recursive Stats Aggregation with Memoization
+        const statsCache = {}; // Stores { count, sum, kpiCount } for each goal (including descendants)
 
-        const getGoalProjects = (goalId) => {
-            if (projectCache[goalId] !== undefined) return projectCache[goalId];
+        const getGoalStats = (goalId) => {
+            if (statsCache[goalId] !== undefined) return statsCache[goalId];
 
-            // Prevent infinite recursion loops
-            projectCache[goalId] = []; // Temporary value
+            // Prevent infinite recursion
+            statsCache[goalId] = { count: 0, sum: 0, kpiCount: 0 };
 
-            // Start with direct projects
-            let allProjects = projectsByGoal[goalId] || [];
+            const goal = goals.find(g => g.id === goalId);
+            if (!goal) return { count: 0, sum: 0, kpiCount: 0 };
 
-            // Add projects from child goals
+            // Start with direct/server stats
+            let totalCount = goal.directProjectCount || 0;
+            let totalSum = goal.directCompletionSum || 0;
+            let totalKpiCount = (goal.kpis ? goal.kpis.length : 0);
+
+            // Add stats from child goals
             const childGoalIds = goalChildrenMap[goalId] || [];
             childGoalIds.forEach(childId => {
-                const childProjects = getGoalProjects(childId);
-                allProjects = [...allProjects, ...childProjects];
+                const childStats = getGoalStats(childId);
+                totalCount += childStats.count;
+                totalSum += childStats.sum;
+                totalKpiCount += childStats.kpiCount;
             });
 
-            projectCache[goalId] = allProjects;
-            return allProjects;
+            const result = { count: totalCount, sum: totalSum, kpiCount: totalKpiCount };
+            statsCache[goalId] = result;
+            return result;
         };
 
         return goals.map(goal => {
-            // Get ALL projects (direct + descendant)
-            const allProjects = getGoalProjects(goal.id);
+            // Get aggregated stats
+            const stats = getGoalStats(goal.id);
 
-            // Calculate progress based on ALL projects
+            // Calculate progress
             let progress = 0;
-            if (allProjects.length > 0) {
-                const totalCompletion = allProjects.reduce((sum, p) => sum + p.completion, 0);
-                progress = Math.round(totalCompletion / allProjects.length);
+            if (stats.count > 0) {
+                progress = Math.round(stats.sum / stats.count);
             }
-
-            // Get direct projects for the specific "Linked Project Count" display if needed, 
-            // OR use total count if user wants to see total scope.
-            // Usually "Linked Project Count" implies direct links, but progress implies total scope.
-            // We'll return totalCount as a new property for clarity.
-
-            const directProjects = projectsByGoal[goal.id] || [];
 
             return {
                 ...goal,
                 progress,
-                linkedProjectCount: directProjects.length, // Keep explicit links count
-                totalProjectCount: allProjects.length      // Total rolling up count
+                linkedProjectCount: goal.directProjectCount || 0, // Direct only
+                totalProjectCount: stats.count,                   // Rolling up count
+                totalKpiCount: stats.kpiCount                     // Rolling up KPI count
             };
         });
-    }, [goals, projectsWithCompletion]);
+    }, [goals]);
 
     // Optimization: Pre-calculate user permissions into a Set for O(1) lookup
     const userPermissions = useMemo(() => {
@@ -883,6 +871,8 @@ export function DataProvider({ children }) {
 
     // Show error state
     if (error) {
+        const isAuthError = typeof error === 'string' && (error.includes('401') || error.includes('Session'));
+
         return (
             <div style={{
                 display: 'flex',
@@ -893,18 +883,43 @@ export function DataProvider({ children }) {
                 gap: '1rem',
                 color: 'var(--text-secondary)'
             }}>
-                <h2 style={{ color: '#ef4444' }}>Connection Error</h2>
-                <p><strong>Error:</strong> {error}</p>
-                <div style={{ fontSize: '0.9rem', color: '#666' }}>
-                    <p>Possible causes:</p>
-                    <ul style={{ listStyle: 'none', padding: 0 }}>
-                        <li>1. Backend server is not running on port 3001</li>
-                        <li>2. Authentication failed (401 Unauthorized)</li>
-                        <li>3. Network/CORS connectivity issue</li>
-                    </ul>
-                </div>
-                <p>Make sure the API server is running on port 3001</p>
-                <code>cd server && npm start</code>
+                {isAuthError ? (
+                    <>
+                        <h2 style={{ color: '#f59e0b' }}>Session Expired</h2>
+                        <p>Your session has expired or is invalid. Please sign in again.</p>
+                        <button
+                            onClick={() => instance.loginRedirect(apiRequest)}
+                            style={{
+                                padding: '0.6rem 1.2rem',
+                                background: '#2563eb',
+                                color: 'white',
+                                border: 'none',
+                                borderRadius: '6px',
+                                fontSize: '1rem',
+                                cursor: 'pointer',
+                                marginTop: '0.5rem',
+                                fontWeight: '500'
+                            }}
+                        >
+                            Sign In Again
+                        </button>
+                    </>
+                ) : (
+                    <>
+                        <h2 style={{ color: '#ef4444' }}>Connection Error</h2>
+                        <p><strong>Error:</strong> {error}</p>
+                        <div style={{ fontSize: '0.9rem', color: '#666' }}>
+                            <p>Possible causes:</p>
+                            <ul style={{ listStyle: 'none', padding: 0 }}>
+                                <li>1. Backend server is not running on port 3001</li>
+                                <li>2. Authentication failed (401 Unauthorized)</li>
+                                <li>3. Network/CORS connectivity issue</li>
+                            </ul>
+                        </div>
+                        <p>Make sure the API server is running on port 3001</p>
+                        <code>cd server && npm start</code>
+                    </>
+                )}
             </div>
         );
     }
@@ -925,7 +940,7 @@ export function DataProvider({ children }) {
             intakeSubmissions, mySubmissions, addIntakeSubmission, updateIntakeSubmission,
             addConversationMessage, markConversationRead, migrateInfoRequestsToConversation, convertSubmissionToProject,
             addStatusReport, getLatestStatusReport, restoreStatusReport,
-            authFetch,
+            authFetch, fetchExecSummaryProjects,
 
             permissions, hasPermission, updatePermissionsBulk,
 
@@ -937,4 +952,5 @@ export function DataProvider({ children }) {
     );
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const useData = () => useContext(DataContext);

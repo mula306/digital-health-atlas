@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Filter, X } from 'lucide-react';
 import { useData } from '../../context/DataContext';
 import './CascadingGoalFilter.css';
@@ -74,35 +74,36 @@ export function CascadingGoalFilter({ value, onChange }) {
         onChange('');
     };
 
-    // Sync external value changes
-    useEffect(() => {
+    // Sync external value changes (Derived State Pattern)
+    const [prevValue, setPrevValue] = useState(value);
+    if (value !== prevValue) {
+        setPrevValue(value);
         if (!value) {
             setSelections({ org: '', division: '', department: '', branch: '' });
-            return;
+        } else {
+            // Find the goal and trace its ancestry
+            // Use loose equality or parsing to match string/number
+            const goal = goals.find(g => g.id == value);
+            if (goal) {
+                // Build ancestry chain
+                const ancestry = [];
+                let current = goal;
+                while (current) {
+                    ancestry.unshift(current.id);
+                    // Ensure parentId lookup is robust
+                    current = goals.find(g => g.id === current.parentId);
+                }
+
+                // Set selections based on ancestry
+                setSelections({
+                    org: ancestry[0] || '',
+                    division: ancestry[1] || '',
+                    department: ancestry[2] || '',
+                    branch: ancestry[3] || ''
+                });
+            }
         }
-
-        // Find the goal and trace its ancestry
-        // Use loose equality or parsing to match string/number
-        const goal = goals.find(g => g.id == value);
-        if (!goal) return;
-
-        // Build ancestry chain
-        const ancestry = [];
-        let current = goal;
-        while (current) {
-            ancestry.unshift(current.id);
-            // Ensure parentId lookup is robust
-            current = goals.find(g => g.id === current.parentId);
-        }
-
-        // Set selections based on ancestry
-        setSelections({
-            org: ancestry[0] || '',
-            division: ancestry[1] || '',
-            department: ancestry[2] || '',
-            branch: ancestry[3] || ''
-        });
-    }, [value, goals]);
+    }
 
     const hasAnySelection = selections.org || selections.division ||
         selections.department || selections.branch;
@@ -184,18 +185,4 @@ export function CascadingGoalFilter({ value, onChange }) {
             </div>
         </div>
     );
-}
-
-// Helper function to get all descendant goal IDs
-export function getDescendantGoalIds(goals, parentId) {
-    const descendants = [];
-    // Use loose equality to match string IDs with number parentIds if needed
-    const children = goals.filter(g => g.parentId == parentId);
-
-    for (const child of children) {
-        descendants.push(child.id);
-        descendants.push(...getDescendantGoalIds(goals, child.id));
-    }
-
-    return descendants;
 }

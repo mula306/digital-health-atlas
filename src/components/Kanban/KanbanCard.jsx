@@ -1,4 +1,4 @@
-import { useState, memo } from 'react';
+import { memo } from 'react';
 import { Calendar, Clock, AlertCircle } from 'lucide-react';
 import { useData } from '../../context/DataContext';
 
@@ -102,6 +102,11 @@ export const KanbanCard = memo(function KanbanCard({ task, projectId, onClick })
             </div>
 
             <h4 className="card-title">{task.title}</h4>
+
+            {/* Description preview */}
+            {task.description && (
+                <p className="card-description">{task.description}</p>
+            )}
 
             {/* End date badge */}
             {formattedDate && (

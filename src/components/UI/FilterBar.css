@@ -1,0 +1,89 @@
+/* ============================
+   Shared FilterBar Styles
+   Matches ExecDashboard filter row
+   ============================ */
+
+.shared-filter-bar {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    padding: 1rem;
+    border-radius: 8px;
+    margin-bottom: 1.5rem;
+}
+
+.shared-filter-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+
+/* Tag toggle */
+.shared-tag-toggle {
+    position: relative;
+}
+
+.shared-tag-toggle.active {
+    border-color: var(--accent-primary);
+    color: var(--accent-primary);
+}
+
+.shared-tag-toggle.has-selection {
+    border-color: var(--accent-primary);
+    background: hsla(var(--hue-indigo), 60%, 60%, 0.1);
+}
+
+.shared-tag-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 18px;
+    border-radius: 99px;
+    background: var(--accent-primary);
+    color: white;
+    font-size: 0.65rem;
+    font-weight: 700;
+    margin-left: 0.25rem;
+}
+
+/* Clear All */
+.shared-clear-btn {
+    color: #ef4444 !important;
+    border-color: rgba(239, 68, 68, 0.3) !important;
+}
+
+.shared-clear-btn:hover {
+    background: rgba(239, 68, 68, 0.1) !important;
+}
+
+/* Count label */
+.shared-filter-count {
+    margin-left: auto;
+    font-size: 0.9rem;
+    color: #6b7280;
+    font-weight: 600;
+}
+
+/* Tag panel (expandable) */
+.shared-tag-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--border-color);
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .shared-filter-row {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .shared-filter-count {
+        margin-left: 0;
+        text-align: center;
+    }
+}

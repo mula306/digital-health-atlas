@@ -1,6 +1,5 @@
 import { useState, useMemo } from 'react';
 import { Calendar, ChevronLeft, ChevronRight } from 'lucide-react';
-import { useData } from '../../context/DataContext';
 import './Gantt.css';
 
 const STATUS_COLORS = {
@@ -23,8 +22,26 @@ const VIEW_PERIODS = {
     year: { label: 'Year', days: 365, showDays: false }
 };
 
+// Start Helper Functions
+const normalizeDate = (date) => {
+    const d = new Date(date);
+    return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+};
+
+const getTaskStartDate = (task) => {
+    if (task.startDate) return normalizeDate(task.startDate);
+    if (task.dueDate) return normalizeDate(task.dueDate);
+    return null;
+};
+
+const getTaskEndDate = (task) => {
+    if (task.endDate) return normalizeDate(task.endDate);
+    if (task.dueDate) return normalizeDate(task.dueDate);
+    return null;
+};
+// End Helper Functions
+
 export function GanttView({ project, onTaskClick }) {
-    const { moveTask } = useData();
     const [periodOffset, setPeriodOffset] = useState(0);
     const [viewPeriod, setViewPeriod] = useState('month');
 
@@ -102,38 +119,6 @@ export function GanttView({ project, onTaskClick }) {
     };
 
     const isWeekend = (date) => date.getDay() === 0 || date.getDay() === 6;
-
-    const normalizeDate = (date) => {
-        const d = new Date(date);
-        // FORCE the local date object to match the UTC date components
-        // e.g. 2026-02-04 UTC -> 2026-02-04 Local representation
-        return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
-    };
-
-    const getTaskStartDate = (task) => {
-        if (task.startDate) return normalizeDate(task.startDate);
-        if (task.dueDate) return normalizeDate(task.dueDate);
-        return null;
-    };
-
-    const getTaskEndDate = (task) => {
-        if (task.endDate) return normalizeDate(task.endDate);
-        if (task.dueDate) return normalizeDate(task.dueDate);
-        return null;
-    };
-
-    const hasTaskDates = (task) => {
-        return task.startDate || task.endDate || task.dueDate;
-    };
-
-    const isTaskVisible = (task) => {
-        const startDate = getTaskStartDate(task);
-        const endDate = getTaskEndDate(task);
-        if (!startDate && !endDate) return false;
-        const taskStart = startDate || endDate;
-        const taskEnd = endDate || startDate;
-        return taskEnd >= rangeStart && taskStart <= rangeEnd;
-    };
 
     const getTaskBar = (task) => {
         const startDate = getTaskStartDate(task);

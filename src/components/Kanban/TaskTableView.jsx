@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { Calendar, Flag, ArrowUpDown, ChevronUp, ChevronDown } from 'lucide-react';
-import { useData } from '../../context/DataContext';
 import './TaskTable.css';
 
 // Get end date (supports legacy dueDate)
@@ -36,7 +35,6 @@ const statusLabels = {
 };
 
 export function TaskTableView({ project, onTaskClick }) {
-    const { moveTask } = useData();
     const [sortField, setSortField] = useState('priority');
     const [sortDirection, setSortDirection] = useState('asc');
 
@@ -72,7 +70,7 @@ export function TaskTableView({ project, onTaskClick }) {
             case 'status':
                 comparison = (statusOrder[a.status] || 0) - (statusOrder[b.status] || 0);
                 break;
-            case 'startDate':
+            case 'startDate': {
                 const aStart = getStartDate(a);
                 const bStart = getStartDate(b);
                 if (!aStart && !bStart) comparison = 0;
@@ -80,7 +78,8 @@ export function TaskTableView({ project, onTaskClick }) {
                 else if (!bStart) comparison = -1;
                 else comparison = new Date(aStart) - new Date(bStart);
                 break;
-            case 'endDate':
+            }
+            case 'endDate': {
                 const aEnd = getEndDate(a);
                 const bEnd = getEndDate(b);
                 if (!aEnd && !bEnd) comparison = 0;
@@ -88,6 +87,7 @@ export function TaskTableView({ project, onTaskClick }) {
                 else if (!bEnd) comparison = -1;
                 else comparison = new Date(aEnd) - new Date(bEnd);
                 break;
+            }
             default:
                 comparison = 0;
         }
@@ -95,7 +95,7 @@ export function TaskTableView({ project, onTaskClick }) {
         return sortDirection === 'asc' ? comparison : -comparison;
     });
 
-    const SortIcon = ({ field }) => {
+    const renderSortIcon = (field) => {
         if (sortField !== field) return <ArrowUpDown size={14} className="sort-icon inactive" />;
         return sortDirection === 'asc'
             ? <ChevronUp size={14} className="sort-icon active" />
@@ -108,19 +108,19 @@ export function TaskTableView({ project, onTaskClick }) {
                 <thead>
                     <tr>
                         <th onClick={() => handleSort('title')} className="sortable">
-                            Task <SortIcon field="title" />
+                            Task {renderSortIcon('title')}
                         </th>
                         <th onClick={() => handleSort('priority')} className="sortable">
-                            Priority <SortIcon field="priority" />
+                            Priority {renderSortIcon('priority')}
                         </th>
                         <th onClick={() => handleSort('status')} className="sortable">
-                            Status <SortIcon field="status" />
+                            Status {renderSortIcon('status')}
                         </th>
                         <th onClick={() => handleSort('startDate')} className="sortable">
-                            Start Date <SortIcon field="startDate" />
+                            Start Date {renderSortIcon('startDate')}
                         </th>
                         <th onClick={() => handleSort('endDate')} className="sortable">
-                            End Date <SortIcon field="endDate" />
+                            End Date {renderSortIcon('endDate')}
                         </th>
                     </tr>
                 </thead>

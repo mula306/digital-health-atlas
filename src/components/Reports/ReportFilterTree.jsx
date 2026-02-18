@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import { ChevronRight, ChevronDown, Folder, CheckSquare, Square, Tag, X } from 'lucide-react';
 import { useData } from '../../context/DataContext';
-import { getDescendantGoalIds } from '../UI/CascadingGoalFilter';
+import { getDescendantGoalIds } from '../../utils/goalHelpers';
 import '../UI/ProjectTagSelector.css';
 
-export function ReportFilterTree({ onSelectionChange }) {
+export function ReportFilterTree({ onSelectionChange, allProjects = [] }) {
     const { goals, projects, tagGroups } = useData();
     const [selectedIds, setSelectedIds] = useState(new Set());
     const [expandedIds, setExpandedIds] = useState(new Set());
@@ -32,32 +32,35 @@ export function ReportFilterTree({ onSelectionChange }) {
 
     // Filter projects by selected tags
     const filteredProjects = useMemo(() => {
-        if (selectedTags.length === 0) return projects;
-        return projects.filter(p => {
+        // Use allProjects if loaded, otherwise fallback to context projects
+        const source = allProjects.length > 0 ? allProjects : projects;
+
+        if (selectedTags.length === 0) return source;
+        return source.filter(p => {
             if (!p.tags || p.tags.length === 0) return false;
             const projectTagIds = p.tags.map(t => String(t.tagId));
             return selectedTags.every(tagId => projectTagIds.includes(String(tagId)));
         });
-    }, [projects, selectedTags]);
-
-    // Build hierarchy tree using filtered projects
-    const buildTree = (parentId) => {
-        return goals
-            .filter(g => g.parentId === parentId)
-            .map(goal => ({
-                ...goal,
-                children: buildTree(goal.id),
-                projects: filteredProjects.filter(p => p.goalId === goal.id)
-            }));
-    };
-
-    // Helper: check if a tree node has any projects (direct or nested)
-    const hasProjects = (node) => {
-        if (node.projects.length > 0) return true;
-        return node.children.some(child => hasProjects(child));
-    };
+    }, [projects, allProjects, selectedTags]);
 
     const treeData = useMemo(() => {
+        // Build hierarchy tree using filtered projects
+        const buildTree = (parentId) => {
+            return goals
+                .filter(g => g.parentId === parentId)
+                .map(goal => ({
+                    ...goal,
+                    children: buildTree(goal.id),
+                    projects: filteredProjects.filter(p => p.goalId === goal.id)
+                }));
+        };
+
+        // Helper: check if a tree node has any projects (direct or nested)
+        const hasProjects = (node) => {
+            if (node.projects.length > 0) return true;
+            return node.children.some(child => hasProjects(child));
+        };
+
         const raw = buildTree(null);
         // When tags are active, hide empty branches
         if (selectedTags.length > 0) {

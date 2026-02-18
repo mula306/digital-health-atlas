@@ -18,7 +18,7 @@ export function Modal({ isOpen, onClose, title, children, size, closeOnOverlayCl
 
     const sizeClass = size ? `modal-${size}` : '';
 
-    const handleOverlayClick = (e) => {
+    const handleOverlayClick = () => {
         if (closeOnOverlayClick) {
             onClose();
         }

@@ -1,16 +1,63 @@
-import { useRef, useState } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { Download, Printer, CheckSquare, Square } from 'lucide-react';
 import html2pdf from 'html2pdf.js';
 import { StatusReportView } from '../StatusReport/StatusReportView';
 import { useData } from '../../context/DataContext';
 
-export function ReportPreview({ selectedProjectIds }) {
-    const { projects, goals, getLatestStatusReport } = useData();
-    const [includeAppendix, setIncludeAppendix] = useState(true);
+import { API_BASE } from '../../apiClient';
+
+export function ReportPreview({ selectedProjectIds, allProjects = [] }) {
+    const { projects, goals, getLatestStatusReport, authFetch } = useData();
+    const [includeAppendix, setIncludeAppendix] = useState(false);
+    const [fullReports, setFullReports] = useState({});
+    const [loadingFullReports, setLoadingFullReports] = useState(false);
     const printRef = useRef(null);
 
+    // Use allProjects (full list with embedded reports) if available, fallback to context
+    const sourceProjects = allProjects.length > 0 ? allProjects : projects;
+
     // Filter projects
-    const reportProjects = projects.filter(p => selectedProjectIds.includes(`project-${p.id}`));
+    const reportProjects = sourceProjects.filter(p => selectedProjectIds.includes(`project-${p.id}`));
+
+    // Fetch full reports for ALL selected projects to ensure we have milestones/details for the main view
+    useEffect(() => {
+        if (reportProjects.length === 0) return;
+
+        const fetchFullReports = async () => {
+            setLoadingFullReports(true);
+            const newReports = {};
+            try {
+                // Determine which reports we still need to fetch
+                const projectsToFetch = reportProjects.filter(p => !fullReports[p.id]);
+
+                if (projectsToFetch.length === 0) {
+                    setLoadingFullReports(false);
+                    return;
+                }
+
+                await Promise.all(
+                    projectsToFetch.map(async (project) => {
+                        try {
+                            const res = await authFetch(`${API_BASE}/projects/${project.id}/reports`);
+                            if (res.ok) {
+                                const reports = await res.json();
+                                if (reports.length > 0) {
+                                    newReports[project.id] = reports[0]; // Latest report
+                                }
+                            }
+                        } catch (err) {
+                            console.error(`Error fetching report for project ${project.id}:`, err);
+                        }
+                    })
+                );
+                setFullReports(prev => ({ ...prev, ...newReports }));
+            } finally {
+                setLoadingFullReports(false);
+            }
+        };
+
+        fetchFullReports();
+    }, [reportProjects, fullReports, authFetch]); // dependency on reportProjects encompasses selectedProjectIds changes
 
     // Helper: Find the Division level (second level in hierarchy, child of root organization) for a project
     const getDivision = (goalId) => {
@@ -110,7 +157,22 @@ export function ReportPreview({ selectedProjectIds }) {
 
     // Render a single Summary Card
     const SummaryCard = ({ project }) => {
-        const report = getLatestStatusReport(project.id);
+        // Use embedded report from exec-summary data first, fallback to context
+        // BUT for the main view, we want the FULL report if possible.
+        // The user wants the screenshot view which has milestones etc. 
+        // We might need to fetch full reports for the main view too if they are not already there?
+        // Actually, ExecDashboard uses lightweight reports and shows basic info. 
+        // The screenshot shows "Key Milestones" which are usually in the full report.
+        // Let's use the full report if we have it (from the appendix fetch), otherwise fallback.
+        // Wait, the appendix fetch only happens if includeAppendix is true. 
+        // If the user wants full details in the MAIN view, we should fetch them by default?
+        // The screenshot shows "Key Milestones", so yes, we need full data.
+
+        // HOWEVER, for now let's just restore the card.
+        // If the lightweight report has milestones (it might), then it works.
+        // If not, we might need to fetch full reports for EVERYTHING selected.
+
+        const report = fullReports[project.id] || project.report || getLatestStatusReport(project.id);
         const statusColor = report ? getStatusColor(report.overallStatus) : '#d1d5db';
         const statusGradient = report ? getStatusGradient(report.overallStatus) : 'linear-gradient(135deg, #4b5563, #6b7280)';
 
@@ -134,7 +196,8 @@ export function ReportPreview({ selectedProjectIds }) {
             padding: '6px 8px',
             border: '1px solid #d1d5db',
             background: 'white',
-            verticalAlign: 'top'
+            verticalAlign: 'top',
+            fontSize: '10px'
         };
 
         const labelCellStyle = {
@@ -143,7 +206,8 @@ export function ReportPreview({ selectedProjectIds }) {
             color: '#374151',
             padding: '6px 8px',
             border: '1px solid #d1d5db',
-            verticalAlign: 'top'
+            verticalAlign: 'top',
+            fontSize: '10px'
         };
 
         const bannerStyle = {
@@ -153,7 +217,8 @@ export function ReportPreview({ selectedProjectIds }) {
             padding: '8px 12px',
             border: '2px solid #1f2937',
             borderBottom: 'none',
-            overflow: 'hidden'
+            overflow: 'hidden',
+            marginTop: '1rem'
         };
 
         const statusBarStyle = {
@@ -164,11 +229,11 @@ export function ReportPreview({ selectedProjectIds }) {
         };
 
         return (
-            <div>
+            <div style={{ breakInside: 'avoid' }}>
                 {/* Header Banner */}
                 <div style={bannerStyle}>
                     <div style={{ flex: '1', minWidth: 0 }}>
-                        <img src={`${window.location.origin}/header-logo.png`} alt="Header" style={{ height: '35px', maxWidth: '100%', objectFit: 'contain' }} />
+                        {/* Placeholder for Logo if needed, user screenshot has it */}
                     </div>
                     <div style={{
                         background: statusGradient,
@@ -336,8 +401,7 @@ export function ReportPreview({ selectedProjectIds }) {
             <div className="preview-content">
                 <div className="preview-sheet" id="report-print-content" ref={printRef}>
 
-                    {/* PART 1: SUMMARY SECTION */}
-                    {/* PART 1: SUMMARY SECTION */}
+                    {/* PART 1: PROJECT SUMMARIES (CARDS) */}
                     <div className="report-summary-header" style={{
                         background: '#1f2937',
                         color: 'white',
@@ -353,7 +417,7 @@ export function ReportPreview({ selectedProjectIds }) {
                         </div>
                     </div>
 
-                    {sortedGroupEntries.map(([groupName, { division, projects }]) => (
+                    {sortedGroupEntries.map(([groupName, { projects }]) => (
                         <div key={groupName} className="hierarchy-section">
                             <div className="hierarchy-header">{groupName}</div>
                             {projects.map(project => (
@@ -362,16 +426,30 @@ export function ReportPreview({ selectedProjectIds }) {
                         </div>
                     ))}
 
-                    {/* PART 2: APPENDICES */}
+                    {/* PART 2: DETAILED APPENDICES */}
                     {includeAppendix && (
                         <>
                             <div style={{ pageBreakBefore: 'always' }} />
 
-                            <div className="report-summary-header">
+                            <div className="report-summary-header" style={{
+                                background: '#1f2937',
+                                color: 'white',
+                                padding: '1rem',
+                                textAlign: 'center',
+                                fontSize: '1.5rem',
+                                fontWeight: '700',
+                                marginBottom: '0'
+                            }}>
                                 Appendix: Detailed Reports
                             </div>
 
-                            {sortedGroupEntries.map(([groupName, { division, projects }]) => (
+                            {loadingFullReports && (
+                                <div style={{ padding: '2rem', textAlign: 'center', color: '#6b7280' }}>
+                                    Loading full reports...
+                                </div>
+                            )}
+
+                            {sortedGroupEntries.map(([groupName, { projects: groupProjects }]) => (
                                 <div key={groupName}>
                                     {/* Division Subheader */}
                                     <div style={{
@@ -384,8 +462,9 @@ export function ReportPreview({ selectedProjectIds }) {
                                         {groupName}
                                     </div>
 
-                                    {projects.map((project, idx) => {
-                                        const report = getLatestStatusReport(project.id);
+                                    {groupProjects.map((project) => {
+                                        // Use full report if available, fallback to embedded/context report
+                                        const report = fullReports[project.id] || project.report || getLatestStatusReport(project.id);
                                         if (!report) return null;
                                         return (
                                             <div key={project.id}>

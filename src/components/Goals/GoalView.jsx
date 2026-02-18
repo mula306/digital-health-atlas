@@ -4,7 +4,7 @@ import { useData } from '../../context/DataContext';
 import { GoalItem } from './GoalItem';
 import { Modal } from '../UI/Modal';
 import { AddGoalForm } from './AddGoalForm';
-import { CascadingGoalFilter, getDescendantGoalIds } from '../UI/CascadingGoalFilter';
+import { FilterBar } from '../UI/FilterBar';
 import './Goals.css';
 
 import { useAuth } from '../../hooks/useAuth';
@@ -14,6 +14,7 @@ export function GoalView({ onNavigateToProjects, onNavigateToMetrics }) {
     const { canEdit } = useAuth();
     const [showAddModal, setShowAddModal] = useState(false);
     const [goalFilter, setGoalFilter] = useState('');
+    const [selectedTags, setSelectedTags] = useState([]);
     const [expandAll, setExpandAll] = useState(null); // null = individual control, true = all expanded, false = all collapsed
 
     // Get filtered root goals based on cascading filter
@@ -79,10 +80,13 @@ export function GoalView({ onNavigateToProjects, onNavigateToMetrics }) {
                 </div>
             </div>
 
-            {/* Cascading Filter */}
-            <div className="filter-bar">
-                <CascadingGoalFilter value={goalFilter} onChange={setGoalFilter} />
-            </div>
+            {/* Filters */}
+            <FilterBar
+                goalFilter={goalFilter}
+                onGoalFilterChange={setGoalFilter}
+                selectedTags={selectedTags}
+                onTagsChange={setSelectedTags}
+            />
 
             <div className="goals-tree-container">
                 {filteredRootGoals.length === 0 ? (
@@ -98,6 +102,7 @@ export function GoalView({ onNavigateToProjects, onNavigateToMetrics }) {
                             onNavigateToProjects={onNavigateToProjects}
                             onNavigateToMetrics={onNavigateToMetrics}
                             forceExpand={expandAll}
+                            selectedTags={selectedTags}
                         />
                     ))
                 )}

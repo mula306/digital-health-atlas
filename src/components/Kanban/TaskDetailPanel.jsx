@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { X, Calendar, Flag, Clock, Edit, Trash2, AlignLeft, CheckCircle2 } from 'lucide-react';
 import { useData } from '../../context/DataContext';
 import { useToast } from '../../context/ToastContext';
@@ -28,7 +28,7 @@ export function TaskDetailPanel({ task, projectId, onClose }) {
             const month = String(date.getUTCMonth() + 1).padStart(2, '0');
             const day = String(date.getUTCDate()).padStart(2, '0');
             return `${year}-${month}-${day}`;
-        } catch (e) {
+        } catch (_e) {
             return '';
         }
     };
@@ -41,15 +41,17 @@ export function TaskDetailPanel({ task, projectId, onClose }) {
     const [endDate, setEndDate] = useState(formatDateForInput(task.endDate || task.dueDate));
     const [confirmDelete, setConfirmDelete] = useState(false);
 
-    // Sync state with task props when they change
-    useEffect(() => {
+    // Sync state with task props when they change (Derived State Pattern)
+    const [prevTask, setPrevTask] = useState(task);
+    if (task !== prevTask) {
+        setPrevTask(task);
         setTitle(task.title);
         setDescription(task.description || '');
         setPriority(task.priority);
         setStatus(task.status || 'todo');
         setStartDate(formatDateForInput(task.startDate || task.dueDate));
         setEndDate(formatDateForInput(task.endDate || task.dueDate));
-    }, [task]);
+    }
 
     const handleSave = async () => {
         await updateTask(projectId, task.id, {
@@ -87,7 +89,7 @@ export function TaskDetailPanel({ task, projectId, onClose }) {
             }
             // For ISO strings, use UTC timezone to prevent shift
             return new Date(dateStr).toLocaleDateString(undefined, { timeZone: 'UTC' });
-        } catch (e) {
+        } catch (_e) {
             return dateStr;
         }
     };

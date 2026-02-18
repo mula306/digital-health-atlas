@@ -1,0 +1,180 @@
+﻿
+> digital-health-atlas@0.0.0 lint
+> eslint .
+
+
+C:\Users\mula\OneDrive\Documents\AntiGravity\Digital Health Atlas\server\index.js
+   47:7   error  'azureAdConfig' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u  no-unused-vars
+  108:18  error  'e' is defined but never used. Allowed unused caught errors must match /^_/u                   no-unused-vars
+
+C:\Users\mula\OneDrive\Documents\AntiGravity\Digital Health Atlas\server\middleware\authMiddleware.js
+  1:19  error  'sql' is defined but never used. Allowed unused vars must match /^[A-Z_]/u  no-unused-vars
+
+C:\Users\mula\OneDrive\Documents\AntiGravity\Digital Health Atlas\server\routes\admin.js
+  6:10  error  'cache' is defined but never used. Allowed unused vars must match /^[A-Z_]/u  no-unused-vars
+
+C:\Users\mula\OneDrive\Documents\AntiGravity\Digital Health Atlas\server\routes\dashboard.js
+  2:19  error  'sql' is defined but never used. Allowed unused vars must match /^[A-Z_]/u  no-unused-vars
+
+C:\Users\mula\OneDrive\Documents\AntiGravity\Digital Health Atlas\server\routes\tags.js
+  2:19  error  'sql' is defined but never used. Allowed unused vars must match /^[A-Z_]/u  no-unused-vars
+
+C:\Users\mula\OneDrive\Documents\AntiGravity\Digital Health Atlas\server\run_migration.js
+  2:19  error  'sql' is defined but never used. Allowed unused vars must match /^[A-Z_]/u  no-unused-vars
+
+C:\Users\mula\OneDrive\Documents\AntiGravity\Digital Health Atlas\server\utils\sqlHelpers.js
+  1:10  error  'sql' is defined but never used. Allowed unused vars must match /^[A-Z_]/u  no-unused-vars
+
+C:\Users\mula\OneDrive\Documents\AntiGravity\Digital Health Atlas\src\apiClient.js
+  48:67  error  'e' is defined but never used. Allowed unused caught errors must match /^_/u  no-unused-vars
+  50:80  error  'e' is defined but never used. Allowed unused caught errors must match /^_/u  no-unused-vars
+
+C:\Users\mula\OneDrive\Documents\AntiGravity\Digital Health Atlas\src\components\Dashboard\ExecDashboard.jsx
+  374:8  warning  React Hook useMemo has missing dependencies: 'getDescendantGoalIds' and 'getProjectHierarchy'. Either include them or remove the dependency array  react-hooks/exhaustive-deps
+
+C:\Users\mula\OneDrive\Documents\AntiGravity\Digital Health Atlas\src\components\Goals\GoalItem.jsx
+  29:13  error  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+  27 |     useEffect(() => {
+  28 |         if (forceExpand !== null && forceExpand !== undefined) {
+> 29 |             setIsExpanded(forceExpand);
+     |             ^^^^^^^^^^^^^ Avoid calling setState() directly within an effect
+  30 |             setChildrenCollapsed(forceExpand ? null : false);
+  31 |         }
+  32 |     }, [forceExpand]);  react-hooks/set-state-in-effect
+
+C:\Users\mula\OneDrive\Documents\AntiGravity\Digital Health Atlas\src\components\Intake\IntakeFormView.jsx
+  57:13  error  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+  55 |                 }
+  56 |             });
+> 57 |             setFormData(initialData);
+     |             ^^^^^^^^^^^ Avoid calling setState() directly within an effect
+  58 |         }
+  59 |     }, [form, account]);
+  60 |  react-hooks/set-state-in-effect
+
+C:\Users\mula\OneDrive\Documents\AntiGravity\Digital Health Atlas\src\components\Kanban\GanttView.jsx
+  197:8  warning  React Hook useMemo has missing dependencies: 'getTaskEndDate' and 'getTaskStartDate'. Either include them or remove the dependency array  react-hooks/exhaustive-deps
+
+C:\Users\mula\OneDrive\Documents\AntiGravity\Digital Health Atlas\src\components\Kanban\KanbanBoard.jsx
+  74:17  error  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+  72 |             // If task exists and has changed, update local state
+  73 |             if (updatedTask && JSON.stringify(updatedTask) !== JSON.stringify(selectedTask)) {
+> 74 |                 setSelectedTask(updatedTask);
+     |                 ^^^^^^^^^^^^^^^ Avoid calling setState() directly within an effect
+  75 |             }
+  76 |         }
+  77 |     }, [project.tasks, selectedTask]);  react-hooks/set-state-in-effect
+
+C:\Users\mula\OneDrive\Documents\AntiGravity\Digital Health Atlas\src\components\Kanban\KanbanView.jsx
+  104:8  warning  React Hook useEffect has a missing dependency: 'hasActiveFilters'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+C:\Users\mula\OneDrive\Documents\AntiGravity\Digital Health Atlas\src\components\Kanban\TaskDetailPanel.jsx
+  46:9  error  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+  44 |     // Sync state with task props when they change
+  45 |     useEffect(() => {
+> 46 |         setTitle(task.title);
+     |         ^^^^^^^^ Avoid calling setState() directly within an effect
+  47 |         setDescription(task.description || '');
+  48 |         setPriority(task.priority);
+  49 |         setStatus(task.status || 'todo');  react-hooks/set-state-in-effect
+
+C:\Users\mula\OneDrive\Documents\AntiGravity\Digital Health Atlas\src\components\Layout\Layout.jsx
+  45:9  error  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+  43 |     // Set initial sidebar state on mount
+  44 |     useEffect(() => {
+> 45 |         setIsSidebarOpen(window.innerWidth > 992);
+     |         ^^^^^^^^^^^^^^^^ Avoid calling setState() directly within an effect
+  46 |     }, []);
+  47 |
+  48 |     const allNavItems = [  react-hooks/set-state-in-effect
+
+C:\Users\mula\OneDrive\Documents\AntiGravity\Digital Health Atlas\src\components\Metrics\MetricsPage.jsx
+  18:13  error  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+  16 |     useEffect(() => {
+  17 |         if (initialGoalFilter) {
+> 18 |             setGoalFilter(initialGoalFilter);
+     |             ^^^^^^^^^^^^^ Avoid calling setState() directly within an effect
+  19 |         }
+  20 |     }, [initialGoalFilter]);
+  21 |  react-hooks/set-state-in-effect
+
+C:\Users\mula\OneDrive\Documents\AntiGravity\Digital Health Atlas\src\components\Reports\ReportFilterTree.jsx
+  73:8  warning  React Hook useMemo has missing dependencies: 'buildTree' and 'hasProjects'. Either include them or remove the dependency array  react-hooks/exhaustive-deps
+
+C:\Users\mula\OneDrive\Documents\AntiGravity\Digital Health Atlas\src\components\Reports\ReportPreview.jsx
+  60:8  warning  React Hook useEffect has a missing dependency: 'authFetch'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+C:\Users\mula\OneDrive\Documents\AntiGravity\Digital Health Atlas\src\components\StatusReport\StatusReportPage.jsx
+  44:8  warning  React Hook useEffect has a missing dependency: 'fetchReports'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+C:\Users\mula\OneDrive\Documents\AntiGravity\Digital Health Atlas\src\components\UI\CascadingGoalFilter.jsx
+   80:13  error  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+  78 |     useEffect(() => {
+  79 |         if (!value) {
+> 80 |             setSelections({ org: '', division: '', department: '', branch: '' });
+     |             ^^^^^^^^^^^^^ Avoid calling setState() directly within an effect
+  81 |             return;
+  82 |         }
+  83 |  react-hooks/set-state-in-effect
+  190:17  error  Fast refresh only works when a file only exports components. Use a new file to share constants or functions between components                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                react-refresh/only-export-components
+
+C:\Users\mula\OneDrive\Documents\AntiGravity\Digital Health Atlas\src\context\DataContext.jsx
+  955:14  error  Fast refresh only works when a file only exports components. Use a new file to share constants or functions between components  react-refresh/only-export-components
+
+C:\Users\mula\OneDrive\Documents\AntiGravity\Digital Health Atlas\src\context\ThemeContext.jsx
+  30:14  error  Fast refresh only works when a file only exports components. Use a new file to share constants or functions between components  react-refresh/only-export-components
+
+C:\Users\mula\OneDrive\Documents\AntiGravity\Digital Health Atlas\src\context\ToastContext.jsx
+  5:17  error  Fast refresh only works when a file only exports components. Use a new file to share constants or functions between components  react-refresh/only-export-components
+
+Γ£û 27 problems (21 errors, 6 warnings)
+

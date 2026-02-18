@@ -1,20 +1,25 @@
 
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo } from 'react';
 import { useData } from '../../context/DataContext';
-import { CascadingGoalFilter, getDescendantGoalIds } from '../UI/CascadingGoalFilter';
+import { getDescendantGoalIds } from '../../utils/goalHelpers';
+import { FilterBar } from '../UI/FilterBar';
 import { TrendingUp, Target, BarChart2 } from 'lucide-react';
+import { formatKpiValue } from '../../utils';
 import './MetricsPage.css';
 
 export function MetricsPage({ initialGoalFilter, onClearFilter }) {
-    const { goals, hasPermission } = useData();
+    const { goals, projects, hasPermission } = useData();
     const [goalFilter, setGoalFilter] = useState(initialGoalFilter || '');
+    const [selectedTags, setSelectedTags] = useState([]);
 
-    // Sync with external filter changes
-    useEffect(() => {
+    // Sync with external filter changes (Derived State Pattern)
+    const [prevInitialFilter, setPrevInitialFilter] = useState(initialGoalFilter);
+    if (initialGoalFilter !== prevInitialFilter) {
+        setPrevInitialFilter(initialGoalFilter);
         if (initialGoalFilter) {
             setGoalFilter(initialGoalFilter);
         }
-    }, [initialGoalFilter]);
+    }
 
     const handleFilterChange = (newGoalId) => {
         setGoalFilter(newGoalId);
@@ -34,17 +39,40 @@ export function MetricsPage({ initialGoalFilter, onClearFilter }) {
         });
     }, [goals]);
 
-    // Filter metrics based on cascading goal selection
+    // Filter metrics based on cascading goal selection and tags
     const filteredMetrics = useMemo(() => {
-        if (!goalFilter) return allMetrics;
+        let metrics = allMetrics;
 
-        // Get filter goal + descendants
-        // IDs are strings from API. cascading filter value is string.
-        const descendantIds = getDescendantGoalIds(goals, goalFilter);
-        const relevantGoalIds = [String(goalFilter), ...descendantIds.map(String)];
+        // Filter by goal
+        if (goalFilter) {
+            const descendantIds = getDescendantGoalIds(goals, goalFilter);
+            const relevantGoalIds = [String(goalFilter), ...descendantIds.map(String)];
+            metrics = metrics.filter(m => relevantGoalIds.includes(String(m.goalId)));
+        }
 
-        return allMetrics.filter(m => relevantGoalIds.includes(String(m.goalId)));
-    }, [allMetrics, goalFilter, goals]);
+        // Filter by tags: only show metrics from goals that have tagged projects
+        if (selectedTags.length > 0) {
+            // Find all goal IDs that have at least one project with a matching tag
+            const goalsWithTaggedProjects = new Set();
+            projects.forEach(p => {
+                if (p.tags && p.tags.some(t => selectedTags.includes(String(t.id)))) {
+                    if (p.goalId) goalsWithTaggedProjects.add(String(p.goalId));
+                }
+            });
+            // Also include ancestor goals so parent-level KPIs still show
+            const expandedGoalIds = new Set(goalsWithTaggedProjects);
+            goalsWithTaggedProjects.forEach(gId => {
+                let current = goals.find(g => String(g.id) === gId);
+                while (current && current.parentId) {
+                    expandedGoalIds.add(String(current.parentId));
+                    current = goals.find(g => String(g.id) === String(current.parentId));
+                }
+            });
+            metrics = metrics.filter(m => expandedGoalIds.has(String(m.goalId)));
+        }
+
+        return metrics;
+    }, [allMetrics, goalFilter, selectedTags, goals, projects]);
 
     // Calculate progress helper
     const calcProgress = (current, target) => {
@@ -52,14 +80,6 @@ export function MetricsPage({ initialGoalFilter, onClearFilter }) {
         return Math.min(100, Math.round((current / target) * 100));
     };
 
-    // Helper for formatting values with units
-    const formatKpiValue = (val, unit) => {
-        if (!val && val !== 0) return '-';
-        if (unit === '$') return `$${val.toLocaleString()}`;
-        if (unit === '%') return `${val.toLocaleString()}%`;
-        if (unit) return `${val.toLocaleString()} ${unit}`;
-        return val.toLocaleString();
-    };
 
     if (!hasPermission('can_view_metrics')) {
         return (
@@ -79,17 +99,13 @@ export function MetricsPage({ initialGoalFilter, onClearFilter }) {
                 </div>
             </div>
 
-            <div className="metrics-filter-bar">
-                <CascadingGoalFilter value={goalFilter} onChange={handleFilterChange} />
-                <span className="Metric-count" style={{ fontWeight: 600 }}>
-                    {filteredMetrics.length} Metrics Found
-                </span>
-            </div>
-
-            {/* Debug Info - Temporary */}
-            {/* <div style={{ fontSize: '0.75rem', color: '#999', padding: '0.5rem', border: '1px dashed #ccc', marginBottom: '1rem' }}>
-                DEBUG: Goals: {goals.length}, Total Metrics: {allMetrics.length}, Filtered: {filteredMetrics.length}, Filter: "{goalFilter}"
-            </div> */}
+            <FilterBar
+                goalFilter={goalFilter}
+                onGoalFilterChange={handleFilterChange}
+                selectedTags={selectedTags}
+                onTagsChange={setSelectedTags}
+                countLabel={`${filteredMetrics.length} Metrics Found`}
+            />
 
             {filteredMetrics.length === 0 ? (
                 <div className="empty-metrics">
@@ -101,7 +117,7 @@ export function MetricsPage({ initialGoalFilter, onClearFilter }) {
                     {filteredMetrics.map(metric => {
                         const progress = calcProgress(metric.current, metric.target);
                         const isOnTrack = progress >= 50;
-                        const goalId = String(metric.goalId); // ensure string
+                        const _goalId = String(metric.goalId); // ensure string
 
                         return (
                             <div key={metric.id} className="metric-card">

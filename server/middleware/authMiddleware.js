@@ -1,4 +1,4 @@
-import { getPool, sql } from '../db.js';
+import { getPool } from '../db.js';
 import NodeCache from 'node-cache';
 
 // Cache permissions for 1 minute to reduce DB hits
@@ -25,6 +25,7 @@ export const checkRole = (requiredRole) => {
             return next();
         }
 
+        console.log(`[AuthDebug] User ${user.oid || user.sub} denied. Required: '${requiredRole}', Have: ${JSON.stringify(userRoles)}`);
         return res.status(403).json({ error: `Forbidden: Requires ${requiredRole} role` });
     };
 };
@@ -86,6 +87,18 @@ export const checkPermission = (permissionKeys) => {
 };
 
 /**
+ * Middleware to ensure the request has an authenticated user.
+ * Rejects anonymous requests with 401. Use this as a baseline guard
+ * on endpoints that don't need granular RBAC but must not be public.
+ */
+export const requireAuth = (req, res, next) => {
+    if (!req.user) {
+        return res.status(401).json({ error: 'Unauthorized: Authentication required' });
+    }
+    return next();
+};
+
+/**
  * Explicitly invalidate the permission cache.
  * Call this when permissions are updated in the DB.
  */
@@ -96,4 +109,13 @@ export const invalidatePermissionCache = () => {
     } catch (err) {
         console.error('Error invalidating permission cache:', err);
     }
+};
+
+/**
+ * Helper to get authenticated user from request
+ * @param {Request} req 
+ * @returns {object|null}
+ */
+export const getAuthUser = (req) => {
+    return req.user || null;
 };

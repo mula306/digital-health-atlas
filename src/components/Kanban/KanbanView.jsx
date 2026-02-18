@@ -1,17 +1,20 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useData } from '../../context/DataContext';
 import { KanbanBoard } from './KanbanBoard';
-import { Plus, Folder, Target } from 'lucide-react';
+import { Plus, Folder, Target, Search, X } from 'lucide-react';
 import { Modal } from '../UI/Modal';
 import { AddProjectForm } from './AddProjectForm';
-import { CascadingGoalFilter, getDescendantGoalIds } from '../UI/CascadingGoalFilter';
+import { getDescendantGoalIds } from '../../utils/goalHelpers';
+import { FilterBar } from '../UI/FilterBar';
 import { ProjectTagBadges } from '../UI/ProjectTagSelector';
 import './KanbanView.css';
 
 import { useAuth } from '../../hooks/useAuth';
 
+import { API_BASE } from '../../apiClient';
+
 export default function KanbanView({ initialGoalFilter, onClearFilter }) {
-    const { projects, goals, loadProjectDetails, loading } = useData();
+    const { projects, goals, loadProjectDetails, loading, loadMoreProjects, projectsPagination, loadingMore, authFetch } = useData();
     const { canEdit } = useAuth();
 
     // Persist selected project to survive remounts/refresh
@@ -31,7 +34,17 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
 
     const [showProjectModal, setShowProjectModal] = useState(false);
     const [goalFilter, setGoalFilter] = useState(initialGoalFilter || '');
+    const [selectedTags, setSelectedTags] = useState([]);
+    const [searchTerm, setSearchTerm] = useState('');
     const [isLoadingDetails, setIsLoadingDetails] = useState(false);
+
+    // Server-side filtered projects state
+    const [filteredServerProjects, setFilteredServerProjects] = useState(null);
+    const [filteredPagination, setFilteredPagination] = useState(null);
+    const [filterLoading, setFilterLoading] = useState(false);
+    const [filteredLoadingMore, setFilteredLoadingMore] = useState(false);
+
+    const hasActiveFilters = !!(goalFilter || selectedTags.length > 0 || searchTerm.trim());
 
     // Sync with external filter changes
     useEffect(() => {
@@ -40,12 +53,79 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
         }
     }, [initialGoalFilter]);
 
+    // Build filter query params (shared by initial fetch and load-more)
+    const buildFilterParams = useCallback((page = 1) => {
+        const params = new URLSearchParams({ page: String(page), limit: '100' });
+        if (goalFilter) {
+            const descendantIds = getDescendantGoalIds(goals, goalFilter);
+            const allGoalIds = [String(goalFilter), ...descendantIds.map(String)];
+            params.set('goalIds', allGoalIds.join(','));
+        }
+        if (selectedTags.length > 0) {
+            params.set('tagIds', selectedTags.join(','));
+        }
+        if (searchTerm.trim()) {
+            params.set('search', searchTerm.trim());
+        }
+        return params;
+    }, [goalFilter, selectedTags, searchTerm, goals]);
+
+    // Fetch filtered projects from server when filters change
+    useEffect(() => {
+        if (!hasActiveFilters) {
+            setFilteredServerProjects(null);
+            setFilteredPagination(null);
+            return;
+        }
+
+        let cancelled = false;
+        async function fetchFiltered() {
+            setFilterLoading(true);
+            try {
+                const params = buildFilterParams(1);
+                const res = await authFetch(`${API_BASE}/projects?${params.toString()}`);
+                if (!res.ok) throw new Error('Failed to fetch filtered projects');
+                const data = await res.json();
+
+                if (!cancelled) {
+                    setFilteredServerProjects(data.projects || []);
+                    setFilteredPagination(data.pagination || null);
+                }
+            } catch (err) {
+                console.error('Error fetching filtered projects:', err);
+                if (!cancelled) setFilteredServerProjects([]);
+            } finally {
+                if (!cancelled) setFilterLoading(false);
+            }
+        }
+
+        fetchFiltered();
+        return () => { cancelled = true; };
+    }, [goalFilter, selectedTags, searchTerm, goals, authFetch, buildFilterParams, hasActiveFilters]);
+
+    // Load more filtered projects
+    const loadMoreFilteredProjects = useCallback(async () => {
+        if (!filteredPagination?.hasMore || filteredLoadingMore) return;
+        setFilteredLoadingMore(true);
+        try {
+            const nextPage = filteredPagination.page + 1;
+            const params = buildFilterParams(nextPage);
+            const res = await authFetch(`${API_BASE}/projects?${params.toString()}`);
+            if (!res.ok) throw new Error('Failed to load more filtered projects');
+            const data = await res.json();
+            setFilteredServerProjects(prev => [...(prev || []), ...(data.projects || [])]);
+            setFilteredPagination(data.pagination || null);
+        } catch (err) {
+            console.error('Error loading more filtered projects:', err);
+        } finally {
+            setFilteredLoadingMore(false);
+        }
+    }, [filteredPagination, filteredLoadingMore, buildFilterParams, authFetch]);
+
     // Load full details when a project is selected
     useEffect(() => {
         if (selectedProjectId) {
-            // Use loose equality to handle string/number mismatch
             const project = projects.find(p => p.id == selectedProjectId);
-            // Only load if not already loaded (check for a flag or missing tasks)
             if (project && !project._detailsLoaded) {
                 setIsLoadingDetails(true);
                 loadProjectDetails(selectedProjectId).finally(() => {
@@ -55,18 +135,10 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
         }
     }, [selectedProjectId, projects, loadProjectDetails]);
 
-    // Use loose equality
     const selectedProject = projects.find(p => p.id == selectedProjectId);
 
-    // Filter projects by selected goal AND its descendants
-    const filteredProjects = goalFilter
-        ? projects.filter(p => {
-            if (p.goalId === goalFilter) return true;
-            // Also include projects from descendant goals
-            const descendantIds = getDescendantGoalIds(goals, goalFilter);
-            return descendantIds.includes(p.goalId);
-        })
-        : projects;
+    // Use server-filtered projects when filters are active, otherwise global paginated projects
+    const displayProjects = hasActiveFilters ? (filteredServerProjects || []) : projects;
 
     // Get goal title by ID
     const getGoalTitle = (goalId) => {
@@ -117,27 +189,56 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
                     <h2>Projects</h2>
                     <p className="view-subtitle">Manage tasks across your initiatives.</p>
                 </div>
-                {canEdit && (
-                    <button className="btn-primary" onClick={() => setShowProjectModal(true)}>
-                        <Plus size={18} />
-                        New Project
+                <div className="header-actions">
+                    <div className="search-bar">
+                        <Search size={18} />
+                        <input
+                            type="text"
+                            placeholder="Search projects..."
+                            value={searchTerm}
+                            onChange={e => setSearchTerm(e.target.value)}
+                        />
+                    </div>
+                    {canEdit && (
+                        <button className="btn-primary" onClick={() => setShowProjectModal(true)}>
+                            <Plus size={18} />
+                            New Project
+                        </button>
+                    )}
+                </div>
+            </div>
+
+            {/* Filters */}
+            <FilterBar
+                goalFilter={goalFilter}
+                onGoalFilterChange={handleFilterChange}
+                selectedTags={selectedTags}
+                onTagsChange={setSelectedTags}
+                countLabel={hasActiveFilters
+                    ? `${displayProjects.length} of ${filteredPagination?.total || displayProjects.length} project(s)`
+                    : `${displayProjects.length} project(s)`
+                }
+            >
+                {searchTerm && (
+                    <button className="btn-secondary btn-sm shared-clear-btn" onClick={() => setSearchTerm('')}>
+                        <X size={14} /> Clear Search
                     </button>
                 )}
-            </div>
+            </FilterBar>
 
-            {/* Cascading Goal Filter */}
-            <div className="filter-bar">
-                <CascadingGoalFilter value={goalFilter} onChange={handleFilterChange} />
-                <span className="filter-count">{filteredProjects.length} project(s)</span>
-            </div>
+            {filterLoading && (
+                <div className="filter-loading-indicator" style={{ textAlign: 'center', padding: '1rem', color: 'var(--text-secondary)' }}>
+                    Loading filtered projects...
+                </div>
+            )}
 
             <div className="projects-grid">
-                {filteredProjects.length === 0 ? (
+                {displayProjects.length === 0 && !filterLoading ? (
                     <div className="empty-state glass">
                         <p>No projects found{goalFilter ? ' for this goal' : ''}.</p>
                     </div>
                 ) : (
-                    filteredProjects.map(project => (
+                    displayProjects.map(project => (
                         <div
                             key={project.id}
                             className="project-card"
@@ -168,13 +269,56 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
                                 <div className="progress-bar-track">
                                     <div
                                         className="progress-bar-fill"
-                                        style={{ width: `${project.completion}%` }}
+                                        style={{ width: `${project.completion || 0}%` }}
                                     ></div>
                                 </div>
-                                <span className="progress-label">{project.completion}% Complete</span>
+                                <span className="progress-label">{project.completion || 0}% Complete</span>
                             </div>
                         </div>
                     ))
+                )}
+            </div>
+
+            {/* Pagination Controls */}
+            <div className="pagination-controls-wrapper">
+                <div className="pagination-info">
+                    Showing {displayProjects.length} of {hasActiveFilters ? (filteredPagination?.total || displayProjects.length) : (projectsPagination?.total || 0)} projects
+                </div>
+
+                {hasActiveFilters ? (
+                    filteredPagination?.hasMore && (
+                        <button
+                            className="btn-secondary load-more-btn"
+                            onClick={loadMoreFilteredProjects}
+                            disabled={filteredLoadingMore}
+                        >
+                            {filteredLoadingMore ? (
+                                <span className="flex items-center">
+                                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-current mr-2"></div>
+                                    Loading...
+                                </span>
+                            ) : (
+                                'Load More Projects'
+                            )}
+                        </button>
+                    )
+                ) : (
+                    projectsPagination?.hasMore && (
+                        <button
+                            className="btn-secondary load-more-btn"
+                            onClick={loadMoreProjects}
+                            disabled={loadingMore}
+                        >
+                            {loadingMore ? (
+                                <span className="flex items-center">
+                                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-current mr-2"></div>
+                                    Loading...
+                                </span>
+                            ) : (
+                                'Load More Projects'
+                            )}
+                        </button>
+                    )
                 )}
             </div>
 

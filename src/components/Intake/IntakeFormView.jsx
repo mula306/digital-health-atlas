@@ -35,28 +35,29 @@ export function IntakeFormView({ formId, submissionId }) {
 
     const { account } = useAuth(); // Get current user
 
-    useEffect(() => {
-        // Initialize form data
-        if (form) {
-            const initialData = {};
-            form.fields.forEach(field => {
-                // Auto-fill known fields if available
-                if (account) {
-                    const labelLower = field.label.toLowerCase();
-                    if (labelLower.includes('name') && !labelLower.includes('project')) {
-                        initialData[field.id] = account.name || '';
-                    } else if (labelLower.includes('email')) {
-                        initialData[field.id] = account.username || '';
-                    } else {
-                        initialData[field.id] = '';
-                    }
+    // Initialize form data when form or account changes (Derived State Pattern)
+    const [prevInitKey, setPrevInitKey] = useState(null);
+    const currentInitKey = form ? `${form.id}-${account?.username || 'anon'}` : null;
+
+    if (form && currentInitKey !== prevInitKey) {
+        setPrevInitKey(currentInitKey);
+        const initialData = {};
+        form.fields.forEach(field => {
+            if (account) {
+                const labelLower = field.label.toLowerCase();
+                if (labelLower.includes('name') && !labelLower.includes('project')) {
+                    initialData[field.id] = account.name || '';
+                } else if (labelLower.includes('email')) {
+                    initialData[field.id] = account.username || '';
                 } else {
                     initialData[field.id] = '';
                 }
-            });
-            setFormData(initialData);
-        }
-    }, [form, account]);
+            } else {
+                initialData[field.id] = '';
+            }
+        });
+        setFormData(initialData);
+    }
 
     const formatMessageTime = (dateStr) => {
         return new Date(dateStr).toLocaleDateString('en-US', {
