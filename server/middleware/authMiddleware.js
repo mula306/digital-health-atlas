@@ -36,6 +36,54 @@ export const checkRole = (requiredRole) => {
  * Admins are always allowed.
  * Supports checking multiple permissions (OR logic) if passed an array.
  */
+/**
+ * Check if a user has specific permissions programmatically.
+ * @param {object} user - The user object (with roles)
+ * @param {string|string[]} permissionKeys - Permission key(s) to check
+ * @returns {Promise<boolean>}
+ */
+export const hasPermission = async (user, permissionKeys) => {
+    if (!user) return false;
+    const userRoles = user.roles || [];
+
+    // 1. Admin Bypass
+    if (userRoles.includes('Admin')) {
+        return true;
+    }
+
+    try {
+        // 2. Get Permissions (Cached)
+        let allPermissions = permissionCache.get(CACHE_KEY);
+        if (!allPermissions) {
+            const pool = await getPool();
+            const result = await pool.request().query('SELECT * FROM RolePermissions');
+            allPermissions = result.recordset;
+            permissionCache.set(CACHE_KEY, allPermissions);
+        }
+
+        // Normalize to array
+        const keysToCheck = Array.isArray(permissionKeys) ? permissionKeys : [permissionKeys];
+
+        // 3. Check if ANY of user's roles has ANY of the required permissions enabled
+        return userRoles.some(role => {
+            return keysToCheck.some(key => {
+                const entry = allPermissions.find(p => p.role === role && p.permission === key);
+                return entry ? entry.isAllowed : false;
+            });
+        });
+
+    } catch (err) {
+        console.error('Permission Check Error:', err);
+        return false;
+    }
+};
+
+/**
+ * Middleware to check if user has a specific dynamic permission.
+ * Checks against the RolePermissions table in DB.
+ * Admins are always allowed.
+ * Supports checking multiple permissions (OR logic) if passed an array.
+ */
 export const checkPermission = (permissionKeys) => {
     return async (req, res, next) => {
         const user = req.user;
@@ -44,44 +92,12 @@ export const checkPermission = (permissionKeys) => {
             return res.status(401).json({ error: 'Unauthorized' });
         }
 
-        const userRoles = user.roles || [];
+        const hasAccess = await hasPermission(user, permissionKeys);
 
-        // 1. Admin Bypass
-        if (userRoles.includes('Admin')) {
+        if (hasAccess) {
             return next();
-        }
-
-        try {
-            // 2. Get Permissions (Cached)
-            let allPermissions = permissionCache.get(CACHE_KEY);
-            if (!allPermissions) {
-                const pool = await getPool();
-                const result = await pool.request().query('SELECT * FROM RolePermissions');
-                allPermissions = result.recordset;
-                permissionCache.set(CACHE_KEY, allPermissions);
-            }
-
-            // Normalize to array
-            const keysToCheck = Array.isArray(permissionKeys) ? permissionKeys : [permissionKeys];
-
-            // 3. Check if ANY of user's roles has ANY of the required permissions enabled
-            const hasAccess = userRoles.some(role => {
-                return keysToCheck.some(key => {
-                    const entry = allPermissions.find(p => p.role === role && p.permission === key);
-                    return entry ? entry.isAllowed : false;
-                });
-            });
-
-            if (hasAccess) {
-                return next();
-            } else {
-                return res.status(403).json({ error: `Forbidden: Missing required permission` });
-            }
-
-        } catch (err) {
-            console.error('Permission Check Error:', err);
-            // Fail closed
-            return res.status(500).json({ error: 'Internal Server Error during authorization' });
+        } else {
+            return res.status(403).json({ error: `Forbidden: Missing required permission` });
         }
     };
 };

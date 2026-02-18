@@ -42,9 +42,9 @@ export function Layout({ children, currentView, onViewChange }) {
 
     const allNavItems = [
         { id: 'exec-dashboard', label: 'Executive Summary', icon: LayoutDashboard, permission: 'can_view_exec_dashboard' },
-        { id: 'dashboard', label: 'Dashboard', icon: BarChart3, permission: 'can_view_dashboard' },
         { id: 'goals', label: 'Goals', icon: Target, permission: 'can_view_goals' },
         { id: 'metrics', label: 'Metrics', icon: TrendingUp, permission: 'can_view_metrics' },
+        { id: 'dashboard', label: 'Project Dashboard', icon: BarChart3, permission: 'can_view_dashboard' },
         { id: 'projects', label: 'Projects', icon: Folder, permission: 'can_view_projects' },
         { id: 'reports', label: 'Reports', icon: FileText, permission: 'can_view_reports' },
         { id: 'intake', label: 'Intake', icon: Inbox, permission: 'can_view_intake' },

@@ -284,7 +284,8 @@ export function ExecDashboard() {
 
         fetchSummary();
         return () => { isMounted = false; };
-    }, [fetchExecSummaryProjects]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     // Process data using Cascading Filter logic
     const groupedData = useMemo(() => {
@@ -503,8 +504,8 @@ export function ExecDashboard() {
                                                                 onClick={() => handleProjectClick(project)}
                                                                 style={{ cursor: 'pointer' }}
                                                             >
-                                                                <td className="font-medium">
-                                                                    <div className="project-title">{project.title}</div>
+                                                                <td className="text-sm text-gray-600 font-normal">
+                                                                    <div className="exec-project-title">{project.title}</div>
                                                                     {reportCountText && (
                                                                         <div className="text-xs text-gray-500 mt-1">
                                                                             {reportCountText}

@@ -1,6 +1,6 @@
 import express from 'express';
 import { getPool, sql } from '../db.js';
-import { checkPermission, requireAuth, getAuthUser } from '../middleware/authMiddleware.js';
+import { checkPermission, requireAuth, getAuthUser, hasPermission } from '../middleware/authMiddleware.js';
 import { handleError } from '../utils/errorHandler.js';
 import { logAudit } from '../utils/auditLogger.js';
 
@@ -30,7 +30,7 @@ router.get('/forms', checkPermission('can_view_intake'), async (req, res) => {
 });
 
 // Create intake form
-router.post('/forms', checkPermission('can_manage_intake'), async (req, res) => {
+router.post('/forms', checkPermission('can_manage_intake_forms'), async (req, res) => {
     try {
         const { name, description, fields, defaultGoalId } = req.body;
         const pool = await getPool();
@@ -57,7 +57,7 @@ router.post('/forms', checkPermission('can_manage_intake'), async (req, res) => 
 });
 
 // Update intake form
-router.put('/forms/:id', checkPermission('can_manage_intake'), async (req, res) => {
+router.put('/forms/:id', checkPermission('can_manage_intake_forms'), async (req, res) => {
     try {
         const { name, description, fields, defaultGoalId } = req.body;
         const id = parseInt(req.params.id);
@@ -79,7 +79,7 @@ router.put('/forms/:id', checkPermission('can_manage_intake'), async (req, res) 
 });
 
 // Delete intake form
-router.delete('/forms/:id', checkPermission('can_manage_intake'), async (req, res) => {
+router.delete('/forms/:id', checkPermission('can_manage_intake_forms'), async (req, res) => {
     try {
         const id = parseInt(req.params.id);
         const pool = await getPool();
@@ -172,7 +172,7 @@ router.post('/submissions', async (req, res) => {
             .input('formData', sql.NVarChar, JSON.stringify(formData))
             .input('submitterId', sql.NVarChar, user ? user.oid : null)
             .input('submitterName', sql.NVarChar, user ? user.name : null)
-            .input('submitterEmail', sql.NVarChar, user ? user.preferred_username : null) // Azure AD often puts email here
+            .input('submitterEmail', sql.NVarChar, user ? user.email : null) // Fixed: use DB email field
             .query('INSERT INTO IntakeSubmissions (formId, formData, infoRequests, submitterId, submitterName, submitterEmail) OUTPUT INSERTED.id, INSERTED.submittedAt VALUES (@formId, @formData, \'[]\', @submitterId, @submitterName, @submitterEmail)');
 
         const newSubId = result.recordset[0].id.toString();
@@ -294,15 +294,17 @@ router.post('/submissions/:id/message', requireAuth, async (req, res) => {
         const conversation = JSON.parse(submission.infoRequests || '[]');
 
         // Determine role and validate access
-        // Admin can message any. Submitter can only message own.
-        const isAdmin = user.roles && (user.roles.includes('Admin') || user.roles.includes('Editor'));
+        // Determine role and validate access
+        // Admin or Manager (with permission) can message any. Submitter can only message own.
+        // We check for 'can_manage_intake' (Submission Management) OR 'can_view_incoming_requests' (Intake Access)
+        const canManage = await hasPermission(user, ['can_manage_intake', 'can_view_incoming_requests']);
         const isOwner = submission.submitterId === user.oid;
 
-        if (!isAdmin && !isOwner) {
+        if (!canManage && !isOwner) {
             return res.status(403).json({ error: 'Forbidden' });
         }
 
-        const senderType = isAdmin ? 'admin' : 'requester';
+        const senderType = canManage ? 'admin' : 'requester';
 
         // Add new message
         conversation.push({

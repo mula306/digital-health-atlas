@@ -413,7 +413,7 @@ export const StatusReportView = memo(function StatusReportView({ report, project
                                 <td style={styles.infoTd}>
                                     {report.contacts.map((c, i) => (
                                         <span key={i}>
-                                            {c.name}{c.role ? ` (${c.role})` : ''}
+                                            {c.name}{c.organization ? ` (${c.organization})` : ''}
                                             {i < report.contacts.length - 1 ? ', ' : ''}
                                         </span>
                                     ))}

@@ -13,6 +13,7 @@ export async function seedPermissions() {
             { role: 'IntakeManager', permission: 'can_view_incoming_requests', isAllowed: 1 },
             { role: 'IntakeManager', permission: 'can_manage_intake_forms', isAllowed: 1 },
             { role: 'IntakeManager', permission: 'can_view_dashboard', isAllowed: 1 }, // Optional: let them see main dashboard
+            { role: 'IntakeManager', permission: 'can_view_metrics', isAllowed: 1 },
 
             // Exec View
             { role: 'ExecView', permission: 'can_view_exec_dashboard', isAllowed: 1 },
@@ -30,7 +31,8 @@ export async function seedPermissions() {
             { role: 'User', permission: 'can_view_exec_dashboard', isAllowed: 1 },
             { role: 'User', permission: 'can_view_reports', isAllowed: 1 },
             { role: 'User', permission: 'can_view_intake', isAllowed: 1 },
-            { role: 'User', permission: 'can_view_incoming_requests', isAllowed: 1 }
+            { role: 'User', permission: 'can_view_incoming_requests', isAllowed: 1 },
+            { role: 'User', permission: 'can_view_metrics', isAllowed: 1 }
         ];
 
         for (const p of permissions) {

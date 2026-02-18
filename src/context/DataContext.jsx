@@ -25,6 +25,7 @@ export function DataProvider({ children }) {
     const [intakeSubmissions, setIntakeSubmissions] = useState([]);
     const [tagGroups, setTagGroups] = useState([]);
     const [permissions, setPermissions] = useState([]);
+    const [currentUser, setCurrentUser] = useState(null);
     const { instance } = useMsal();
     const [loading, setLoading] = useState(true);
     const [loadingMore, setLoadingMore] = useState(false);
@@ -103,12 +104,18 @@ export function DataProvider({ children }) {
                     return currentPermissions.some(p => roles.includes(p.role) && p.permission === permKey && p.isAllowed);
                 };
 
-                // 2. Fetch Core Data (Goals, Projects)
-                // We use Promise.allSettled to allow partial failures
-                const [goalsResult, projectsResult] = await Promise.allSettled([
+                // 2. Fetch Core Data (Goals, Projects) + User
+                const [goalsResult, projectsResult, userResult] = await Promise.allSettled([
                     checkPerm('can_view_goals') ? authFetch(`${API_BASE}/goals`) : Promise.reject('skipped'),
-                    checkPerm('can_view_projects') ? authFetch(`${API_BASE}/projects?page=1&limit=50`) : Promise.reject('skipped')
+                    checkPerm('can_view_projects') ? authFetch(`${API_BASE}/projects?page=1&limit=50`) : Promise.reject('skipped'),
+                    authFetch(`${API_BASE}/users/me`)
                 ]);
+
+                if (userResult.status === 'fulfilled') {
+                    setCurrentUser(await userResult.value.json());
+                } else {
+                    console.warn("DataContext: Failed to load user profile", userResult.reason);
+                }
 
                 if (goalsResult.status === 'fulfilled') {
                     setGoals(await goalsResult.value.json());
@@ -927,6 +934,7 @@ export function DataProvider({ children }) {
     return (
         <DataContext.Provider value={{
             goals: goalsWithProgress,
+            currentUser,
             addGoal, updateGoal, deleteGoal,
             addKpi, updateKpi, deleteKpi,
             projects: projectsWithCompletion,

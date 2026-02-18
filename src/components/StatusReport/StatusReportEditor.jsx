@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useMsal } from '@azure/msal-react';
 import {
     Plus, Trash2, ChevronDown, ChevronUp, Users,
     Target, AlertTriangle, CheckCircle, FileText
@@ -10,11 +11,12 @@ import './StatusReport.css';
 // No static milestone types - milestones are now fully dynamic
 
 export function StatusReportEditor({ projectId, projectTitle: _projectTitle, previousReport, onSave, onCancel }) {
-    const { addStatusReport } = useData();
+    const { addStatusReport, currentUser } = useData();
     const { success } = useToast();
+    const { instance } = useMsal();
 
     // Initialize from previous report or defaults
-    const [author, setAuthor] = useState(previousReport?.createdBy || '');
+    const [author, setAuthor] = useState(currentUser?.name || '');
     const [reportDate, setReportDate] = useState(new Date().toISOString().split('T')[0]);
     const [overallStatus, setOverallStatus] = useState(previousReport?.overallStatus || 'green');
     const [purpose, setPurpose] = useState(previousReport?.purpose || '');
@@ -47,7 +49,7 @@ export function StatusReportEditor({ projectId, projectTitle: _projectTitle, pre
 
     // Contact management
     const addContact = () => {
-        setContacts([...contacts, { id: Date.now(), name: '', role: '', email: '' }]);
+        setContacts([...contacts, { id: Date.now(), name: '', organization: '' }]);
     };
 
     const updateContact = (id, field, value) => {
@@ -217,8 +219,8 @@ export function StatusReportEditor({ projectId, projectTitle: _projectTitle, pre
                                 <input
                                     type="text"
                                     value={author}
-                                    onChange={(e) => setAuthor(e.target.value)}
-                                    placeholder="Your name"
+                                    readOnly
+                                    style={{ backgroundColor: '#f3f4f6', cursor: 'not-allowed' }}
                                     required
                                 />
                             </div>
@@ -293,15 +295,9 @@ export function StatusReportEditor({ projectId, projectTitle: _projectTitle, pre
                                 />
                                 <input
                                     type="text"
-                                    value={contact.role}
-                                    onChange={(e) => updateContact(contact.id, 'role', e.target.value)}
-                                    placeholder="Role"
-                                />
-                                <input
-                                    type="email"
-                                    value={contact.email}
-                                    onChange={(e) => updateContact(contact.id, 'email', e.target.value)}
-                                    placeholder="Email"
+                                    value={contact.organization}
+                                    onChange={(e) => updateContact(contact.id, 'organization', e.target.value)}
+                                    placeholder="Organization"
                                 />
                                 <button type="button" onClick={() => removeContact(contact.id)} className="btn-icon-danger">
                                     <Trash2 size={16} />

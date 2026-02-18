@@ -99,7 +99,7 @@ export function Dashboard() {
             <div className="dashboard">
                 <div className="view-header">
                     <div>
-                        <h2>Dashboard</h2>
+                        <h2>Project Dashboard</h2>
                         <p className="view-subtitle">Overview of your goals, projects, and tasks.</p>
                     </div>
                 </div>
@@ -163,7 +163,7 @@ export function Dashboard() {
         <div className="dashboard">
             <div className="view-header">
                 <div>
-                    <h2>Dashboard</h2>
+                    <h2>Project Dashboard</h2>
                     <p className="view-subtitle">
                         {selectedGoalName
                             ? `Filtered by: ${selectedGoalName}`

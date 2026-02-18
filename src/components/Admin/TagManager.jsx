@@ -5,6 +5,7 @@ import {
     Plus, ChevronDown, ChevronRight, Edit2, Trash2, Save, X,
     Tag, Layers, Star, AlertTriangle, Search
 } from 'lucide-react';
+import { Modal } from '../UI/Modal'; // Import Modal
 import './TagManager.css';
 
 export function TagManager() {
@@ -18,6 +19,7 @@ export function TagManager() {
     const [editingGroup, setEditingGroup] = useState(null); // group id or 'new'
     const [editingTag, setEditingTag] = useState(null); // tag id or 'new-<groupId>'
     const [searchQuery, setSearchQuery] = useState('');
+    const [deleteConfirm, setDeleteConfirm] = useState(null); // { type: 'group'|'tag', id, name }
 
     // Group form state
     const [groupForm, setGroupForm] = useState({ name: '', slug: '', requirePrimary: false });
@@ -80,14 +82,8 @@ export function TagManager() {
         }
     };
 
-    const handleDeleteGroup = async (groupId, groupName) => {
-        if (!window.confirm(`Delete tag group "${groupName}" and ALL its tags? This cannot be undone.`)) return;
-        try {
-            await deleteTagGroup(groupId);
-            success('Tag group deleted');
-        } catch (err) {
-            showError(err.message);
-        }
+    const handleDeleteGroup = (groupId, groupName) => {
+        setDeleteConfirm({ type: 'group', id: groupId, name: groupName });
     };
 
     // ==================== TAG CRUD ====================
@@ -135,13 +131,24 @@ export function TagManager() {
         }
     };
 
-    const handleDeleteTag = async (tagId, tagName) => {
-        if (!window.confirm(`Delete tag "${tagName}"? This will remove it from all projects.`)) return;
+    const handleDeleteTag = (tagId, tagName) => {
+        setDeleteConfirm({ type: 'tag', id: tagId, name: tagName });
+    };
+
+    const confirmDelete = async () => {
+        if (!deleteConfirm) return;
         try {
-            await deleteTag(tagId);
-            success('Tag deleted');
+            if (deleteConfirm.type === 'group') {
+                await deleteTagGroup(deleteConfirm.id);
+                success('Tag group deleted');
+            } else {
+                await deleteTag(deleteConfirm.id);
+                success('Tag deleted');
+            }
         } catch (err) {
             showError(err.message);
+        } finally {
+            setDeleteConfirm(null);
         }
     };
 
@@ -256,9 +263,6 @@ export function TagManager() {
                                     <Layers size={16} />
                                     <span className="tag-group-name">{group.name}</span>
                                     <span className="tag-count">{group.tags.length} tags</span>
-                                    {group.requirePrimary && (
-                                        <span className="primary-badge"><Star size={12} /> Primary required</span>
-                                    )}
                                 </div>
                                 <div className="tag-group-actions" onClick={e => e.stopPropagation()}>
                                     <button className="btn-icon" onClick={() => startAddTag(group.id)} title="Add tag">
@@ -419,6 +423,36 @@ export function TagManager() {
                     </button>
                 </div>
             )}
+
+            {/* Delete Confirmation Modal */}
+            <Modal
+                isOpen={!!deleteConfirm}
+                onClose={() => setDeleteConfirm(null)}
+                title={`Delete ${deleteConfirm?.type === 'group' ? 'Tag Group' : 'Tag'}`}
+                size="sm"
+            >
+                <div className="delete-modal-content">
+                    <p>
+                        Are you sure you want to delete <strong>{deleteConfirm?.name}</strong>?
+                        {deleteConfirm?.type === 'group' && (
+                            <span className="warning-text">
+                                <br /><br />
+                                <AlertTriangle size={16} style={{ display: 'inline', verticalAlign: 'text-bottom', marginRight: '4px' }} />
+                                This will delete the group and <strong>ALL tags</strong> within it. This action cannot be undone.
+                            </span>
+                        )}
+                        {deleteConfirm?.type === 'tag' && (
+                            <span> It will be removed from all projects using it.</span>
+                        )}
+                    </p>
+                    <div className="modal-actions" style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem', marginTop: '1.5rem' }}>
+                        <button className="btn-secondary" onClick={() => setDeleteConfirm(null)}>Cancel</button>
+                        <button className="btn-primary" style={{ background: '#ef4444' }} onClick={confirmDelete}>
+                            <Trash2 size={16} /> Delete
+                        </button>
+                    </div>
+                </div>
+            </Modal>
         </div>
     );
 }

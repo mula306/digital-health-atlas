@@ -18,6 +18,7 @@ import projectsRouter from './routes/projects.js';
 import tasksRouter from './routes/tasks.js';
 import tagsRouter from './routes/tags.js';
 import intakeRouter from './routes/intake.js';
+import usersRouter from './routes/users.js';
 import adminRouter from './routes/admin.js';
 
 const app = express();
@@ -73,8 +74,14 @@ passport.use(new JwtStrategy(jwtOptions, async (jwt_payload, done) => {
             .input('oid', sql.NVarChar, jwt_payload.oid)
             .query('SELECT * FROM Users WHERE oid = @oid');
 
-        // DEBUG: Log payload to see if roles exist
-        console.log(`[AuthDebug] JWT Payload for ${jwt_payload.name || jwt_payload.oid}:`, JSON.stringify(jwt_payload, null, 2));
+
+        // DEBUG: Log sanitized payload
+        const sanitizedPayload = {
+            oid: jwt_payload.oid,
+            name: jwt_payload.name || 'Unknown',
+            roles: jwt_payload.roles || []
+        };
+        console.log(`[AuthDebug] JWT Payload for ${sanitizedPayload.name}:`, JSON.stringify(sanitizedPayload, null, 2));
 
         let user = result.recordset[0];
 
@@ -165,6 +172,7 @@ app.use('/api/projects', projectsRouter);
 app.use('/api/tasks', tasksRouter);
 app.use('/api/tags', tagsRouter);
 app.use('/api/intake', intakeRouter);
+app.use('/api/users', usersRouter);
 app.use('/api/admin', adminRouter);
 
 // Health Check (Public)
