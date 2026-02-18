@@ -1,5 +1,5 @@
 // Run the tag migration script using the existing DB connection
-import { getPool } from './db.js';
+import { getPool } from '../db.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';

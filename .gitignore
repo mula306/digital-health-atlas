@@ -32,3 +32,6 @@ server/.env
 
 # Debug logs
 auth-debug.log
+
+# Backups
+server/backups/

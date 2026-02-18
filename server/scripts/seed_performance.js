@@ -3,13 +3,15 @@ import sql from 'mssql';
 import { faker } from '@faker-js/faker';
 import { getPool } from '../db.js';
 
-const TOTAL_PROJECTS = 300;
+const TOTAL_PROJECTS = 900;
 const TASKS_PER_PROJECT_MIN = 50;
 const TASKS_PER_PROJECT_MAX = 100;
 const REPORT_VERSIONS_MIN = 5;
 const REPORT_VERSIONS_MAX = 10;
 const KPI_PER_GOAL_MIN = 5;
 const KPI_PER_GOAL_MAX = 8;
+const TAGS_PER_PROJECT_MIN = 3;
+const TAGS_PER_PROJECT_MAX = 5;
 
 async function seedPerformanceData() {
     console.log('🚀 Starting Performance Seeding...');
@@ -106,6 +108,36 @@ async function seedPerformanceData() {
         const projectsResult = await pool.request().query(`SELECT TOP ${TOTAL_PROJECTS} id FROM Projects ORDER BY id DESC`);
         const projectIds = projectsResult.recordset.map(p => p.id);
 
+        // 4b. Seed Project Tags
+        console.log('🔹 Seeding Project Tags...');
+        const tagsResult = await pool.request().query('SELECT id FROM Tags');
+        const tagIds = tagsResult.recordset.map(t => t.id);
+
+        if (tagIds.length > 0) {
+            const projectTagsTable = new sql.Table('ProjectTags');
+            projectTagsTable.create = false;
+            projectTagsTable.columns.add('projectId', sql.Int, { nullable: false });
+            projectTagsTable.columns.add('tagId', sql.Int, { nullable: false });
+            projectTagsTable.columns.add('isPrimary', sql.Bit, { nullable: false });
+
+            for (const pid of projectIds) {
+                const tagCount = faker.number.int({ min: TAGS_PER_PROJECT_MIN, max: TAGS_PER_PROJECT_MAX });
+                // Ensure we don't try to pick more tags than exist
+                const countToPick = Math.min(tagCount, tagIds.length);
+                const selectedTags = faker.helpers.arrayElements(tagIds, countToPick);
+
+                for (const tid of selectedTags) {
+                    projectTagsTable.rows.add(pid, tid, 0); // isPrimary = 0
+                }
+            }
+
+            const tagReq = new sql.Request(pool);
+            await tagReq.bulk(projectTagsTable);
+            console.log('✅ Project Tags seeded.');
+        } else {
+            console.log('⚠️ No tags found. Skipping project tagging.');
+        }
+
         // 5. Generate Tasks (Batching to avoid memory issues)
         console.log(`🔹 Generating Tasks for ${projectIds.length} projects...`);
 
@@ -161,7 +193,7 @@ async function seedPerformanceData() {
                         purpose: faker.lorem.sentence(),
                         executiveSummary: faker.lorem.paragraph(),
 
-                        risks: Array.from({ length: faker.number.int({ min: 0, max: 5 }) }, () => ({
+                        risks: Array.from({ length: faker.number.int({ min: 2, max: 4 }) }, () => ({
                             description: faker.lorem.sentence(),
                             impact: faker.lorem.sentence(),
                             priority: faker.helpers.arrayElement(['low', 'medium', 'high']),
@@ -176,7 +208,7 @@ async function seedPerformanceData() {
                             status: faker.helpers.arrayElement(['pending', 'in-progress', 'complete'])
                         })),
 
-                        workstreams: Array.from({ length: faker.number.int({ min: 1, max: 4 }) }, () => ({
+                        workstreams: Array.from({ length: faker.number.int({ min: 4, max: 8 }) }, () => ({
                             name: faker.commerce.department(),
                             progressLastPeriod: faker.lorem.sentence(),
                             workAhead: faker.lorem.sentence(),
@@ -184,7 +216,7 @@ async function seedPerformanceData() {
                             status: faker.helpers.arrayElement(['green', 'yellow', 'red'])
                         })),
 
-                        decisions: Array.from({ length: faker.number.int({ min: 0, max: 3 }) }, () => ({
+                        decisions: Array.from({ length: faker.number.int({ min: 2, max: 4 }) }, () => ({
                             description: faker.lorem.sentence(),
                             priority: faker.helpers.arrayElement(['low', 'medium', 'high']),
                             status: faker.helpers.arrayElement(['pending', 'approved', 'rejected']),

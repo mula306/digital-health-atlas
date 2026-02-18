@@ -1,5 +1,5 @@
 // Run AuditLog migration using the existing DB connection
-import { getPool, sql } from './db.js';
+import { getPool, sql } from '../db.js';
 
 async function runMigration() {
     try {
