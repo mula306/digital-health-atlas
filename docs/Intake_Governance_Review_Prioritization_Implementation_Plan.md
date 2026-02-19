@@ -92,6 +92,22 @@ Add:
 
 Snapshotting participants prevents membership edits from altering historical quorum/vote context.
 
+### 4.5 How the `Users` table is used
+
+Use the existing `Users` table as the local identity profile and role cache for governance access control:
+
+1. Provisioning and identity key:
+   - On first authenticated request, user is auto-provisioned with `oid`, `tid`, `name`, `email`, `roles`.
+   - `oid` is the durable identity key and should be used for governance membership/votes.
+2. Role source and synchronization:
+   - Primary role source remains JWT token roles.
+   - DB `Users.roles` remains fallback/local cache when token roles are missing.
+3. Governance membership linkage:
+   - Store governance membership with `userOid` that maps to `Users.oid`.
+   - Do not rely only on email for joins; email can change.
+4. Vote and decision attribution:
+   - Store voter identity as `voterUserOid` plus optional snapshot fields (`voterNameSnapshot`, `voterEmailSnapshot`) for immutable audit history.
+
 ## 5) Selective Scope: Only Selected Work Goes Through Governance
 
 Governance should be selective and optional at three levels:
@@ -134,7 +150,34 @@ Tie-breakers:
 2. Lower delivery effort
 3. Earlier submission date
 
+### 6.1 Editable criteria configuration (required)
+
+Criteria must be admin-configurable and changeable over time without changing historical outcomes.
+
+Required behavior:
+
+- Admins can create/edit/reorder/enable-disable criteria and weights.
+- Criteria are board-scoped (different governance boards may have different models).
+- Criteria updates are versioned (draft -> published).
+- Each governance review stores a criteria snapshot/version reference at review start.
+- Scores for a review always use that snapshot, not the latest criteria config.
+
+Recommended constraints:
+
+- Enforce total active weight = 100 at publish time.
+- Prevent deletion of criteria versions used by completed reviews (allow retire instead).
+- Log all criteria config changes in audit.
+
 ## 7) Updated Implementation Plan
+
+### 7.0 Execution Status (Started February 19, 2026)
+
+Phase 0 backend foundation has been started in code with:
+
+- Governance schema migration script and schema updates.
+- Governance APIs for settings, boards, members, criteria versioning, and queue.
+- Intake governance apply/skip controls and governance fields on submissions.
+- Backward-compatible intake fallback when governance schema is not installed yet.
 
 ## Phase 0 - Optionality and Scope Controls (first)
 
@@ -163,12 +206,12 @@ Tie-breakers:
 - `GovernanceBoard`
 - `GovernanceMembership`
 - `GovernanceReview`
-  - `id`, `submissionId`, `boardId`, `reviewRound`, `status`, `decision`, `decisionReason`, `decidedAt`
+  - `id`, `submissionId`, `boardId`, `reviewRound`, `status`, `decision`, `decisionReason`, `criteriaVersionId`, `criteriaSnapshotJson`, `decidedAt`
 - `GovernanceReviewParticipant`
-- `GovernanceCriteria`
-  - `id`, `boardId`, `name`, `weight`, `enabled`, `sortOrder`
+- `GovernanceCriteriaVersion`
+  - `id`, `boardId`, `versionNo`, `status` (`draft`, `published`, `retired`), `criteriaJson`, `publishedAt`, `publishedByOid`
 - `GovernanceVote`
-  - `id`, `reviewId`, `voterUserId`, `scoresJson`, `comment`, `conflictDeclared`, `submittedAt`
+  - `id`, `reviewId`, `voterUserOid`, `scoresJson`, `comment`, `conflictDeclared`, `submittedAt`
 
 ### API endpoints (example)
 
@@ -176,6 +219,10 @@ Tie-breakers:
 - `PUT /api/governance/settings`
 - `GET /api/governance/boards`
 - `POST /api/governance/boards/:id/members`
+- `GET /api/governance/boards/:id/criteria/versions`
+- `POST /api/governance/boards/:id/criteria/versions`
+- `PUT /api/governance/boards/:id/criteria/versions/:versionId`
+- `POST /api/governance/boards/:id/criteria/versions/:versionId/publish`
 - `POST /api/intake/submissions/:id/governance/apply`
 - `POST /api/intake/submissions/:id/governance/skip`
 - `POST /api/intake/submissions/:id/governance/start`
@@ -188,13 +235,17 @@ Tie-breakers:
 
 1. Governance settings/admin screen:
    - Global toggle, form governance mode, board/member management.
-2. Intake manager triage updates:
+2. Criteria configuration screen:
+   - Draft criteria editor (name, weight, sort order, enabled).
+   - Validation (weights total 100) and publish action.
+   - Version history and active version indicator.
+3. Intake manager triage updates:
    - "Requires governance" control for optional forms.
-3. Governance queue:
+4. Governance queue:
    - Submission, submitter, form, score, vote count, decision state.
-4. Governance drawer/modal:
+5. Governance drawer/modal:
    - Intake summary, criteria scoring, comments, vote history, decision panel.
-5. Decision summary:
+6. Decision summary:
    - Final score, rationale, participation, decision audit.
 
 ## Phase 3 - Rules, Controls, Audit
@@ -208,7 +259,7 @@ Tie-breakers:
   - vote create/update,
   - decision events,
   - settings/criteria changes.
-- Criteria snapshot persistence so future weight changes do not rewrite past outcomes.
+- Criteria version + snapshot persistence so future config changes do not rewrite past outcomes.
 
 ## Phase 4 - Rollout Strategy
 
@@ -223,4 +274,6 @@ Tie-breakers:
 - Governance members are clearly identifiable by auth identity + permission + active board membership.
 - Only selected intake/project paths enter governance based on explicit configuration.
 - Governance remains optional and can be turned off globally without breaking existing intake operations.
+- Prioritization criteria are editable/configurable through admin UI with versioned publishing.
+- Historical governance outcomes remain stable after criteria changes.
 - Audit trail captures who opted in/out, who voted, and final decision history.

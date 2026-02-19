@@ -6,6 +6,64 @@ import { logAudit } from '../utils/auditLogger.js';
 
 const router = express.Router();
 
+const isIntakeManager = (user) => {
+    return !!(user?.roles && (
+        user.roles.includes('Admin') ||
+        user.roles.includes('IntakeManager') ||
+        user.permissions?.includes('can_manage_intake')
+    ));
+};
+
+const hasGovernanceSchema = async (pool) => {
+    try {
+        const result = await pool.request().query(`
+            SELECT
+                CASE WHEN OBJECT_ID('GovernanceSettings', 'U') IS NOT NULL THEN 1 ELSE 0 END AS hasSettings,
+                CASE WHEN COL_LENGTH('IntakeForms', 'governanceMode') IS NOT NULL THEN 1 ELSE 0 END AS hasFormMode,
+                CASE WHEN COL_LENGTH('IntakeSubmissions', 'governanceRequired') IS NOT NULL THEN 1 ELSE 0 END AS hasSubmissionGovernance
+        `);
+        const row = result.recordset[0] || {};
+        return !!(row.hasSettings && row.hasFormMode && row.hasSubmissionGovernance);
+    } catch {
+        return false;
+    }
+};
+
+const resolveGovernanceDefaults = async (pool, formId) => {
+    const schemaReady = await hasGovernanceSchema(pool);
+    if (!schemaReady) {
+        return {
+            schemaReady: false,
+            governanceEnabled: false,
+            governanceMode: 'off',
+            governanceRequired: false,
+            governanceStatus: 'skipped',
+            governanceReason: 'Governance schema not installed. Using legacy intake flow.'
+        };
+    }
+
+    const settingsResult = await pool.request().query('SELECT TOP 1 governanceEnabled FROM GovernanceSettings ORDER BY id');
+    const governanceEnabled = settingsResult.recordset[0] ? !!settingsResult.recordset[0].governanceEnabled : false;
+
+    const formResult = await pool.request()
+        .input('formId', sql.Int, formId)
+        .query('SELECT * FROM IntakeForms WHERE id = @formId');
+
+    const governanceMode = (formResult.recordset[0]?.governanceMode || 'off').toLowerCase();
+    const governanceRequired = governanceEnabled && governanceMode === 'required';
+
+    return {
+        schemaReady: true,
+        governanceEnabled,
+        governanceMode,
+        governanceRequired,
+        governanceStatus: governanceRequired ? 'not-started' : 'skipped',
+        governanceReason: governanceRequired
+            ? 'Governance required by intake form policy.'
+            : 'Governance not required for this submission.'
+    };
+};
+
 // ==================== INTAKE FORMS ====================
 
 // Get all intake forms
@@ -112,6 +170,11 @@ router.get('/submissions', checkPermission('can_view_incoming_requests'), async 
                 formId: sub.formId.toString(),
                 formData: JSON.parse(sub.formData || '{}'),
                 status: sub.status,
+                governanceRequired: !!sub.governanceRequired,
+                governanceStatus: sub.governanceStatus || 'not-started',
+                governanceDecision: sub.governanceDecision || null,
+                governanceReason: sub.governanceReason || null,
+                priorityScore: sub.priorityScore === null ? null : Number(sub.priorityScore),
                 conversation: isConversationFormat ? storedData : [],
                 convertedProjectId: sub.convertedProjectId ? sub.convertedProjectId.toString() : null,
                 submittedAt: sub.submittedAt,
@@ -146,6 +209,11 @@ router.get('/my-submissions', requireAuth, async (req, res) => {
                 formId: sub.formId.toString(),
                 formData: JSON.parse(sub.formData || '{}'),
                 status: sub.status,
+                governanceRequired: !!sub.governanceRequired,
+                governanceStatus: sub.governanceStatus || 'not-started',
+                governanceDecision: sub.governanceDecision || null,
+                governanceReason: sub.governanceReason || null,
+                priorityScore: sub.priorityScore === null ? null : Number(sub.priorityScore),
                 conversation: isConversationFormat ? storedData : [],
                 convertedProjectId: sub.convertedProjectId ? sub.convertedProjectId.toString() : null,
                 submittedAt: sub.submittedAt
@@ -165,23 +233,89 @@ router.post('/submissions', async (req, res) => {
         if (!user) return res.status(401).json({ error: 'Unauthorized' });
 
         const { formId, formData } = req.body;
+        const parsedFormId = parseInt(formId, 10);
+        if (Number.isNaN(parsedFormId)) {
+            return res.status(400).json({ error: 'Invalid formId' });
+        }
         const pool = await getPool();
-
-        const result = await pool.request()
-            .input('formId', sql.Int, parseInt(formId))
-            .input('formData', sql.NVarChar, JSON.stringify(formData))
-            .input('submitterId', sql.NVarChar, user ? user.oid : null)
-            .input('submitterName', sql.NVarChar, user ? user.name : null)
-            .input('submitterEmail', sql.NVarChar, user ? user.email : null) // Fixed: use DB email field
-            .query('INSERT INTO IntakeSubmissions (formId, formData, infoRequests, submitterId, submitterName, submitterEmail) OUTPUT INSERTED.id, INSERTED.submittedAt VALUES (@formId, @formData, \'[]\', @submitterId, @submitterName, @submitterEmail)');
+        const governanceDefaults = await resolveGovernanceDefaults(pool, parsedFormId);
+        let result;
+        if (governanceDefaults.schemaReady) {
+            result = await pool.request()
+                .input('formId', sql.Int, parsedFormId)
+                .input('formData', sql.NVarChar, JSON.stringify(formData))
+                .input('submitterId', sql.NVarChar, user ? user.oid : null)
+                .input('submitterName', sql.NVarChar, user ? user.name : null)
+                .input('governanceRequired', sql.Bit, governanceDefaults.governanceRequired ? 1 : 0)
+                .input('governanceStatus', sql.NVarChar(20), governanceDefaults.governanceStatus)
+                .input('governanceReason', sql.NVarChar(sql.MAX), governanceDefaults.governanceReason)
+                .input('submitterEmail', sql.NVarChar, user ? user.email : null)
+                .query(`
+                    INSERT INTO IntakeSubmissions (
+                        formId,
+                        formData,
+                        infoRequests,
+                        submitterId,
+                        submitterName,
+                        submitterEmail,
+                        governanceRequired,
+                        governanceStatus,
+                        governanceReason
+                    )
+                    OUTPUT INSERTED.id, INSERTED.submittedAt
+                    VALUES (
+                        @formId,
+                        @formData,
+                        '[]',
+                        @submitterId,
+                        @submitterName,
+                        @submitterEmail,
+                        @governanceRequired,
+                        @governanceStatus,
+                        @governanceReason
+                    )
+                `);
+        } else {
+            result = await pool.request()
+                .input('formId', sql.Int, parsedFormId)
+                .input('formData', sql.NVarChar, JSON.stringify(formData))
+                .input('submitterId', sql.NVarChar, user ? user.oid : null)
+                .input('submitterName', sql.NVarChar, user ? user.name : null)
+                .input('submitterEmail', sql.NVarChar, user ? user.email : null)
+                .query(`
+                    INSERT INTO IntakeSubmissions (
+                        formId, formData, infoRequests, submitterId, submitterName, submitterEmail
+                    )
+                    OUTPUT INSERTED.id, INSERTED.submittedAt
+                    VALUES (@formId, @formData, '[]', @submitterId, @submitterName, @submitterEmail)
+                `);
+        }
 
         const newSubId = result.recordset[0].id.toString();
-        logAudit({ action: 'submission.create', entityType: 'submission', entityId: newSubId, entityTitle: `Form ${formId}`, user, after: { formId, status: 'pending' }, req });
+        logAudit({
+            action: 'submission.create',
+            entityType: 'submission',
+            entityId: newSubId,
+            entityTitle: `Form ${parsedFormId}`,
+            user,
+            after: {
+                formId: parsedFormId,
+                status: 'pending',
+                governanceRequired: governanceDefaults.governanceRequired,
+                governanceStatus: governanceDefaults.governanceStatus
+            },
+            req
+        });
         res.json({
             id: newSubId,
-            formId,
+            formId: parsedFormId,
             formData,
             status: 'pending',
+            governanceRequired: governanceDefaults.governanceRequired,
+            governanceStatus: governanceDefaults.governanceStatus,
+            governanceDecision: null,
+            governanceReason: governanceDefaults.governanceReason,
+            priorityScore: null,
             infoRequests: [],
             convertedProjectId: null,
             submittedAt: result.recordset[0].submittedAt
@@ -212,11 +346,7 @@ router.put('/submissions/:id', requireAuth, async (req, res) => {
         const prev = prevResult.recordset[0];
 
         // 2. Determine Permissions
-        const isManager = user.roles && (
-            user.roles.includes('Admin') ||
-            user.roles.includes('IntakeManager') ||
-            user.permissions?.includes('can_manage_intake') // fallback if expanded
-        );
+        const isManager = isIntakeManager(user);
         const isOwner = prev.submitterId === user.oid;
 
         if (!isManager && !isOwner) {
@@ -267,6 +397,131 @@ router.put('/submissions/:id', requireAuth, async (req, res) => {
         res.json({ success: true });
     } catch (err) {
         handleError(res, 'updating submission', err);
+    }
+});
+
+// Intake manager can explicitly apply governance for optional/off submissions
+router.post('/submissions/:id/governance/apply', requireAuth, async (req, res) => {
+    try {
+        const user = getAuthUser(req);
+        if (!user) return res.status(401).json({ error: 'Unauthorized' });
+        if (!isIntakeManager(user)) return res.status(403).json({ error: 'Forbidden' });
+
+        const id = parseInt(req.params.id, 10);
+        if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid submission id' });
+
+        const { reason } = req.body || {};
+        const governanceReason = typeof reason === 'string' && reason.trim()
+            ? reason.trim()
+            : 'Marked for governance review by intake manager.';
+
+        const pool = await getPool();
+        if (!(await hasGovernanceSchema(pool))) {
+            return res.status(503).json({ error: 'Governance schema not installed. Run governance migration first.' });
+        }
+        const prevResult = await pool.request()
+            .input('id', sql.Int, id)
+            .query(`
+                SELECT id, status, governanceRequired, governanceStatus, governanceReason
+                FROM IntakeSubmissions
+                WHERE id = @id
+            `);
+        if (prevResult.recordset.length === 0) return res.status(404).json({ error: 'Submission not found' });
+        const prev = prevResult.recordset[0];
+
+        if (['approved', 'rejected'].includes((prev.status || '').toLowerCase())) {
+            return res.status(409).json({ error: 'Cannot apply governance to a closed submission' });
+        }
+        if ((prev.governanceStatus || '').toLowerCase() === 'decided') {
+            return res.status(409).json({ error: 'Governance already decided for this submission' });
+        }
+
+        await pool.request()
+            .input('id', sql.Int, id)
+            .input('governanceReason', sql.NVarChar(sql.MAX), governanceReason)
+            .query(`
+                UPDATE IntakeSubmissions
+                SET governanceRequired = 1,
+                    governanceStatus = CASE WHEN governanceStatus = 'skipped' THEN 'not-started' ELSE governanceStatus END,
+                    governanceReason = @governanceReason
+                WHERE id = @id
+            `);
+
+        logAudit({
+            action: 'submission.governance_apply',
+            entityType: 'submission',
+            entityId: id,
+            entityTitle: `Submission ${id}`,
+            user,
+            before: prev,
+            after: { governanceRequired: true, governanceStatus: 'not-started', governanceReason },
+            req
+        });
+
+        res.json({ success: true });
+    } catch (err) {
+        handleError(res, 'applying governance on submission', err);
+    }
+});
+
+// Intake manager can skip governance for submissions not requiring governance
+router.post('/submissions/:id/governance/skip', requireAuth, async (req, res) => {
+    try {
+        const user = getAuthUser(req);
+        if (!user) return res.status(401).json({ error: 'Unauthorized' });
+        if (!isIntakeManager(user)) return res.status(403).json({ error: 'Forbidden' });
+
+        const id = parseInt(req.params.id, 10);
+        if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid submission id' });
+
+        const { reason } = req.body || {};
+        const governanceReason = typeof reason === 'string' && reason.trim()
+            ? reason.trim()
+            : 'Governance skipped by intake manager.';
+
+        const pool = await getPool();
+        if (!(await hasGovernanceSchema(pool))) {
+            return res.status(503).json({ error: 'Governance schema not installed. Run governance migration first.' });
+        }
+        const prevResult = await pool.request()
+            .input('id', sql.Int, id)
+            .query(`
+                SELECT id, status, governanceRequired, governanceStatus, governanceReason
+                FROM IntakeSubmissions
+                WHERE id = @id
+            `);
+        if (prevResult.recordset.length === 0) return res.status(404).json({ error: 'Submission not found' });
+        const prev = prevResult.recordset[0];
+
+        if ((prev.governanceStatus || '').toLowerCase() === 'decided') {
+            return res.status(409).json({ error: 'Cannot skip governance after decision' });
+        }
+
+        await pool.request()
+            .input('id', sql.Int, id)
+            .input('governanceReason', sql.NVarChar(sql.MAX), governanceReason)
+            .query(`
+                UPDATE IntakeSubmissions
+                SET governanceRequired = 0,
+                    governanceStatus = 'skipped',
+                    governanceReason = @governanceReason
+                WHERE id = @id
+            `);
+
+        logAudit({
+            action: 'submission.governance_skip',
+            entityType: 'submission',
+            entityId: id,
+            entityTitle: `Submission ${id}`,
+            user,
+            before: prev,
+            after: { governanceRequired: false, governanceStatus: 'skipped', governanceReason },
+            req
+        });
+
+        res.json({ success: true });
+    } catch (err) {
+        handleError(res, 'skipping governance on submission', err);
     }
 });
 

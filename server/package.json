@@ -6,7 +6,8 @@
     "type": "module",
     "scripts": {
         "start": "node index.js",
-        "dev": "node --watch index.js"
+        "dev": "node --watch index.js",
+        "migrate:governance:phase0": "node scripts/run_migration.js migrate_governance_phase0.sql"
     },
     "dependencies": {
         "@faker-js/faker": "^10.3.0",

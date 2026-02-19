@@ -18,6 +18,7 @@ import projectsRouter from './routes/projects.js';
 import tasksRouter from './routes/tasks.js';
 import tagsRouter from './routes/tags.js';
 import intakeRouter from './routes/intake.js';
+import governanceRouter from './routes/governance.js';
 import usersRouter from './routes/users.js';
 import adminRouter from './routes/admin.js';
 
@@ -171,6 +172,7 @@ app.use('/api/projects', projectsRouter);
 app.use('/api/tasks', tasksRouter);
 app.use('/api/tags', tagsRouter);
 app.use('/api/intake', intakeRouter);
+app.use('/api/governance', governanceRouter);
 app.use('/api/users', usersRouter);
 app.use('/api/admin', adminRouter);
 

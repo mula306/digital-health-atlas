@@ -14,9 +14,28 @@ export async function seedPermissions() {
             { role: 'IntakeManager', permission: 'can_manage_intake_forms', isAllowed: 1 },
             { role: 'IntakeManager', permission: 'can_view_dashboard', isAllowed: 1 }, // Optional: let them see main dashboard
             { role: 'IntakeManager', permission: 'can_view_metrics', isAllowed: 1 },
+            { role: 'IntakeManager', permission: 'can_view_governance_queue', isAllowed: 1 },
+            { role: 'IntakeManager', permission: 'can_manage_governance', isAllowed: 1 },
 
             // Exec View
             { role: 'ExecView', permission: 'can_view_exec_dashboard', isAllowed: 1 },
+            { role: 'ExecView', permission: 'can_view_governance_queue', isAllowed: 1 },
+
+            // Governance roles
+            { role: 'GovernanceMember', permission: 'can_view_governance_queue', isAllowed: 1 },
+            { role: 'GovernanceMember', permission: 'can_vote_governance', isAllowed: 1 },
+            { role: 'GovernanceMember', permission: 'can_decide_governance', isAllowed: 0 },
+            { role: 'GovernanceMember', permission: 'can_manage_governance', isAllowed: 0 },
+
+            { role: 'GovernanceChair', permission: 'can_view_governance_queue', isAllowed: 1 },
+            { role: 'GovernanceChair', permission: 'can_vote_governance', isAllowed: 1 },
+            { role: 'GovernanceChair', permission: 'can_decide_governance', isAllowed: 1 },
+            { role: 'GovernanceChair', permission: 'can_manage_governance', isAllowed: 0 },
+
+            { role: 'GovernanceAdmin', permission: 'can_view_governance_queue', isAllowed: 1 },
+            { role: 'GovernanceAdmin', permission: 'can_vote_governance', isAllowed: 1 },
+            { role: 'GovernanceAdmin', permission: 'can_decide_governance', isAllowed: 1 },
+            { role: 'GovernanceAdmin', permission: 'can_manage_governance', isAllowed: 1 },
 
             // Intake Submitter
             { role: 'IntakeSubmit', permission: 'can_view_intake', isAllowed: 1 },
