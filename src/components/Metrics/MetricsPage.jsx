@@ -1,5 +1,5 @@
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useData } from '../../context/DataContext';
 import { getDescendantGoalIds } from '../../utils/goalHelpers';
 import { FilterBar } from '../UI/FilterBar';
@@ -9,9 +9,10 @@ import { EmptyState } from '../UI/EmptyState';
 import './MetricsPage.css';
 
 export function MetricsPage({ initialGoalFilter, onClearFilter }) {
-    const { goals, projects, hasPermission } = useData();
+    const { goals, projects, hasPermission, fetchExecSummaryProjects } = useData();
     const [goalFilter, setGoalFilter] = useState(initialGoalFilter || '');
     const [selectedTags, setSelectedTags] = useState([]);
+    const [allProjects, setAllProjects] = useState([]);
 
     // Sync with external filter changes (Derived State Pattern)
     const [prevInitialFilter, setPrevInitialFilter] = useState(initialGoalFilter);
@@ -26,6 +27,22 @@ export function MetricsPage({ initialGoalFilter, onClearFilter }) {
         setGoalFilter(newGoalId);
         if (!newGoalId && onClearFilter) onClearFilter();
     };
+
+    // Load full project list so tag filtering works across all projects, not just paginated context state
+    useEffect(() => {
+        let isMounted = true;
+        fetchExecSummaryProjects()
+            .then(data => {
+                if (isMounted && Array.isArray(data)) {
+                    setAllProjects(data);
+                }
+            })
+            .catch(() => {
+                // Fallback to context projects if summary fetch fails
+            });
+
+        return () => { isMounted = false; };
+    }, [fetchExecSummaryProjects]);
 
     // Flatten all KPIs from goals into a single list with context
     const allMetrics = useMemo(() => {
@@ -53,10 +70,11 @@ export function MetricsPage({ initialGoalFilter, onClearFilter }) {
 
         // Filter by tags: only show metrics from goals that have tagged projects
         if (selectedTags.length > 0) {
+            const sourceProjects = allProjects.length > 0 ? allProjects : projects;
             // Find all goal IDs that have at least one project with a matching tag
             const goalsWithTaggedProjects = new Set();
-            projects.forEach(p => {
-                if (p.tags && p.tags.some(t => selectedTags.includes(String(t.id)))) {
+            sourceProjects.forEach(p => {
+                if (p.tags && p.tags.some(t => selectedTags.includes(String(t.tagId ?? t.id)))) {
                     if (p.goalId) goalsWithTaggedProjects.add(String(p.goalId));
                 }
             });
@@ -73,7 +91,7 @@ export function MetricsPage({ initialGoalFilter, onClearFilter }) {
         }
 
         return metrics;
-    }, [allMetrics, goalFilter, selectedTags, goals, projects]);
+    }, [allMetrics, goalFilter, selectedTags, goals, projects, allProjects]);
 
     // Calculate progress helper
     const calcProgress = (current, target) => {

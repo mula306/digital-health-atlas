@@ -1,5 +1,5 @@
 import { Plus, ChevronsDown, ChevronsUp } from 'lucide-react';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useData } from '../../context/DataContext';
 import { GoalItem } from './GoalItem';
 import { Modal } from '../UI/Modal';
@@ -10,13 +10,39 @@ import './Goals.css';
 
 import { useAuth } from '../../hooks/useAuth';
 
+const STATUS_OPTIONS = [
+    { id: 'red', label: 'Red', color: '#ef4444' },
+    { id: 'yellow', label: 'Yellow', color: '#f59e0b' },
+    { id: 'green', label: 'Green', color: '#10b981' },
+    { id: 'unknown', label: 'No Report', color: '#9ca3af' }
+];
+
 export function GoalView({ onNavigateToProjects, onNavigateToMetrics }) {
-    const { goals } = useData();
+    const { goals, projects, fetchExecSummaryProjects } = useData();
     const { canEdit } = useAuth();
     const [showAddModal, setShowAddModal] = useState(false);
     const [goalFilter, setGoalFilter] = useState('');
     const [selectedTags, setSelectedTags] = useState([]);
+    const [selectedStatuses, setSelectedStatuses] = useState([]);
+    const [allProjects, setAllProjects] = useState([]);
     const [expandAll, setExpandAll] = useState(null); // null = individual control, true = all expanded, false = all collapsed
+
+    useEffect(() => {
+        let isMounted = true;
+        fetchExecSummaryProjects()
+            .then(data => {
+                if (isMounted && Array.isArray(data)) {
+                    setAllProjects(data);
+                }
+            })
+            .catch(() => {
+                // Keep fallback to context projects on fetch failure
+            });
+
+        return () => { isMounted = false; };
+    }, [fetchExecSummaryProjects]);
+
+    const projectsForFilters = allProjects.length > 0 ? allProjects : projects;
 
     // Get filtered root goals based on cascading filter
     const getFilteredRootGoals = () => {
@@ -83,6 +109,9 @@ export function GoalView({ onNavigateToProjects, onNavigateToMetrics }) {
                 onGoalFilterChange={setGoalFilter}
                 selectedTags={selectedTags}
                 onTagsChange={setSelectedTags}
+                selectedStatuses={selectedStatuses}
+                onStatusesChange={setSelectedStatuses}
+                statusOptions={STATUS_OPTIONS}
             />
 
             <div className="goals-tree-container">
@@ -101,6 +130,8 @@ export function GoalView({ onNavigateToProjects, onNavigateToMetrics }) {
                             onNavigateToMetrics={onNavigateToMetrics}
                             forceExpand={expandAll}
                             selectedTags={selectedTags}
+                            selectedStatuses={selectedStatuses}
+                            projectsSource={projectsForFilters}
                         />
                     ))
                 )}

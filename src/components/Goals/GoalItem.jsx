@@ -11,7 +11,16 @@ import { getDescendantGoalIds } from '../../utils/goalHelpers';
 
 import { useAuth } from '../../hooks/useAuth';
 
-export function GoalItem({ goal, level = 0, onNavigateToProjects, onNavigateToMetrics, forceExpand, selectedTags = [] }) {
+export function GoalItem({
+    goal,
+    level = 0,
+    onNavigateToProjects,
+    onNavigateToMetrics,
+    forceExpand,
+    selectedTags = [],
+    selectedStatuses = [],
+    projectsSource = []
+}) {
     const { goals, deleteGoal, projects } = useData();
     const { canEdit, canDelete } = useAuth();
     const toast = useToast();
@@ -40,13 +49,29 @@ export function GoalItem({ goal, level = 0, onNavigateToProjects, onNavigateToMe
     // Use pre-calculated counts from DataContext (server-backed)
     // When tags are selected, compute count client-side from loaded projects
     const projectCount = (() => {
-        if (selectedTags.length === 0) return goal.totalProjectCount || 0;
+        if (selectedTags.length === 0 && selectedStatuses.length === 0) return goal.totalProjectCount || 0;
+
+        const sourceProjects = projectsSource.length > 0 ? projectsSource : projects;
         // Get all goal IDs in this subtree (this goal + descendants)
-        const allGoalIds = [goal.id, ...getDescendantGoalIds(goals, goal.id)];
-        return projects.filter(p =>
-            allGoalIds.includes(p.goalId) &&
-            p.tags && p.tags.some(t => selectedTags.includes(String(t.id)))
-        ).length;
+        const allGoalIds = new Set([String(goal.id), ...getDescendantGoalIds(goals, goal.id).map(String)]);
+
+        return sourceProjects.filter(p => {
+            const inGoalTree = allGoalIds.has(String(p.goalId));
+            if (!inGoalTree) return false;
+
+            if (selectedTags.length > 0) {
+                const tagMatch = p.tags && p.tags.some(t => selectedTags.includes(String(t.tagId ?? t.id)));
+                if (!tagMatch) return false;
+            }
+
+            if (selectedStatuses.length > 0) {
+                const statusValue = p.report?.overallStatus || p.latestReport?.overallStatus || 'unknown';
+                const normalizedStatus = String(statusValue).toLowerCase();
+                if (!selectedStatuses.includes(normalizedStatus)) return false;
+            }
+
+            return true;
+        }).length;
     })();
 
     const typeLabels = {
@@ -218,6 +243,8 @@ export function GoalItem({ goal, level = 0, onNavigateToProjects, onNavigateToMe
                             onNavigateToMetrics={onNavigateToMetrics}
                             forceExpand={childrenCollapsed !== null ? childrenCollapsed : forceExpand}
                             selectedTags={selectedTags}
+                            selectedStatuses={selectedStatuses}
+                            projectsSource={projectsSource}
                         />
                     ))}
 
