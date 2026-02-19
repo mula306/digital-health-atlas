@@ -14,6 +14,13 @@ import { useAuth } from '../../hooks/useAuth';
 import { EmptyState } from '../UI/EmptyState';
 import { API_BASE } from '../../apiClient';
 
+const STATUS_OPTIONS = [
+    { id: 'red', label: 'Red', color: '#ef4444' },
+    { id: 'yellow', label: 'Yellow', color: '#f59e0b' },
+    { id: 'green', label: 'Green', color: '#10b981' },
+    { id: 'unknown', label: 'No Report', color: '#9ca3af' }
+];
+
 export default function KanbanView({ initialGoalFilter, onClearFilter }) {
     const { projects, goals, loadProjectDetails, loading, loadMoreProjects, projectsPagination, loadingMore, authFetch } = useData();
     const { canEdit } = useAuth();
@@ -36,6 +43,7 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
     const [showProjectModal, setShowProjectModal] = useState(false);
     const [goalFilter, setGoalFilter] = useState(initialGoalFilter || '');
     const [selectedTags, setSelectedTags] = useState([]);
+    const [selectedStatuses, setSelectedStatuses] = useState([]);
     const [searchTerm, setSearchTerm] = useState('');
     const [exactProjectFilterId, setExactProjectFilterId] = useState(() => {
         const stored = localStorage.getItem('dha_project_filter_id');
@@ -49,7 +57,7 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
     const [filterLoading, setFilterLoading] = useState(false);
     const [filteredLoadingMore, setFilteredLoadingMore] = useState(false);
 
-    const hasActiveFilters = !!(goalFilter || selectedTags.length > 0 || searchTerm.trim() || exactProjectFilterId);
+    const hasActiveFilters = !!(goalFilter || selectedTags.length > 0 || selectedStatuses.length > 0 || searchTerm.trim() || exactProjectFilterId);
 
     // Sync with external filter changes
     useEffect(() => {
@@ -66,6 +74,7 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
             setSelectedProjectId(null);
             setGoalFilter('');
             setSelectedTags([]);
+            setSelectedStatuses([]);
             setSearchTerm('');
             setExactProjectFilterId(projectId);
             localStorage.setItem('dha_project_filter_id', projectId);
@@ -89,11 +98,14 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
         if (selectedTags.length > 0) {
             params.set('tagIds', selectedTags.join(','));
         }
+        if (selectedStatuses.length > 0) {
+            params.set('statuses', selectedStatuses.join(','));
+        }
         if (searchTerm.trim()) {
             params.set('search', searchTerm.trim());
         }
         return params;
-    }, [exactProjectFilterId, goalFilter, selectedTags, searchTerm, goals]);
+    }, [exactProjectFilterId, goalFilter, selectedTags, selectedStatuses, searchTerm, goals]);
 
     // Fetch filtered projects from server when filters change
     useEffect(() => {
@@ -126,7 +138,7 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
 
         fetchFiltered();
         return () => { cancelled = true; };
-    }, [exactProjectFilterId, goalFilter, selectedTags, searchTerm, goals, authFetch, buildFilterParams, hasActiveFilters]);
+    }, [exactProjectFilterId, goalFilter, selectedTags, selectedStatuses, searchTerm, goals, authFetch, buildFilterParams, hasActiveFilters]);
 
     // Load more filtered projects
     const loadMoreFilteredProjects = useCallback(async () => {
@@ -250,6 +262,9 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
                 onGoalFilterChange={handleFilterChange}
                 selectedTags={selectedTags}
                 onTagsChange={setSelectedTags}
+                selectedStatuses={selectedStatuses}
+                onStatusesChange={setSelectedStatuses}
+                statusOptions={STATUS_OPTIONS}
                 countLabel={hasActiveFilters
                     ? `${displayProjects.length} of ${filteredPagination?.total || displayProjects.length} project(s)`
                     : `${displayProjects.length} project(s)`

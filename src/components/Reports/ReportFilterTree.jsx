@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { ChevronRight, ChevronDown, Folder, CheckSquare, Square, Tag, X } from 'lucide-react';
+import { ChevronRight, ChevronDown, Folder, CheckSquare, Square, Tag, Activity, X } from 'lucide-react';
 import { useData } from '../../context/DataContext';
 import { getDescendantGoalIds } from '../../utils/goalHelpers';
 import '../UI/ProjectTagSelector.css';
@@ -9,7 +9,9 @@ export function ReportFilterTree({ onSelectionChange, allProjects = [] }) {
     const [selectedIds, setSelectedIds] = useState(new Set());
     const [expandedIds, setExpandedIds] = useState(new Set());
     const [selectedTags, setSelectedTags] = useState([]);
+    const [selectedStatuses, setSelectedStatuses] = useState([]);
     const [showTagFilter, setShowTagFilter] = useState(false);
+    const [showStatusFilter, setShowStatusFilter] = useState(false);
 
     // Get only active tags grouped for the filter UI
     const activeTags = useMemo(() => {
@@ -30,18 +32,75 @@ export function ReportFilterTree({ onSelectionChange, allProjects = [] }) {
         );
     };
 
-    // Filter projects by selected tags
+    const toggleStatus = (statusId) => {
+        const normalized = String(statusId).toLowerCase();
+        setSelectedStatuses(prev =>
+            prev.includes(normalized)
+                ? prev.filter(id => id !== normalized)
+                : [...prev, normalized]
+        );
+    };
+
+    const statusOptions = useMemo(() => {
+        const source = allProjects.length > 0 ? allProjects : projects;
+        const seen = new Set();
+
+        source.forEach(p => {
+            const statusValue = p.report?.overallStatus || p.latestReport?.overallStatus || 'unknown';
+            seen.add(String(statusValue).toLowerCase());
+        });
+
+        const preferredOrder = ['red', 'yellow', 'green', 'unknown'];
+        const labelFor = (status) => (status === 'unknown' ? 'No Report' : status.charAt(0).toUpperCase() + status.slice(1));
+        const colorFor = (status) => {
+            if (status === 'red') return '#ef4444';
+            if (status === 'yellow') return '#f59e0b';
+            if (status === 'green') return '#10b981';
+            return '#9ca3af';
+        };
+
+        const options = [...seen].map(status => ({
+            id: status,
+            label: labelFor(status),
+            color: colorFor(status)
+        }));
+
+        options.sort((a, b) => {
+            const ai = preferredOrder.indexOf(a.id);
+            const bi = preferredOrder.indexOf(b.id);
+            if (ai === -1 && bi === -1) return a.label.localeCompare(b.label);
+            if (ai === -1) return 1;
+            if (bi === -1) return -1;
+            return ai - bi;
+        });
+
+        return options;
+    }, [allProjects, projects]);
+
+    // Filter projects by selected tags + statuses
     const filteredProjects = useMemo(() => {
         // Use allProjects if loaded, otherwise fallback to context projects
         const source = allProjects.length > 0 ? allProjects : projects;
 
-        if (selectedTags.length === 0) return source;
-        return source.filter(p => {
-            if (!p.tags || p.tags.length === 0) return false;
-            const projectTagIds = p.tags.map(t => String(t.tagId));
-            return selectedTags.every(tagId => projectTagIds.includes(String(tagId)));
-        });
-    }, [projects, allProjects, selectedTags]);
+        let filtered = source;
+
+        if (selectedTags.length > 0) {
+            filtered = filtered.filter(p => {
+                if (!p.tags || p.tags.length === 0) return false;
+                const projectTagIds = p.tags.map(t => String(t.tagId));
+                return selectedTags.every(tagId => projectTagIds.includes(String(tagId)));
+            });
+        }
+
+        if (selectedStatuses.length > 0) {
+            filtered = filtered.filter(p => {
+                const statusValue = p.report?.overallStatus || p.latestReport?.overallStatus || 'unknown';
+                return selectedStatuses.includes(String(statusValue).toLowerCase());
+            });
+        }
+
+        return filtered;
+    }, [projects, allProjects, selectedTags, selectedStatuses]);
 
     const treeData = useMemo(() => {
         // Build hierarchy tree using filtered projects
@@ -62,15 +121,15 @@ export function ReportFilterTree({ onSelectionChange, allProjects = [] }) {
         };
 
         const raw = buildTree(null);
-        // When tags are active, hide empty branches
-        if (selectedTags.length > 0) {
+        // When filters are active, hide empty branches
+        if (selectedTags.length > 0 || selectedStatuses.length > 0) {
             const prune = (nodes) => nodes
                 .filter(n => hasProjects(n))
                 .map(n => ({ ...n, children: prune(n.children) }));
             return prune(raw);
         }
         return raw;
-    }, [goals, filteredProjects, selectedTags]);
+    }, [goals, filteredProjects, selectedTags, selectedStatuses]);
 
     // Toggle expansion
     const toggleExpand = (id) => {
@@ -194,10 +253,28 @@ export function ReportFilterTree({ onSelectionChange, allProjects = [] }) {
                     Filter by Tags
                     {selectedTags.length > 0 && <span className="report-tag-count">{selectedTags.length}</span>}
                 </button>
+                {statusOptions.length > 0 && (
+                    <button
+                        className={`btn-secondary btn-sm report-tag-toggle ${showStatusFilter ? 'active' : ''} ${selectedStatuses.length > 0 ? 'has-selection' : ''}`}
+                        onClick={() => setShowStatusFilter(!showStatusFilter)}
+                    >
+                        <Activity size={14} />
+                        Filter by Status
+                        {selectedStatuses.length > 0 && <span className="report-tag-count">{selectedStatuses.length}</span>}
+                    </button>
+                )}
                 {selectedTags.length > 0 && (
                     <button
                         className="btn-secondary btn-sm report-clear-tags"
                         onClick={() => setSelectedTags([])}
+                    >
+                        <X size={12} /> Clear
+                    </button>
+                )}
+                {selectedStatuses.length > 0 && (
+                    <button
+                        className="btn-secondary btn-sm report-clear-tags"
+                        onClick={() => setSelectedStatuses([])}
                     >
                         <X size={12} /> Clear
                     </button>
@@ -224,6 +301,27 @@ export function ReportFilterTree({ onSelectionChange, allProjects = [] }) {
                             </div>
                         </div>
                     ))}
+                </div>
+            )}
+
+            {showStatusFilter && statusOptions.length > 0 && (
+                <div className="report-tag-panel">
+                    <div className="report-tag-group">
+                        <span className="report-tag-group-label">Status</span>
+                        <div className="report-tag-options">
+                            {statusOptions.map(status => (
+                                <button
+                                    key={status.id}
+                                    className={`exec-tag-pill ${selectedStatuses.includes(String(status.id).toLowerCase()) ? 'selected' : ''}`}
+                                    onClick={() => toggleStatus(status.id)}
+                                    style={{ '--tag-color': status.color || '#6366f1' }}
+                                >
+                                    <span className="exec-tag-dot" style={{ background: status.color || '#6366f1' }}></span>
+                                    {status.label}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
                 </div>
             )}
 

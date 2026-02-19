@@ -14,6 +14,10 @@ router.get('/stats', checkPermission(['can_view_projects']), async (req, res) =>
         const goalIds = goalIdsParam ? goalIdsParam.split(',').map(id => parseInt(id)).filter(id => !isNaN(id)) : [];
         const tagIdsParam = req.query.tagIds || '';
         const tagIds = tagIdsParam ? tagIdsParam.split(',').map(id => parseInt(id)).filter(id => !isNaN(id)) : [];
+        const statusesParam = req.query.statuses || '';
+        const statuses = statusesParam
+            ? statusesParam.split(',').map(s => String(s).trim().toLowerCase()).filter(Boolean)
+            : [];
 
         let whereConditions = [];
         let queryParams = {};
@@ -31,6 +35,25 @@ router.get('/stats', checkPermission(['can_view_projects']), async (req, res) =>
             const { text: tagInClause, params: tagParams } = buildInClause('tagId', tagIds);
             tagJoin = `INNER JOIN ProjectTags pt ON p.id = pt.projectId AND pt.tagId IN (${tagInClause})`;
             Object.assign(queryParams, tagParams);
+        }
+
+        // 3. Latest Status Filtering (red/yellow/green/unknown)
+        let statusJoin = '';
+        if (statuses.length > 0) {
+            const { text: statusInClause, params: statusParams } = buildInClause('status', statuses);
+            statusJoin = `
+                LEFT JOIN (
+                    SELECT sr.projectId, LOWER(JSON_VALUE(sr.reportData, '$.overallStatus')) AS overallStatus
+                    FROM StatusReports sr
+                    INNER JOIN (
+                        SELECT projectId, MAX(version) AS maxVersion
+                        FROM StatusReports
+                        GROUP BY projectId
+                    ) latest ON latest.projectId = sr.projectId AND latest.maxVersion = sr.version
+                ) lsr ON lsr.projectId = p.id
+            `;
+            whereConditions.push(`COALESCE(NULLIF(lsr.overallStatus, ''), 'unknown') IN (${statusInClause})`);
+            Object.assign(queryParams, statusParams);
         }
 
         const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
@@ -51,6 +74,7 @@ router.get('/stats', checkPermission(['can_view_projects']), async (req, res) =>
                 SUM(CASE WHEN t.status = 'done' THEN 1 ELSE 0 END) as completedTasks
             FROM Projects p
             ${tagJoin}
+            ${statusJoin}
             LEFT JOIN Tasks t ON p.id = t.projectId
             ${whereClause}
         `;
@@ -63,6 +87,7 @@ router.get('/stats', checkPermission(['can_view_projects']), async (req, res) =>
             FROM Tasks t
             INNER JOIN Projects p ON t.projectId = p.id
             ${tagJoin}
+            ${statusJoin}
             ${whereClause ? whereClause + ' AND' : 'WHERE'} 
             t.endDate < CAST(GETDATE() AS DATE) 
             AND t.status != 'done'
@@ -76,6 +101,7 @@ router.get('/stats', checkPermission(['can_view_projects']), async (req, res) =>
             FROM Tasks t
             INNER JOIN Projects p ON t.projectId = p.id
             ${tagJoin}
+            ${statusJoin}
             ${whereClause ? whereClause + ' AND' : 'WHERE'} 
             t.status = 'in-progress'
             ORDER BY t.startDate DESC, t.id DESC
@@ -88,6 +114,7 @@ router.get('/stats', checkPermission(['can_view_projects']), async (req, res) =>
             FROM Tasks t
             INNER JOIN Projects p ON t.projectId = p.id
             ${tagJoin}
+            ${statusJoin}
             ${whereClause ? whereClause + ' AND' : 'WHERE'} 
             t.endDate < CAST(GETDATE() AS DATE) 
             AND t.status != 'done'
@@ -100,6 +127,7 @@ router.get('/stats', checkPermission(['can_view_projects']), async (req, res) =>
             FROM Tasks t
             INNER JOIN Projects p ON t.projectId = p.id
             ${tagJoin}
+            ${statusJoin}
             ${whereClause ? whereClause + ' AND' : 'WHERE'} 
             t.status = 'in-progress'
         `;
@@ -118,6 +146,7 @@ router.get('/stats', checkPermission(['can_view_projects']), async (req, res) =>
                     SUM(CASE WHEN t.status = 'done' THEN 1 ELSE 0 END) as doneCount
                 FROM Projects p
                 ${tagJoin}
+                ${statusJoin}
                 LEFT JOIN Tasks t ON p.id = t.projectId
                 ${whereClause}
                 GROUP BY p.id

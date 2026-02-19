@@ -8,10 +8,18 @@ import './Dashboard.css';
 
 import { API_BASE } from '../../apiClient';
 
+const STATUS_OPTIONS = [
+    { id: 'red', label: 'Red', color: '#ef4444' },
+    { id: 'yellow', label: 'Yellow', color: '#f59e0b' },
+    { id: 'green', label: 'Green', color: '#10b981' },
+    { id: 'unknown', label: 'No Report', color: '#9ca3af' }
+];
+
 export function Dashboard() {
     const { goals, authFetch } = useData();
     const [goalFilter, setGoalFilter] = useState('');
     const [selectedTags, setSelectedTags] = useState([]);
+    const [selectedStatuses, setSelectedStatuses] = useState([]);
     const [stats, setStats] = useState(null);
     const [loading, setLoading] = useState(true);
 
@@ -28,7 +36,8 @@ export function Dashboard() {
                 }
 
                 const tagParam = selectedTags.length > 0 ? `&tagIds=${selectedTags.join(',')}` : '';
-                const res = await authFetch(`${API_BASE}/dashboard/stats?goalIds=${goalIds}${tagParam}`);
+                const statusParam = selectedStatuses.length > 0 ? `&statuses=${selectedStatuses.join(',')}` : '';
+                const res = await authFetch(`${API_BASE}/dashboard/stats?goalIds=${goalIds}${tagParam}${statusParam}`);
                 if (res.ok) {
                     const data = await res.json();
                     setStats(data);
@@ -43,7 +52,7 @@ export function Dashboard() {
         };
 
         fetchStats();
-    }, [goalFilter, selectedTags, goals, authFetch]);
+    }, [goalFilter, selectedTags, selectedStatuses, goals, authFetch]);
 
 
     // Filter goals locally for the "Total Goals" count (since that data is fully loaded)
@@ -97,6 +106,9 @@ export function Dashboard() {
                     onGoalFilterChange={setGoalFilter}
                     selectedTags={selectedTags}
                     onTagsChange={setSelectedTags}
+                    selectedStatuses={selectedStatuses}
+                    onStatusesChange={setSelectedStatuses}
+                    statusOptions={STATUS_OPTIONS}
                 />
 
                 {/* Skeleton Metric Cards */}
@@ -155,6 +167,9 @@ export function Dashboard() {
                 onGoalFilterChange={setGoalFilter}
                 selectedTags={selectedTags}
                 onTagsChange={setSelectedTags}
+                selectedStatuses={selectedStatuses}
+                onStatusesChange={setSelectedStatuses}
+                statusOptions={STATUS_OPTIONS}
             />
 
             {/* Metric Cards */}

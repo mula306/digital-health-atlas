@@ -88,6 +88,10 @@ router.get('/', checkPermission(['can_view_projects', 'can_view_exec_dashboard']
         const search = req.query.search || '';
         const projectIdParam = req.query.projectId;
         const projectId = Number.isNaN(parseInt(projectIdParam, 10)) ? null : parseInt(projectIdParam, 10);
+        const statusesParam = req.query.statuses || '';
+        const statuses = statusesParam
+            ? statusesParam.split(',').map(s => String(s).trim().toLowerCase()).filter(Boolean)
+            : [];
         // Support both single goalId and comma-separated goalIds
         const goalId = req.query.goalId || null;
         const goalIdsParam = req.query.goalIds || '';
@@ -100,7 +104,7 @@ router.get('/', checkPermission(['can_view_projects', 'can_view_exec_dashboard']
             : [];
 
         // Check cache first
-        const cacheKey = `${CACHE_KEYS.PROJECT_PREFIX}${page}_${limit}_${search}_${projectId || ''}_${goalIds.join('-')}_${tagIds.join('-')}`;
+        const cacheKey = `${CACHE_KEYS.PROJECT_PREFIX}${page}_${limit}_${search}_${projectId || ''}_${statuses.join('-')}_${goalIds.join('-')}_${tagIds.join('-')}`;
         const cached = cache.get(cacheKey);
         if (cached) {
             return res.json(cached);
@@ -127,6 +131,7 @@ router.get('/', checkPermission(['can_view_projects', 'can_view_exec_dashboard']
         }
 
         let tagJoin = '';
+        let statusJoin = '';
 
         // Safe Goal Filtering
         if (goalIds.length > 0) {
@@ -144,6 +149,25 @@ router.get('/', checkPermission(['can_view_projects', 'can_view_exec_dashboard']
             Object.assign(countParams, params);
         }
 
+        // Filter by latest status report overallStatus (red/yellow/green/unknown)
+        if (statuses.length > 0) {
+            const { text, params } = buildInClause('status', statuses);
+            statusJoin = `
+                LEFT JOIN (
+                    SELECT sr.projectId, LOWER(JSON_VALUE(sr.reportData, '$.overallStatus')) AS overallStatus
+                    FROM StatusReports sr
+                    INNER JOIN (
+                        SELECT projectId, MAX(version) AS maxVersion
+                        FROM StatusReports
+                        GROUP BY projectId
+                    ) latest ON latest.projectId = sr.projectId AND latest.maxVersion = sr.version
+                ) lsr ON lsr.projectId = p.id
+            `;
+            conditions.push(`COALESCE(NULLIF(lsr.overallStatus, ''), 'unknown') IN (${text})`);
+            Object.assign(requestParams, params);
+            Object.assign(countParams, params);
+        }
+
         let whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
 
         // Helper to run query with params
@@ -154,7 +178,7 @@ router.get('/', checkPermission(['can_view_projects', 'can_view_exec_dashboard']
         };
 
         // Get total count for pagination metadata
-        const countQuery = `SELECT COUNT(DISTINCT p.id) as total FROM Projects p ${tagJoin} ${whereClause}`;
+        const countQuery = `SELECT COUNT(DISTINCT p.id) as total FROM Projects p ${tagJoin} ${statusJoin} ${whereClause}`;
         const countResult = await runQuery(countQuery, countParams);
         const totalProjects = countResult.recordset[0].total;
         const totalPages = Math.ceil(totalProjects / limit);
@@ -164,6 +188,7 @@ router.get('/', checkPermission(['can_view_projects', 'can_view_exec_dashboard']
             SELECT DISTINCT p.id, p.title, p.description, p.status, p.goalId, p.createdAt
             FROM Projects p
             ${tagJoin}
+            ${statusJoin}
             ${whereClause}
             ORDER BY p.id
             OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY
