@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Plus, Copy, Check, Edit2, Trash2, FileText, Inbox } from 'lucide-react';
+import { Plus, Copy, Check, Edit2, Trash2, FileText, Inbox, Scale } from 'lucide-react';
 import { useData } from '../../context/DataContext';
 import { Modal } from '../UI/Modal';
 import { IntakeFormBuilder } from './IntakeFormBuilder';
@@ -23,6 +23,7 @@ export function IntakePage() {
 
     const canViewIncoming = hasPermission('can_view_incoming_requests');
     const canManageForms = hasPermission('can_manage_intake_forms');
+    const canViewGovernanceQueue = hasPermission('can_view_governance_queue');
 
     const [activeTab, setActiveTab] = useState('my-requests');
     const [showFormModal, setShowFormModal] = useState(false);
@@ -88,6 +89,15 @@ export function IntakePage() {
                             {pendingCount > 0 && <span className="badge">{pendingCount}</span>}
                         </button>
                     </>
+                )}
+
+                {canViewGovernanceQueue && (
+                    <button
+                        className={`intake-tab ${activeTab === 'governance' ? 'active' : ''}`}
+                        onClick={() => setActiveTab('governance')}
+                    >
+                        <Scale size={16} /> Governance Queue
+                    </button>
                 )}
             </div>
 
@@ -174,6 +184,10 @@ export function IntakePage() {
 
             {activeTab === 'requests' && canViewIncoming && (
                 <IntakeRequestsList />
+            )}
+
+            {activeTab === 'governance' && canViewGovernanceQueue && (
+                <IntakeRequestsList initialFilter="governance" />
             )}
 
             {/* Form Builder Modal */}

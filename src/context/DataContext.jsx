@@ -695,6 +695,99 @@ export function DataProvider({ children }) {
         }
     }, [authFetch]);
 
+    const patchSubmissionLocal = useCallback((id, patch) => {
+        setIntakeSubmissions(prev => prev.map(s => String(s.id) === String(id) ? { ...s, ...patch } : s));
+        setMySubmissions(prev => prev.map(s => String(s.id) === String(id) ? { ...s, ...patch } : s));
+    }, []);
+
+    const fetchIntakeGovernanceQueue = useCallback(async (params = {}) => {
+        const searchParams = new URLSearchParams();
+        Object.entries(params).forEach(([key, value]) => {
+            if (value !== undefined && value !== null && String(value).trim() !== '') {
+                searchParams.set(key, String(value));
+            }
+        });
+
+        const suffix = searchParams.toString() ? `?${searchParams.toString()}` : '';
+        const res = await authFetch(`${API_BASE}/intake/governance-queue${suffix}`);
+        return await res.json();
+    }, [authFetch]);
+
+    const getSubmissionGovernance = useCallback(async (submissionId) => {
+        const res = await authFetch(`${API_BASE}/intake/submissions/${submissionId}/governance`);
+        return await res.json();
+    }, [authFetch]);
+
+    const startSubmissionGovernance = useCallback(async (submissionId, payload = {}) => {
+        const res = await authFetch(`${API_BASE}/intake/submissions/${submissionId}/governance/start`, {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        patchSubmissionLocal(submissionId, {
+            governanceRequired: true,
+            governanceStatus: 'in-review',
+            governanceDecision: null
+        });
+        return data;
+    }, [authFetch, patchSubmissionLocal]);
+
+    const submitSubmissionGovernanceVote = useCallback(async (submissionId, payload) => {
+        const res = await authFetch(`${API_BASE}/intake/submissions/${submissionId}/governance/votes`, {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (data?.priorityScore !== undefined) {
+            patchSubmissionLocal(submissionId, { priorityScore: data.priorityScore });
+        }
+        return data;
+    }, [authFetch, patchSubmissionLocal]);
+
+    const decideSubmissionGovernance = useCallback(async (submissionId, payload) => {
+        const res = await authFetch(`${API_BASE}/intake/submissions/${submissionId}/governance/decide`, {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        patchSubmissionLocal(submissionId, {
+            governanceStatus: 'decided',
+            governanceDecision: payload?.decision || null,
+            governanceReason: payload?.decisionReason || null,
+            priorityScore: data?.priorityScore ?? null
+        });
+        return data;
+    }, [authFetch, patchSubmissionLocal]);
+
+    const applySubmissionGovernance = useCallback(async (submissionId, reason = '') => {
+        const res = await authFetch(`${API_BASE}/intake/submissions/${submissionId}/governance/apply`, {
+            method: 'POST',
+            body: JSON.stringify({ reason })
+        });
+        const data = await res.json().catch(() => ({ success: true }));
+        patchSubmissionLocal(submissionId, {
+            governanceRequired: true,
+            governanceStatus: 'not-started',
+            governanceDecision: null,
+            governanceReason: reason || 'Marked for governance review by intake manager.'
+        });
+        return data;
+    }, [authFetch, patchSubmissionLocal]);
+
+    const skipSubmissionGovernance = useCallback(async (submissionId, reason = '') => {
+        const res = await authFetch(`${API_BASE}/intake/submissions/${submissionId}/governance/skip`, {
+            method: 'POST',
+            body: JSON.stringify({ reason })
+        });
+        const data = await res.json().catch(() => ({ success: true }));
+        patchSubmissionLocal(submissionId, {
+            governanceRequired: false,
+            governanceStatus: 'skipped',
+            governanceReason: reason || 'Governance skipped by intake manager.'
+        });
+        return data;
+    }, [authFetch, patchSubmissionLocal]);
+
     const addConversationMessage = useCallback(async (submissionId, message, senderType) => {
         try {
             const res = await authFetch(`${API_BASE}/intake/submissions/${submissionId}/message`, {
@@ -974,6 +1067,8 @@ export function DataProvider({ children }) {
             updateTask, deleteTask,
             intakeForms, addIntakeForm, updateIntakeForm, deleteIntakeForm,
             intakeSubmissions, mySubmissions, addIntakeSubmission, updateIntakeSubmission,
+            fetchIntakeGovernanceQueue, getSubmissionGovernance, startSubmissionGovernance,
+            submitSubmissionGovernanceVote, decideSubmissionGovernance, applySubmissionGovernance, skipSubmissionGovernance,
             addConversationMessage, markConversationRead, migrateInfoRequestsToConversation, convertSubmissionToProject,
             addStatusReport, getLatestStatusReport, restoreStatusReport,
             authFetch, fetchExecSummaryProjects,

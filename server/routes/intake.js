@@ -29,6 +29,102 @@ const hasGovernanceSchema = async (pool) => {
     }
 };
 
+const hasGovernancePhase1Schema = async (pool) => {
+    try {
+        const result = await pool.request().query(`
+            SELECT
+                CASE WHEN OBJECT_ID('GovernanceReview', 'U') IS NOT NULL THEN 1 ELSE 0 END AS hasReview,
+                CASE WHEN OBJECT_ID('GovernanceReviewParticipant', 'U') IS NOT NULL THEN 1 ELSE 0 END AS hasReviewParticipant,
+                CASE WHEN OBJECT_ID('GovernanceVote', 'U') IS NOT NULL THEN 1 ELSE 0 END AS hasVote
+        `);
+        const row = result.recordset[0] || {};
+        return !!(row.hasReview && row.hasReviewParticipant && row.hasVote);
+    } catch {
+        return false;
+    }
+};
+
+const toFiniteNumber = (value) => {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+};
+
+const normalizeCriteriaSnapshot = (criteriaJson) => {
+    let parsed = [];
+    try {
+        parsed = JSON.parse(criteriaJson || '[]');
+    } catch {
+        parsed = [];
+    }
+
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed.map((c, idx) => ({
+        id: String(c?.id || `criterion-${idx + 1}`),
+        name: String(c?.name || `Criterion ${idx + 1}`),
+        weight: toFiniteNumber(c?.weight) ?? 0,
+        enabled: c?.enabled !== false,
+        sortOrder: Number.isInteger(c?.sortOrder) ? c.sortOrder : idx + 1
+    }));
+};
+
+const validateVoteScores = (scores, criteria) => {
+    if (!scores || typeof scores !== 'object' || Array.isArray(scores)) {
+        throw new Error('scores must be an object keyed by criterion id');
+    }
+
+    const enabledCriteria = criteria.filter(c => c.enabled);
+    if (enabledCriteria.length === 0) {
+        throw new Error('No enabled criteria available for this review');
+    }
+
+    const normalizedScores = {};
+    for (const criterion of enabledCriteria) {
+        const value = toFiniteNumber(scores[criterion.id]);
+        if (value === null) {
+            throw new Error(`Missing score for criterion '${criterion.id}'`);
+        }
+        if (value < 1 || value > 5) {
+            throw new Error(`Score for criterion '${criterion.id}' must be between 1 and 5`);
+        }
+        normalizedScores[criterion.id] = value;
+    }
+
+    return normalizedScores;
+};
+
+const calculatePriorityScore = (criteria, votes) => {
+    const enabledCriteria = criteria.filter(c => c.enabled);
+    if (enabledCriteria.length === 0) {
+        return { priorityScore: null, voteCount: votes.length, weightedTotal: null };
+    }
+    if (votes.length === 0) {
+        return { priorityScore: null, voteCount: 0, weightedTotal: 0 };
+    }
+
+    let weightedTotal = 0;
+    let totalWeight = 0;
+
+    for (const criterion of enabledCriteria) {
+        const criterionScores = votes
+            .map(v => toFiniteNumber(v?.scores?.[criterion.id]))
+            .filter(v => v !== null);
+        if (criterionScores.length === 0) continue;
+
+        const avg = criterionScores.reduce((sum, val) => sum + val, 0) / criterionScores.length;
+        weightedTotal += avg * criterion.weight;
+        totalWeight += criterion.weight;
+    }
+
+    if (totalWeight <= 0) {
+        return { priorityScore: null, voteCount: votes.length, weightedTotal };
+    }
+
+    const normalized100 = (weightedTotal / (totalWeight * 5)) * 100;
+    const rounded = Math.round(normalized100 * 100) / 100;
+    return { priorityScore: rounded, voteCount: votes.length, weightedTotal };
+};
+
 const resolveGovernanceDefaults = async (pool, formId) => {
     const schemaReady = await hasGovernanceSchema(pool);
     if (!schemaReady) {
@@ -154,6 +250,111 @@ router.delete('/forms/:id', checkPermission('can_manage_intake_forms'), async (r
 });
 
 // ==================== INTAKE SUBMISSIONS ====================
+
+// Governance queue (intake-scoped alias for governance prioritization)
+router.get('/governance-queue', checkPermission('can_view_governance_queue'), async (req, res) => {
+    try {
+        const pool = await getPool();
+        if (!(await hasGovernanceSchema(pool))) {
+            return res.status(503).json({ error: 'Governance schema not installed. Run governance migration first.' });
+        }
+
+        const boardId = parseInt(req.query.boardId, 10);
+        const governanceStatus = req.query.governanceStatus;
+        const decision = req.query.governanceDecision;
+        const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+        const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 50));
+        const offset = (page - 1) * limit;
+
+        const filters = ['s.governanceRequired = 1'];
+        const addFilterParam = [];
+
+        if (!Number.isNaN(boardId)) {
+            filters.push('f.governanceBoardId = @boardId');
+            addFilterParam.push(['boardId', sql.Int, boardId]);
+        }
+        if (typeof governanceStatus === 'string' && governanceStatus.trim()) {
+            filters.push('s.governanceStatus = @governanceStatus');
+            addFilterParam.push(['governanceStatus', sql.NVarChar(20), governanceStatus.trim()]);
+        }
+        if (typeof decision === 'string' && decision.trim()) {
+            filters.push('s.governanceDecision = @decision');
+            addFilterParam.push(['decision', sql.NVarChar(30), decision.trim()]);
+        }
+
+        const where = `WHERE ${filters.join(' AND ')}`;
+
+        const countRequest = pool.request();
+        addFilterParam.forEach(([name, type, value]) => countRequest.input(name, type, value));
+        const totalResult = await countRequest.query(`
+            SELECT COUNT(*) AS total
+            FROM IntakeSubmissions s
+            INNER JOIN IntakeForms f ON f.id = s.formId
+            ${where}
+        `);
+        const total = totalResult.recordset[0].total;
+
+        const dataRequest = pool.request()
+            .input('limit', sql.Int, limit)
+            .input('offset', sql.Int, offset);
+        addFilterParam.forEach(([name, type, value]) => dataRequest.input(name, type, value));
+        const dataResult = await dataRequest.query(`
+            SELECT
+                s.id,
+                s.formId,
+                s.status,
+                s.submittedAt,
+                s.submitterName,
+                s.submitterEmail,
+                s.governanceRequired,
+                s.governanceStatus,
+                s.governanceDecision,
+                s.governanceReason,
+                s.priorityScore,
+                f.name AS formName,
+                f.governanceMode,
+                f.governanceBoardId,
+                b.name AS governanceBoardName
+            FROM IntakeSubmissions s
+            INNER JOIN IntakeForms f ON f.id = s.formId
+            LEFT JOIN GovernanceBoard b ON b.id = f.governanceBoardId
+            ${where}
+            ORDER BY
+                CASE WHEN s.priorityScore IS NULL THEN 1 ELSE 0 END,
+                s.priorityScore DESC,
+                s.submittedAt ASC
+            OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY
+        `);
+
+        res.json({
+            items: dataResult.recordset.map(item => ({
+                id: item.id.toString(),
+                formId: item.formId.toString(),
+                formName: item.formName,
+                status: item.status,
+                submittedAt: item.submittedAt,
+                submitterName: item.submitterName || null,
+                submitterEmail: item.submitterEmail || null,
+                governanceRequired: !!item.governanceRequired,
+                governanceStatus: item.governanceStatus,
+                governanceDecision: item.governanceDecision || null,
+                governanceReason: item.governanceReason || null,
+                priorityScore: item.priorityScore === null ? null : Number(item.priorityScore),
+                governanceMode: item.governanceMode || 'off',
+                governanceBoardId: item.governanceBoardId ? item.governanceBoardId.toString() : null,
+                governanceBoardName: item.governanceBoardName || null
+            })),
+            pagination: {
+                page,
+                limit,
+                total,
+                totalPages: Math.ceil(total / limit)
+            }
+        });
+    } catch (err) {
+        handleError(res, 'fetching intake governance queue', err);
+    }
+});
 
 // Get all submissions (Admin/Manager only)
 router.get('/submissions', checkPermission('can_view_incoming_requests'), async (req, res) => {
@@ -522,6 +723,700 @@ router.post('/submissions/:id/governance/skip', requireAuth, async (req, res) =>
         res.json({ success: true });
     } catch (err) {
         handleError(res, 'skipping governance on submission', err);
+    }
+});
+
+// Start governance review round for a submission
+router.post('/submissions/:id/governance/start', requireAuth, async (req, res) => {
+    try {
+        const user = getAuthUser(req);
+        if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+        const canManageGovernance = await hasPermission(user, 'can_manage_governance');
+        if (!canManageGovernance && !isIntakeManager(user)) {
+            return res.status(403).json({ error: 'Forbidden' });
+        }
+
+        const submissionId = parseInt(req.params.id, 10);
+        if (Number.isNaN(submissionId)) return res.status(400).json({ error: 'Invalid submission id' });
+
+        const pool = await getPool();
+        if (!(await hasGovernanceSchema(pool)) || !(await hasGovernancePhase1Schema(pool))) {
+            return res.status(503).json({ error: 'Governance phase 1 schema not installed. Run governance phase 1 migration first.' });
+        }
+
+        const submissionResult = await pool.request()
+            .input('id', sql.Int, submissionId)
+            .query(`
+                SELECT
+                    s.id,
+                    s.status,
+                    s.governanceRequired,
+                    s.governanceStatus,
+                    s.governanceDecision,
+                    s.formId,
+                    f.governanceBoardId
+                FROM IntakeSubmissions s
+                INNER JOIN IntakeForms f ON f.id = s.formId
+                WHERE s.id = @id
+            `);
+
+        if (submissionResult.recordset.length === 0) {
+            return res.status(404).json({ error: 'Submission not found' });
+        }
+
+        const submission = submissionResult.recordset[0];
+        if (!submission.governanceRequired) {
+            return res.status(409).json({ error: 'Submission is not marked for governance. Apply governance first.' });
+        }
+        if (!submission.governanceBoardId) {
+            return res.status(409).json({ error: 'Intake form is not mapped to a governance board.' });
+        }
+        if (['approved', 'rejected'].includes((submission.status || '').toLowerCase())) {
+            return res.status(409).json({ error: 'Cannot start governance for a closed submission.' });
+        }
+
+        const existingOpenReview = await pool.request()
+            .input('submissionId', sql.Int, submissionId)
+            .query(`
+                SELECT TOP 1 id, reviewRound, status
+                FROM GovernanceReview
+                WHERE submissionId = @submissionId AND status = 'in-review'
+                ORDER BY reviewRound DESC
+            `);
+
+        if (existingOpenReview.recordset.length > 0) {
+            const review = existingOpenReview.recordset[0];
+            return res.json({
+                success: true,
+                reviewId: review.id.toString(),
+                reviewRound: review.reviewRound,
+                status: review.status,
+                message: 'Governance review already in progress.'
+            });
+        }
+
+        const requestedCriteriaVersionId = parseInt(req.body?.criteriaVersionId, 10);
+        let criteriaVersionResult;
+        if (!Number.isNaN(requestedCriteriaVersionId)) {
+            criteriaVersionResult = await pool.request()
+                .input('criteriaVersionId', sql.Int, requestedCriteriaVersionId)
+                .input('boardId', sql.Int, submission.governanceBoardId)
+                .query(`
+                    SELECT TOP 1 id, versionNo, status, criteriaJson
+                    FROM GovernanceCriteriaVersion
+                    WHERE id = @criteriaVersionId
+                      AND boardId = @boardId
+                `);
+        } else {
+            criteriaVersionResult = await pool.request()
+                .input('boardId', sql.Int, submission.governanceBoardId)
+                .query(`
+                    SELECT TOP 1 id, versionNo, status, criteriaJson
+                    FROM GovernanceCriteriaVersion
+                    WHERE boardId = @boardId
+                      AND status = 'published'
+                    ORDER BY versionNo DESC
+                `);
+        }
+
+        if (criteriaVersionResult.recordset.length === 0) {
+            return res.status(409).json({ error: 'No criteria version available for this board.' });
+        }
+        const criteriaVersion = criteriaVersionResult.recordset[0];
+        if (criteriaVersion.status === 'retired') {
+            return res.status(409).json({ error: 'Selected criteria version is retired.' });
+        }
+
+        const criteriaSnapshot = normalizeCriteriaSnapshot(criteriaVersion.criteriaJson);
+        if (criteriaSnapshot.length === 0) {
+            return res.status(409).json({ error: 'Selected criteria version has no criteria.' });
+        }
+
+        const participantsResult = await pool.request()
+            .input('boardId', sql.Int, submission.governanceBoardId)
+            .query(`
+                SELECT userOid, role
+                FROM GovernanceMembership
+                WHERE boardId = @boardId
+                  AND isActive = 1
+                  AND effectiveFrom <= GETDATE()
+                  AND (effectiveTo IS NULL OR effectiveTo > GETDATE())
+                ORDER BY role DESC, createdAt ASC
+            `);
+
+        if (participantsResult.recordset.length === 0) {
+            return res.status(409).json({ error: 'No active governance members on this board.' });
+        }
+
+        const roundResult = await pool.request()
+            .input('submissionId', sql.Int, submissionId)
+            .query(`
+                SELECT ISNULL(MAX(reviewRound), 0) + 1 AS nextRound
+                FROM GovernanceReview
+                WHERE submissionId = @submissionId
+            `);
+        const nextRound = roundResult.recordset[0].nextRound;
+
+        const tx = new sql.Transaction(pool);
+        let reviewId;
+        try {
+            await tx.begin();
+
+            const createReviewRequest = new sql.Request(tx);
+            const reviewInsert = await createReviewRequest
+                .input('submissionId', sql.Int, submissionId)
+                .input('boardId', sql.Int, submission.governanceBoardId)
+                .input('reviewRound', sql.Int, nextRound)
+                .input('criteriaVersionId', sql.Int, criteriaVersion.id)
+                .input('criteriaSnapshotJson', sql.NVarChar(sql.MAX), JSON.stringify(criteriaSnapshot))
+                .input('startedByOid', sql.NVarChar(100), user.oid)
+                .query(`
+                    INSERT INTO GovernanceReview (
+                        submissionId, boardId, reviewRound, status,
+                        criteriaVersionId, criteriaSnapshotJson, startedByOid
+                    )
+                    OUTPUT INSERTED.id
+                    VALUES (
+                        @submissionId, @boardId, @reviewRound, 'in-review',
+                        @criteriaVersionId, @criteriaSnapshotJson, @startedByOid
+                    )
+                `);
+            reviewId = reviewInsert.recordset[0].id;
+
+            for (const participant of participantsResult.recordset) {
+                const participantRequest = new sql.Request(tx);
+                await participantRequest
+                    .input('reviewId', sql.Int, reviewId)
+                    .input('userOid', sql.NVarChar(100), participant.userOid)
+                    .input('participantRole', sql.NVarChar(20), participant.role || 'member')
+                    .query(`
+                        INSERT INTO GovernanceReviewParticipant (
+                            reviewId, userOid, participantRole, isEligibleVoter
+                        )
+                        VALUES (@reviewId, @userOid, @participantRole, 1)
+                    `);
+            }
+
+            const updateSubmissionRequest = new sql.Request(tx);
+            await updateSubmissionRequest
+                .input('submissionId', sql.Int, submissionId)
+                .query(`
+                    UPDATE IntakeSubmissions
+                    SET governanceStatus = 'in-review',
+                        governanceDecision = NULL
+                    WHERE id = @submissionId
+                `);
+
+            await tx.commit();
+        } catch (err) {
+            await tx.rollback();
+            throw err;
+        }
+
+        logAudit({
+            action: 'submission.governance_start',
+            entityType: 'submission',
+            entityId: submissionId,
+            entityTitle: `Submission ${submissionId}`,
+            user,
+            after: {
+                reviewId,
+                reviewRound: nextRound,
+                boardId: submission.governanceBoardId,
+                criteriaVersionId: criteriaVersion.id,
+                criteriaVersionNo: criteriaVersion.versionNo,
+                participantCount: participantsResult.recordset.length
+            },
+            req
+        });
+
+        res.json({
+            success: true,
+            reviewId: reviewId.toString(),
+            reviewRound: nextRound,
+            criteriaVersionId: criteriaVersion.id.toString(),
+            criteriaVersionNo: criteriaVersion.versionNo,
+            participantCount: participantsResult.recordset.length
+        });
+    } catch (err) {
+        handleError(res, 'starting governance review', err);
+    }
+});
+
+// Get governance details for a submission (latest review round)
+router.get('/submissions/:id/governance', requireAuth, async (req, res) => {
+    try {
+        const user = getAuthUser(req);
+        if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+        const submissionId = parseInt(req.params.id, 10);
+        if (Number.isNaN(submissionId)) return res.status(400).json({ error: 'Invalid submission id' });
+
+        const pool = await getPool();
+        if (!(await hasGovernanceSchema(pool)) || !(await hasGovernancePhase1Schema(pool))) {
+            return res.status(503).json({ error: 'Governance phase 1 schema not installed. Run governance phase 1 migration first.' });
+        }
+
+        const submissionResult = await pool.request()
+            .input('id', sql.Int, submissionId)
+            .query(`
+                SELECT
+                    s.id,
+                    s.formId,
+                    s.submitterId,
+                    s.status,
+                    s.submittedAt,
+                    s.governanceRequired,
+                    s.governanceStatus,
+                    s.governanceDecision,
+                    s.governanceReason,
+                    s.priorityScore,
+                    f.name AS formName,
+                    f.governanceBoardId,
+                    b.name AS boardName
+                FROM IntakeSubmissions s
+                INNER JOIN IntakeForms f ON f.id = s.formId
+                LEFT JOIN GovernanceBoard b ON b.id = f.governanceBoardId
+                WHERE s.id = @id
+            `);
+
+        if (submissionResult.recordset.length === 0) {
+            return res.status(404).json({ error: 'Submission not found' });
+        }
+        const submission = submissionResult.recordset[0];
+
+        const canViewGovernance = await hasPermission(user, [
+            'can_view_governance_queue',
+            'can_manage_governance',
+            'can_vote_governance',
+            'can_decide_governance'
+        ]);
+        const isOwner = submission.submitterId === user.oid;
+        if (!canViewGovernance && !isIntakeManager(user) && !isOwner) {
+            return res.status(403).json({ error: 'Forbidden' });
+        }
+
+        const reviewResult = await pool.request()
+            .input('submissionId', sql.Int, submissionId)
+            .query(`
+                SELECT TOP 1
+                    id, submissionId, boardId, reviewRound, status, decision, decisionReason,
+                    criteriaVersionId, criteriaSnapshotJson, startedAt, startedByOid, decidedAt, decidedByOid
+                FROM GovernanceReview
+                WHERE submissionId = @submissionId
+                ORDER BY reviewRound DESC
+            `);
+
+        if (reviewResult.recordset.length === 0) {
+            return res.json({
+                submission: {
+                    id: submission.id.toString(),
+                    formId: submission.formId.toString(),
+                    formName: submission.formName,
+                    status: submission.status,
+                    submittedAt: submission.submittedAt,
+                    governanceRequired: !!submission.governanceRequired,
+                    governanceStatus: submission.governanceStatus,
+                    governanceDecision: submission.governanceDecision,
+                    governanceReason: submission.governanceReason,
+                    priorityScore: submission.priorityScore === null ? null : Number(submission.priorityScore),
+                    governanceBoardId: submission.governanceBoardId ? submission.governanceBoardId.toString() : null,
+                    governanceBoardName: submission.boardName || null
+                },
+                review: null
+            });
+        }
+
+        const review = reviewResult.recordset[0];
+        const participantsResult = await pool.request()
+            .input('reviewId', sql.Int, review.id)
+            .query(`
+                SELECT
+                    p.id,
+                    p.userOid,
+                    p.participantRole,
+                    p.isEligibleVoter,
+                    p.createdAt,
+                    u.name AS userName,
+                    u.email AS userEmail
+                FROM GovernanceReviewParticipant p
+                LEFT JOIN Users u ON u.oid = p.userOid
+                WHERE p.reviewId = @reviewId
+                ORDER BY p.participantRole DESC, p.createdAt ASC
+            `);
+
+        const votesResult = await pool.request()
+            .input('reviewId', sql.Int, review.id)
+            .query(`
+                SELECT
+                    v.id,
+                    v.voterUserOid,
+                    v.scoresJson,
+                    v.comment,
+                    v.conflictDeclared,
+                    v.submittedAt,
+                    v.updatedAt,
+                    u.name AS voterName,
+                    u.email AS voterEmail
+                FROM GovernanceVote v
+                LEFT JOIN Users u ON u.oid = v.voterUserOid
+                WHERE v.reviewId = @reviewId
+                ORDER BY v.submittedAt ASC
+            `);
+
+        const criteriaSnapshot = normalizeCriteriaSnapshot(review.criteriaSnapshotJson);
+        const votes = votesResult.recordset.map(vote => {
+            let parsedScores = {};
+            try {
+                parsedScores = JSON.parse(vote.scoresJson || '{}');
+            } catch {
+                parsedScores = {};
+            }
+            return {
+                id: vote.id.toString(),
+                voterUserOid: vote.voterUserOid,
+                voterName: vote.voterName || null,
+                voterEmail: vote.voterEmail || null,
+                scores: parsedScores,
+                comment: vote.comment || null,
+                conflictDeclared: !!vote.conflictDeclared,
+                submittedAt: vote.submittedAt,
+                updatedAt: vote.updatedAt
+            };
+        });
+
+        const scoreSummary = calculatePriorityScore(criteriaSnapshot, votes);
+        const eligibleVoterCount = participantsResult.recordset.filter(p => p.isEligibleVoter).length;
+        const participationPct = eligibleVoterCount > 0
+            ? Math.round((scoreSummary.voteCount / eligibleVoterCount) * 100)
+            : 0;
+
+        res.json({
+            submission: {
+                id: submission.id.toString(),
+                formId: submission.formId.toString(),
+                formName: submission.formName,
+                status: submission.status,
+                submittedAt: submission.submittedAt,
+                governanceRequired: !!submission.governanceRequired,
+                governanceStatus: submission.governanceStatus,
+                governanceDecision: submission.governanceDecision,
+                governanceReason: submission.governanceReason,
+                priorityScore: submission.priorityScore === null ? null : Number(submission.priorityScore),
+                governanceBoardId: submission.governanceBoardId ? submission.governanceBoardId.toString() : null,
+                governanceBoardName: submission.boardName || null
+            },
+            review: {
+                id: review.id.toString(),
+                boardId: review.boardId.toString(),
+                reviewRound: review.reviewRound,
+                status: review.status,
+                decision: review.decision || null,
+                decisionReason: review.decisionReason || null,
+                criteriaVersionId: review.criteriaVersionId ? review.criteriaVersionId.toString() : null,
+                criteria: criteriaSnapshot.sort((a, b) => a.sortOrder - b.sortOrder),
+                startedAt: review.startedAt,
+                startedByOid: review.startedByOid || null,
+                decidedAt: review.decidedAt || null,
+                decidedByOid: review.decidedByOid || null,
+                participants: participantsResult.recordset.map(p => ({
+                    id: p.id.toString(),
+                    userOid: p.userOid,
+                    participantRole: p.participantRole,
+                    isEligibleVoter: !!p.isEligibleVoter,
+                    userName: p.userName || null,
+                    userEmail: p.userEmail || null,
+                    createdAt: p.createdAt
+                })),
+                votes,
+                scoreSummary: {
+                    priorityScore: scoreSummary.priorityScore,
+                    voteCount: scoreSummary.voteCount,
+                    eligibleVoterCount,
+                    participationPct
+                }
+            }
+        });
+    } catch (err) {
+        handleError(res, 'fetching submission governance details', err);
+    }
+});
+
+// Submit or update a governance vote
+router.post('/submissions/:id/governance/votes', requireAuth, async (req, res) => {
+    try {
+        const user = getAuthUser(req);
+        if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+        const canVote = await hasPermission(user, 'can_vote_governance');
+        if (!canVote) return res.status(403).json({ error: 'Forbidden' });
+
+        const submissionId = parseInt(req.params.id, 10);
+        if (Number.isNaN(submissionId)) return res.status(400).json({ error: 'Invalid submission id' });
+
+        const pool = await getPool();
+        if (!(await hasGovernanceSchema(pool)) || !(await hasGovernancePhase1Schema(pool))) {
+            return res.status(503).json({ error: 'Governance phase 1 schema not installed. Run governance phase 1 migration first.' });
+        }
+
+        const reviewResult = await pool.request()
+            .input('submissionId', sql.Int, submissionId)
+            .query(`
+                SELECT TOP 1
+                    id, submissionId, status, criteriaSnapshotJson
+                FROM GovernanceReview
+                WHERE submissionId = @submissionId
+                ORDER BY reviewRound DESC
+            `);
+
+        if (reviewResult.recordset.length === 0) {
+            return res.status(409).json({ error: 'No governance review exists for this submission.' });
+        }
+
+        const review = reviewResult.recordset[0];
+        if (review.status !== 'in-review') {
+            return res.status(409).json({ error: 'Governance review is not open for voting.' });
+        }
+
+        const participantResult = await pool.request()
+            .input('reviewId', sql.Int, review.id)
+            .input('userOid', sql.NVarChar(100), user.oid)
+            .query(`
+                SELECT TOP 1 id, isEligibleVoter
+                FROM GovernanceReviewParticipant
+                WHERE reviewId = @reviewId AND userOid = @userOid
+            `);
+
+        if (participantResult.recordset.length === 0 || !participantResult.recordset[0].isEligibleVoter) {
+            return res.status(403).json({ error: 'User is not an eligible voter for this review.' });
+        }
+
+        const criteria = normalizeCriteriaSnapshot(review.criteriaSnapshotJson);
+        let normalizedScores;
+        try {
+            normalizedScores = validateVoteScores(req.body?.scores, criteria);
+        } catch (validationErr) {
+            return res.status(400).json({ error: validationErr.message });
+        }
+
+        const comment = typeof req.body?.comment === 'string' ? req.body.comment.trim() : null;
+        const conflictDeclared = req.body?.conflictDeclared === true;
+
+        const existingVote = await pool.request()
+            .input('reviewId', sql.Int, review.id)
+            .input('voterUserOid', sql.NVarChar(100), user.oid)
+            .query(`
+                SELECT TOP 1 id
+                FROM GovernanceVote
+                WHERE reviewId = @reviewId AND voterUserOid = @voterUserOid
+            `);
+
+        let voteId;
+        let action;
+        if (existingVote.recordset.length > 0) {
+            voteId = existingVote.recordset[0].id;
+            action = 'update';
+            await pool.request()
+                .input('id', sql.Int, voteId)
+                .input('scoresJson', sql.NVarChar(sql.MAX), JSON.stringify(normalizedScores))
+                .input('comment', sql.NVarChar(sql.MAX), comment)
+                .input('conflictDeclared', sql.Bit, conflictDeclared ? 1 : 0)
+                .query(`
+                    UPDATE GovernanceVote
+                    SET scoresJson = @scoresJson,
+                        comment = @comment,
+                        conflictDeclared = @conflictDeclared,
+                        updatedAt = GETDATE()
+                    WHERE id = @id
+                `);
+        } else {
+            action = 'create';
+            const insertVote = await pool.request()
+                .input('reviewId', sql.Int, review.id)
+                .input('voterUserOid', sql.NVarChar(100), user.oid)
+                .input('scoresJson', sql.NVarChar(sql.MAX), JSON.stringify(normalizedScores))
+                .input('comment', sql.NVarChar(sql.MAX), comment)
+                .input('conflictDeclared', sql.Bit, conflictDeclared ? 1 : 0)
+                .query(`
+                    INSERT INTO GovernanceVote (reviewId, voterUserOid, scoresJson, comment, conflictDeclared)
+                    OUTPUT INSERTED.id
+                    VALUES (@reviewId, @voterUserOid, @scoresJson, @comment, @conflictDeclared)
+                `);
+            voteId = insertVote.recordset[0].id;
+        }
+
+        const allVotesResult = await pool.request()
+            .input('reviewId', sql.Int, review.id)
+            .query('SELECT scoresJson FROM GovernanceVote WHERE reviewId = @reviewId');
+        const allVotes = allVotesResult.recordset.map(v => {
+            try {
+                return { scores: JSON.parse(v.scoresJson || '{}') };
+            } catch {
+                return { scores: {} };
+            }
+        });
+        const scoreSummary = calculatePriorityScore(criteria, allVotes);
+
+        await pool.request()
+            .input('submissionId', sql.Int, submissionId)
+            .input('priorityScore', sql.Decimal(9, 2), scoreSummary.priorityScore)
+            .query(`
+                UPDATE IntakeSubmissions
+                SET priorityScore = @priorityScore
+                WHERE id = @submissionId
+            `);
+
+        logAudit({
+            action: `submission.governance_vote_${action}`,
+            entityType: 'submission',
+            entityId: submissionId,
+            entityTitle: `Submission ${submissionId}`,
+            user,
+            after: {
+                reviewId: review.id,
+                voteId,
+                conflictDeclared,
+                priorityScore: scoreSummary.priorityScore,
+                voteCount: scoreSummary.voteCount
+            },
+            req
+        });
+
+        res.json({
+            success: true,
+            reviewId: review.id.toString(),
+            voteId: voteId.toString(),
+            priorityScore: scoreSummary.priorityScore,
+            voteCount: scoreSummary.voteCount
+        });
+    } catch (err) {
+        handleError(res, 'submitting governance vote', err);
+    }
+});
+
+// Finalize governance decision for the active review
+router.post('/submissions/:id/governance/decide', requireAuth, async (req, res) => {
+    try {
+        const user = getAuthUser(req);
+        if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+        const canDecide = await hasPermission(user, 'can_decide_governance');
+        if (!canDecide) return res.status(403).json({ error: 'Forbidden' });
+
+        const submissionId = parseInt(req.params.id, 10);
+        if (Number.isNaN(submissionId)) return res.status(400).json({ error: 'Invalid submission id' });
+
+        const decision = String(req.body?.decision || '').trim();
+        const allowedDecisions = ['approved-now', 'approved-backlog', 'needs-info', 'rejected'];
+        if (!allowedDecisions.includes(decision)) {
+            return res.status(400).json({ error: `decision must be one of: ${allowedDecisions.join(', ')}` });
+        }
+        const decisionReason = typeof req.body?.decisionReason === 'string' ? req.body.decisionReason.trim() : null;
+
+        const pool = await getPool();
+        if (!(await hasGovernanceSchema(pool)) || !(await hasGovernancePhase1Schema(pool))) {
+            return res.status(503).json({ error: 'Governance phase 1 schema not installed. Run governance phase 1 migration first.' });
+        }
+
+        const reviewResult = await pool.request()
+            .input('submissionId', sql.Int, submissionId)
+            .query(`
+                SELECT TOP 1 id, status, criteriaSnapshotJson
+                FROM GovernanceReview
+                WHERE submissionId = @submissionId
+                ORDER BY reviewRound DESC
+            `);
+
+        if (reviewResult.recordset.length === 0) {
+            return res.status(409).json({ error: 'No governance review exists for this submission.' });
+        }
+
+        const review = reviewResult.recordset[0];
+        if (review.status !== 'in-review') {
+            return res.status(409).json({ error: 'Governance review is not open.' });
+        }
+
+        const allVotesResult = await pool.request()
+            .input('reviewId', sql.Int, review.id)
+            .query('SELECT scoresJson FROM GovernanceVote WHERE reviewId = @reviewId');
+        const allVotes = allVotesResult.recordset.map(v => {
+            try {
+                return { scores: JSON.parse(v.scoresJson || '{}') };
+            } catch {
+                return { scores: {} };
+            }
+        });
+
+        const criteria = normalizeCriteriaSnapshot(review.criteriaSnapshotJson);
+        const scoreSummary = calculatePriorityScore(criteria, allVotes);
+
+        const tx = new sql.Transaction(pool);
+        try {
+            await tx.begin();
+
+            const reviewUpdate = new sql.Request(tx);
+            await reviewUpdate
+                .input('id', sql.Int, review.id)
+                .input('decision', sql.NVarChar(30), decision)
+                .input('decisionReason', sql.NVarChar(sql.MAX), decisionReason)
+                .input('decidedByOid', sql.NVarChar(100), user.oid)
+                .query(`
+                    UPDATE GovernanceReview
+                    SET status = 'decided',
+                        decision = @decision,
+                        decisionReason = @decisionReason,
+                        decidedAt = GETDATE(),
+                        decidedByOid = @decidedByOid
+                    WHERE id = @id
+                `);
+
+            const submissionUpdate = new sql.Request(tx);
+            await submissionUpdate
+                .input('submissionId', sql.Int, submissionId)
+                .input('decision', sql.NVarChar(30), decision)
+                .input('decisionReason', sql.NVarChar(sql.MAX), decisionReason)
+                .input('priorityScore', sql.Decimal(9, 2), scoreSummary.priorityScore)
+                .query(`
+                    UPDATE IntakeSubmissions
+                    SET governanceStatus = 'decided',
+                        governanceDecision = @decision,
+                        governanceReason = @decisionReason,
+                        priorityScore = COALESCE(@priorityScore, priorityScore)
+                    WHERE id = @submissionId
+                `);
+
+            await tx.commit();
+        } catch (err) {
+            await tx.rollback();
+            throw err;
+        }
+
+        logAudit({
+            action: 'submission.governance_decide',
+            entityType: 'submission',
+            entityId: submissionId,
+            entityTitle: `Submission ${submissionId}`,
+            user,
+            after: {
+                reviewId: review.id,
+                decision,
+                decisionReason,
+                priorityScore: scoreSummary.priorityScore,
+                voteCount: scoreSummary.voteCount
+            },
+            req
+        });
+
+        res.json({
+            success: true,
+            reviewId: review.id.toString(),
+            decision,
+            priorityScore: scoreSummary.priorityScore,
+            voteCount: scoreSummary.voteCount
+        });
+    } catch (err) {
+        handleError(res, 'finalizing governance decision', err);
     }
 });
 

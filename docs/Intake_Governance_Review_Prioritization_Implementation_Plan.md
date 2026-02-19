@@ -179,6 +179,12 @@ Phase 0 backend foundation has been started in code with:
 - Intake governance apply/skip controls and governance fields on submissions.
 - Backward-compatible intake fallback when governance schema is not installed yet.
 
+Phase 1 backend foundation has been started in code with:
+
+- Governance review rounds (`start`), participant snapshots, vote upsert, and decision endpoints.
+- Score calculation and cached `priorityScore` updates from submitted votes.
+- Phase 1 DB migration script execution completed on February 19, 2026.
+
 ## Phase 0 - Optionality and Scope Controls (first)
 
 ### Data model changes
