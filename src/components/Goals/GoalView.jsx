@@ -5,6 +5,7 @@ import { GoalItem } from './GoalItem';
 import { Modal } from '../UI/Modal';
 import { AddGoalForm } from './AddGoalForm';
 import { FilterBar } from '../UI/FilterBar';
+import { EmptyState } from '../UI/EmptyState';
 import './Goals.css';
 
 import { useAuth } from '../../hooks/useAuth';
@@ -86,9 +87,10 @@ export function GoalView({ onNavigateToProjects, onNavigateToMetrics }) {
 
             <div className="goals-tree-container">
                 {filteredRootGoals.length === 0 ? (
-                    <div className="empty-state glass">
-                        <p>No goals defined. Start by adding an Organization Goal.</p>
-                    </div>
+                    <EmptyState
+                        title="No goals found"
+                        message="No goals defined. Start by adding an Organization Goal."
+                    />
                 ) : (
                     filteredRootGoals.map(goal => (
                         <GoalItem

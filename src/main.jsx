@@ -44,6 +44,8 @@ try {
 
 // Check if we are running inside a popup window (for auth callback)
 const isInPopup = window.opener && window.opener !== window;
+// Check if we are running inside an iframe (for silent auth)
+const isInIframe = window.self !== window.top;
 const hasAuthHash = window.location.hash.includes('code=') || window.location.hash.includes('state=');
 
 async function initializeApp() {
@@ -53,8 +55,24 @@ async function initializeApp() {
   try {
     const response = await msalInstance.handleRedirectPromise();
 
-    // If we're in a popup with an auth response, MSAL should close it automatically.
-    // But if for some reason it doesn't, and we have a response, we can try to close.
+    // If we're in a popup or iframe, stop here to allow MSAL to process the hash
+    // without loading the full app overhead which causes timeouts.
+    if ((isInPopup || isInIframe) && !response) {
+      // If in iframe/popup but NO response yet (and no hash), it might be a normal load? 
+      // But if it IS an auth redirect, response might be null if processed? 
+      // Actually, for silent iframe, response IS returned.
+    }
+
+    // Optimization: If in iframe and we are just processing auth, do not render App.
+    // Silent requests use iframes. 
+    if (isInIframe && msalConfig.auth.redirectUri === window.location.origin + '/') {
+      // If we serve the valid redirect page, we don't need to render the UI
+      // We just need the MSAL script to run handleRedirectPromise (which we did above)
+      // So we can return early.
+      console.log("Suppressing App render in iframe to prevent timeout.");
+      return;
+    }
+
     if (isInPopup && hasAuthHash) {
       // In a popup with auth hash - don't render the app, just let MSAL handle it
       console.log("Auth callback in popup detected, waiting for MSAL to close...");

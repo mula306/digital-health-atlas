@@ -5,6 +5,7 @@ import { getDescendantGoalIds } from '../../utils/goalHelpers';
 import { FilterBar } from '../UI/FilterBar';
 import { TrendingUp, Target } from 'lucide-react';
 import { formatKpiValue } from '../../utils';
+import { EmptyState } from '../UI/EmptyState';
 import './MetricsPage.css';
 
 export function MetricsPage({ initialGoalFilter, onClearFilter }) {
@@ -101,10 +102,10 @@ export function MetricsPage({ initialGoalFilter, onClearFilter }) {
             />
 
             {filteredMetrics.length === 0 ? (
-                <div className="empty-metrics">
-                    <TrendingUp size={48} style={{ marginBottom: '1rem', opacity: 0.5 }} />
-                    <p>No metrics found matching your criteria.</p>
-                </div>
+                <EmptyState
+                    title="No metrics found"
+                    message="No metrics found matching your criteria."
+                />
             ) : (
                 <div className="metrics-grid">
                     {filteredMetrics.map(metric => {

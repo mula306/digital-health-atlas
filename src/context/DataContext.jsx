@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, useMemo, useCallback } from 'react';
 import { useMsal } from '@azure/msal-react';
+import { InteractionRequiredAuthError, BrowserAuthError } from '@azure/msal-browser';
 import { apiRequest } from '../authConfig';
 import { fetchWithAuth, ApiError, API_BASE } from '../apiClient';
 
@@ -31,6 +32,7 @@ export function DataProvider({ children }) {
     const [loadingMore, setLoadingMore] = useState(false);
     const [error, setError] = useState(null);
 
+
     // Helper: Authenticated fetch wrapper using centralized client
     const authFetch = useCallback(async (url, options = {}) => {
         let token = null;
@@ -44,8 +46,25 @@ export function DataProvider({ children }) {
                 token = response.accessToken;
             }
         } catch (error) {
-            console.error('Token acquisition failed', error);
-            // Proceed without token (backend will reject 401 if strict)
+            console.warn('Silent token acquisition failed, attempting interactive fallback...', error);
+
+            // Fallback to interaction if silent fails
+            // This handles expired sessions, password changes, or MFA requirements
+            if (error instanceof InteractionRequiredAuthError ||
+                error instanceof BrowserAuthError ||
+                error.name === "BrowserAuthError") { // Checking name is safer for instance checks across bundles
+                try {
+                    // Use redirect instead of popup to avoid blockers
+                    console.log("Redirecting to login...");
+                    await instance.acquireTokenRedirect(apiRequest);
+                    // Execution stops here as page redirects
+                    return;
+                } catch (redirectError) {
+                    console.error('Redirect token acquisition failed', redirectError);
+                }
+            } else {
+                console.error('Non-interactive token error:', error);
+            }
         }
 
         return fetchWithAuth(url, token, options);

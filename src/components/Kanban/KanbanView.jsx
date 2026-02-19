@@ -11,6 +11,7 @@ import './KanbanView.css';
 
 import { useAuth } from '../../hooks/useAuth';
 
+import { EmptyState } from '../UI/EmptyState';
 import { API_BASE } from '../../apiClient';
 
 export default function KanbanView({ initialGoalFilter, onClearFilter }) {
@@ -230,9 +231,10 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
 
             <div className="projects-grid">
                 {displayProjects.length === 0 && !filterLoading ? (
-                    <div className="empty-state glass">
-                        <p>No projects found{goalFilter ? ' for this goal' : ''}.</p>
-                    </div>
+                    <EmptyState
+                        title="No projects found"
+                        message={`No projects found${goalFilter ? ' for this goal' : ''}.`}
+                    />
                 ) : (
                     displayProjects.map(project => (
                         <div

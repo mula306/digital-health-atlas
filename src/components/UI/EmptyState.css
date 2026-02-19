@@ -1,0 +1,37 @@
+.empty-state-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 3rem;
+    color: var(--text-tertiary);
+    background: var(--bg-card);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-color);
+    width: 100%;
+}
+
+.empty-state-icon {
+    margin-bottom: 1rem;
+    opacity: 0.5;
+    color: var(--text-tertiary);
+}
+
+.empty-state-title {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 0.5rem;
+}
+
+.empty-state-message {
+    font-size: 0.95rem;
+    color: var(--text-secondary);
+    max-width: 400px;
+    margin: 0 auto;
+}
+
+.empty-state-action {
+    margin-top: 1.5rem;
+}

@@ -9,6 +9,7 @@ import html2pdf from 'html2pdf.js';
 import './ExecDashboard.css';
 
 import { formatCompactDate as formatShortDate } from '../../utils';
+import { EmptyState } from '../UI/EmptyState';
 import { API_BASE } from '../../apiClient';
 
 import { getDescendantGoalIds } from '../../utils/goalHelpers';
@@ -465,7 +466,10 @@ export function ExecDashboard() {
                         ) : Object.keys(groupedData).length === 0 ? (
                             <tr>
                                 <td colSpan={4} style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-tertiary)' }}>
-                                    No projects found matching your filters.
+                                    <EmptyState
+                                        title="No projects found"
+                                        message="No projects found matching your filters."
+                                    />
                                 </td>
                             </tr>
                         ) : (
