@@ -3,7 +3,7 @@ import { getPool, sql } from '../db.js';
 import { checkPermission, checkRole, getAuthUser, invalidatePermissionCache, requireAuth } from '../middleware/authMiddleware.js';
 import { handleError } from '../utils/errorHandler.js';
 import { logAudit } from '../utils/auditLogger.js';
-import { CACHE_KEYS, invalidateTagCache, invalidateProjectCache } from '../utils/cache.js';
+import { invalidateTagCache, invalidateProjectCache } from '../utils/cache.js';
 
 const router = express.Router();
 

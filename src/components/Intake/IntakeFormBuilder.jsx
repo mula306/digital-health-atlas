@@ -1,7 +1,6 @@
 import { useState } from 'react';
-import { Plus, Trash2, Copy, GripVertical, Check, FileText } from 'lucide-react';
+import { Plus, Trash2, Copy, Check, FileText } from 'lucide-react';
 import { useData } from '../../context/DataContext';
-import { Modal } from '../UI/Modal';
 import './Intake.css';
 
 const FIELD_TYPES = [

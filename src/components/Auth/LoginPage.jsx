@@ -1,4 +1,3 @@
-import React from 'react';
 import { useMsal } from '@azure/msal-react';
 import { loginRequest } from '../../authConfig';
 import './LoginPage.css'; // We'll create this next

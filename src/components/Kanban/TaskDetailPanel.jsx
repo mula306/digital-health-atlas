@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { X, Calendar, Flag, Clock, Edit, Trash2, AlignLeft, CheckCircle2 } from 'lucide-react';
+import { X, Calendar, Flag, Edit, Trash2, AlignLeft, CheckCircle2 } from 'lucide-react';
 import { useData } from '../../context/DataContext';
 import { useToast } from '../../context/ToastContext';
 import './TaskDetail.css';

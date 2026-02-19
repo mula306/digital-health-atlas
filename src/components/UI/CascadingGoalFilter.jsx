@@ -3,8 +3,6 @@ import { Filter, X } from 'lucide-react';
 import { useData } from '../../context/DataContext';
 import './CascadingGoalFilter.css';
 
-const LEVEL_NAMES = ['Organization', 'Division', 'Department', 'Branch'];
-
 export function CascadingGoalFilter({ value, onChange }) {
     const { goals } = useData();
 

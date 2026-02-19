@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect } from 'react';
+import { useRef, useState, useEffect } from 'react';
 import { Download, Printer, CheckSquare, Square } from 'lucide-react';
 import html2pdf from 'html2pdf.js';
 import { StatusReportView } from '../StatusReport/StatusReportView';

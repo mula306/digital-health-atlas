@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Clock, Eye, RotateCcw, GitCompare } from 'lucide-react';
+import { Eye, RotateCcw, GitCompare } from 'lucide-react';
 import { useData } from '../../context/DataContext';
 import './StatusReport.css';
 

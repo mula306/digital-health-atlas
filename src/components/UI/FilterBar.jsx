@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { useData } from '../../context/DataContext';
 import { CascadingGoalFilter } from './CascadingGoalFilter';
 import { Tag, Activity, X } from 'lucide-react';

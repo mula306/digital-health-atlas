@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useMsal } from '@azure/msal-react';
 import { apiRequest } from '../../authConfig';
 import {
     Clock, User, Database, Plus, Pencil, Trash2,
     ChevronLeft, ChevronRight, X, Search,
-    Activity, Shield, BarChart3, Globe
+    Activity, BarChart3, Globe
 } from 'lucide-react';
 import './AuditLogView.css';
 

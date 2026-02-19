@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useData } from '../../context/DataContext';
 import { useToast } from '../../context/ToastContext';
-import { Plus, Trash2, TrendingUp, X } from 'lucide-react';
+import { Plus, Trash2, TrendingUp } from 'lucide-react';
 import './KPI.css';
 
 export function KPIManager({ goalId, kpis = [] }) {

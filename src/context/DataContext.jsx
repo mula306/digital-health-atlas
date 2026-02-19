@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useState, useMemo, useCallback } 
 import { useMsal } from '@azure/msal-react';
 import { InteractionRequiredAuthError, BrowserAuthError } from '@azure/msal-browser';
 import { apiRequest } from '../authConfig';
-import { fetchWithAuth, ApiError, API_BASE } from '../apiClient';
+import { fetchWithAuth, API_BASE } from '../apiClient';
 
 const DataContext = createContext();
 

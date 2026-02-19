@@ -23,7 +23,6 @@ import adminRouter from './routes/admin.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
-const IS_DEVELOPMENT = process.env.NODE_ENV !== 'production';
 
 // ==================== MIDDLEWARE ====================
 
@@ -32,7 +31,7 @@ app.use(helmet());
 app.use(compression());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
-// app.use(morgan(IS_DEVELOPMENT ? 'dev' : 'combined')); // Removed missing dependency
+// app.use(morgan('combined')); // Removed missing dependency
 
 // Rate Limiting
 const limiter = rateLimit({

@@ -3,7 +3,6 @@ import { useState, useMemo, useEffect } from 'react';
 import { useData } from '../../context/DataContext';
 import { getDescendantGoalIds } from '../../utils/goalHelpers';
 import { FilterBar } from '../UI/FilterBar';
-import { TrendingUp, Target } from 'lucide-react';
 import { formatKpiValue } from '../../utils';
 import { EmptyState } from '../UI/EmptyState';
 import './MetricsPage.css';

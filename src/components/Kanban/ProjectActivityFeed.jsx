@@ -1,9 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useMsal } from '@azure/msal-react';
 import { apiRequest } from '../../authConfig';
-import {
-    Clock, User, Plus, Pencil, Trash2, Activity,
-    ChevronDown, Database
+import { Plus, Pencil, Trash2, Activity,
+    ChevronDown
 } from 'lucide-react';
 
 import { API_BASE } from '../../apiClient';

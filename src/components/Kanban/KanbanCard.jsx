@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import { Calendar, Clock, AlertCircle } from 'lucide-react';
+import { Calendar, AlertCircle } from 'lucide-react';
 import { useData } from '../../context/DataContext';
 
 // Get end date (supports legacy dueDate)

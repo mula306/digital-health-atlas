@@ -180,7 +180,7 @@ export function StatusReportEditor({ projectId, projectTitle: _projectTitle, pre
         }
     };
 
-    // eslint-disable-next-line no-unused-vars
+     
     const renderSectionHeader = (title, section, SectionIcon) => (
         <button
             type="button"

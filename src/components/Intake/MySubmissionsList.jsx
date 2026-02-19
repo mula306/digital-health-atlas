@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Clock, MessageSquare, Eye, Send, CheckCircle, XCircle } from 'lucide-react';
+import { Clock, MessageSquare, Send, CheckCircle, XCircle } from 'lucide-react';
 import { useData } from '../../context/DataContext';
 import { Modal } from '../UI/Modal';
 import './Intake.css';

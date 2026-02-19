@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { ChevronRight, ChevronDown, Folder, CheckSquare, Square, Tag, Activity, X } from 'lucide-react';
 import { useData } from '../../context/DataContext';
 import { getDescendantGoalIds } from '../../utils/goalHelpers';
