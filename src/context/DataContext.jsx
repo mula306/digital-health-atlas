@@ -964,19 +964,38 @@ export function DataProvider({ children }) {
         return { ...submission, conversation };
     }, []);
 
-
-
     const convertSubmissionToProject = useCallback(async (submissionId, projectData) => {
         const projectId = await addProject(projectData);
         if (!projectId) {
-            throw new Error('Project creation failed — no project ID returned');
+            throw new Error('Project creation failed - no project ID returned');
         }
-        await updateIntakeSubmission(submissionId, {
-            status: 'approved',
-            convertedProjectId: projectId
-        });
-        return projectId;
-    }, [addProject, updateIntakeSubmission]);
+
+        try {
+            await authFetch(`${API_BASE}/intake/submissions/${submissionId}`, {
+                method: 'PUT',
+                body: JSON.stringify({
+                    status: 'approved',
+                    convertedProjectId: projectId
+                })
+            });
+
+            patchSubmissionLocal(submissionId, {
+                status: 'approved',
+                convertedProjectId: String(projectId)
+            });
+
+            return projectId;
+        } catch (err) {
+            // Best effort rollback if submission update is rejected.
+            try {
+                await authFetch(`${API_BASE}/projects/${projectId}`, { method: 'DELETE' });
+                setProjects(prev => prev.filter(p => String(p.id) !== String(projectId)));
+            } catch (rollbackErr) {
+                console.error('Failed to rollback project after conversion failure:', rollbackErr);
+            }
+            throw err;
+        }
+    }, [addProject, authFetch, patchSubmissionLocal]);
 
     // ==================== TAG MANAGEMENT ====================
 

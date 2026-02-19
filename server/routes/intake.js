@@ -755,7 +755,17 @@ router.put('/submissions/:id', requireAuth, async (req, res) => {
         // 1. Fetch existing submission to check permissions directly
         const prevResult = await pool.request()
             .input('id', sql.Int, id)
-            .query('SELECT submitterId, status, convertedProjectId FROM IntakeSubmissions WHERE id = @id');
+            .query(`
+                SELECT
+                    submitterId,
+                    status,
+                    convertedProjectId,
+                    governanceRequired,
+                    governanceStatus,
+                    governanceDecision
+                FROM IntakeSubmissions
+                WHERE id = @id
+            `);
 
         if (prevResult.recordset.length === 0) {
             return res.status(404).json({ error: 'Submission not found' });
@@ -773,6 +783,31 @@ router.put('/submissions/:id', requireAuth, async (req, res) => {
         // 3. Prepare Updates
         const request = pool.request().input('id', sql.Int, id);
         let updateParts = [];
+        const normalizedStatus = typeof status === 'string' ? status.trim().toLowerCase() : null;
+        const wantsApprovedStatus = normalizedStatus === 'approved';
+        const hasConvertedProjectIdInput = convertedProjectId !== undefined;
+        const parsedConvertedProjectId = hasConvertedProjectIdInput
+            ? (convertedProjectId ? parseInt(convertedProjectId, 10) : null)
+            : null;
+        const wantsProjectConversion = hasConvertedProjectIdInput && parsedConvertedProjectId !== null;
+
+        if (hasConvertedProjectIdInput && convertedProjectId && Number.isNaN(parsedConvertedProjectId)) {
+            return res.status(400).json({ error: 'Invalid convertedProjectId' });
+        }
+
+        if (isManager && (wantsApprovedStatus || wantsProjectConversion)) {
+            const governanceRequired = !!prev.governanceRequired;
+            const governanceStatus = String(prev.governanceStatus || '').toLowerCase();
+            const governanceDecision = String(prev.governanceDecision || '').toLowerCase();
+            const governanceAllowsConversion = !governanceRequired ||
+                (governanceStatus === 'decided' && governanceDecision === 'approved-now');
+
+            if (!governanceAllowsConversion) {
+                return res.status(409).json({
+                    error: 'Cannot convert to project until governance is decided as approved-now.'
+                });
+            }
+        }
 
         // Manager only fields
         if (isManager) {
@@ -780,8 +815,8 @@ router.put('/submissions/:id', requireAuth, async (req, res) => {
                 request.input('status', sql.NVarChar, status);
                 updateParts.push('status = @status');
             }
-            if (convertedProjectId !== undefined) {
-                request.input('convertedProjectId', sql.Int, convertedProjectId ? parseInt(convertedProjectId) : null);
+            if (hasConvertedProjectIdInput) {
+                request.input('convertedProjectId', sql.Int, parsedConvertedProjectId);
                 updateParts.push('convertedProjectId = @convertedProjectId');
             }
         }
@@ -807,7 +842,7 @@ router.put('/submissions/:id', requireAuth, async (req, res) => {
             entityId: id,
             entityTitle: `Submission ${id}`,
             user,
-            after: { status, conversationUpdated: !!conversation },
+            after: { status, convertedProjectId: hasConvertedProjectIdInput ? parsedConvertedProjectId : undefined, conversationUpdated: !!conversation },
             req
         });
 
@@ -1606,6 +1641,21 @@ router.post('/submissions/:id/governance/decide', requireAuth, async (req, res) 
         const review = reviewResult.recordset[0];
         if (review.status !== 'in-review') {
             return res.status(409).json({ error: 'Governance review is not open.' });
+        }
+
+        const chairParticipantResult = await pool.request()
+            .input('reviewId', sql.Int, review.id)
+            .input('userOid', sql.NVarChar(100), user.oid)
+            .query(`
+                SELECT TOP 1 id
+                FROM GovernanceReviewParticipant
+                WHERE reviewId = @reviewId
+                  AND userOid = @userOid
+                  AND participantRole = 'chair'
+                  AND isEligibleVoter = 1
+            `);
+        if (chairParticipantResult.recordset.length === 0) {
+            return res.status(403).json({ error: 'Only the governance chair for this review can record a final decision.' });
         }
 
         const allVotesResult = await pool.request()

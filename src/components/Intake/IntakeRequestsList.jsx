@@ -360,6 +360,10 @@ export function IntakeRequestsList({ initialFilter = 'all' }) {
 
     const handleConvert = async () => {
         if (!canViewIncomingRequests) return;
+        if (!governanceAllowsConversion) {
+            toast.error('Conversion requires governance decision: Approved Now.');
+            return;
+        }
         const form = getForm(selectedSubmission.formId);
         if (!form) {
             toast.error('Form definition not found');
@@ -382,7 +386,7 @@ export function IntakeRequestsList({ initialFilter = 'all' }) {
             toast.success('Request converted to project!');
         } catch (err) {
             console.error('Failed to convert submission to project:', err);
-            toast.error('Failed to create project. Please try again.');
+            toast.error(err.message || 'Failed to create project. Please try again.');
         }
     };
 
@@ -422,6 +426,16 @@ export function IntakeRequestsList({ initialFilter = 'all' }) {
     const selectedForm = selectedSubmission ? getForm(selectedSubmission.formId) : null;
     const governanceReview = governanceDetails?.review || null;
     const governanceSummary = governanceReview?.scoreSummary || null;
+    const isCurrentUserGovernanceChair = !!governanceReview?.participants?.some(participant =>
+        participant.userOid === currentUser?.oid &&
+        participant.participantRole === 'chair' &&
+        participant.isEligibleVoter
+    );
+    const canRecordGovernanceDecision = canDecideGovernance && isCurrentUserGovernanceChair;
+    const governanceAllowsConversion = !selectedSubmission?.governanceRequired || (
+        String(selectedSubmission?.governanceStatus || '').toLowerCase() === 'decided' &&
+        String(selectedSubmission?.governanceDecision || '').toLowerCase() === 'approved-now'
+    );
 
     return (
         <div className="intake-requests">
@@ -775,7 +789,7 @@ export function IntakeRequestsList({ initialFilter = 'all' }) {
                                             </div>
                                         )}
 
-                                        {canDecideGovernance && governanceReview.status === 'in-review' && (
+                                        {canRecordGovernanceDecision && governanceReview.status === 'in-review' && (
                                             <div style={{ border: '1px solid var(--border-color)', borderRadius: '8px', padding: '0.75rem' }}>
                                                 <h5 style={{ margin: '0 0 0.5rem' }}>Record Decision</h5>
                                                 <div className="form-group" style={{ marginBottom: '0.75rem' }}>
@@ -809,6 +823,12 @@ export function IntakeRequestsList({ initialFilter = 'all' }) {
                                                         Quorum is required before final decision.
                                                     </div>
                                                 )}
+                                            </div>
+                                        )}
+
+                                        {canDecideGovernance && !isCurrentUserGovernanceChair && governanceReview.status === 'in-review' && (
+                                            <div style={{ marginTop: '0.5rem', fontSize: '0.78rem', color: '#b45309' }}>
+                                                Only the governance chair can record the final decision for this review.
                                             </div>
                                         )}
 
@@ -905,12 +925,18 @@ export function IntakeRequestsList({ initialFilter = 'all' }) {
                                 >
                                     <XCircle size={16} /> Reject
                                 </button>
-                                <button
-                                    className="btn-primary"
-                                    onClick={() => setShowConvertModal(true)}
-                                >
-                                    <ArrowRight size={16} /> Convert to Project
-                                </button>
+                                {governanceAllowsConversion ? (
+                                    <button
+                                        className="btn-primary"
+                                        onClick={() => setShowConvertModal(true)}
+                                    >
+                                        <ArrowRight size={16} /> Convert to Project
+                                    </button>
+                                ) : (
+                                    <div style={{ fontSize: '0.78rem', color: '#b45309' }}>
+                                        Conversion requires governance decision: Approved Now.
+                                    </div>
+                                )}
                             </div>
                         )}
                     </div>
@@ -941,7 +967,7 @@ export function IntakeRequestsList({ initialFilter = 'all' }) {
                 </p>
                 <div className="form-actions">
                     <button className="btn-secondary" onClick={() => setShowConvertModal(false)}>Cancel</button>
-                    <button className="btn-primary" onClick={handleConvert}>
+                    <button className="btn-primary" onClick={handleConvert} disabled={!governanceAllowsConversion}>
                         <CheckCircle size={16} /> Create Project
                     </button>
                 </div>
