@@ -37,6 +37,10 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
     const [goalFilter, setGoalFilter] = useState(initialGoalFilter || '');
     const [selectedTags, setSelectedTags] = useState([]);
     const [searchTerm, setSearchTerm] = useState('');
+    const [exactProjectFilterId, setExactProjectFilterId] = useState(() => {
+        const stored = localStorage.getItem('dha_project_filter_id');
+        return stored || '';
+    });
     const [isLoadingDetails, setIsLoadingDetails] = useState(false);
 
     // Server-side filtered projects state
@@ -45,7 +49,7 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
     const [filterLoading, setFilterLoading] = useState(false);
     const [filteredLoadingMore, setFilteredLoadingMore] = useState(false);
 
-    const hasActiveFilters = !!(goalFilter || selectedTags.length > 0 || searchTerm.trim());
+    const hasActiveFilters = !!(goalFilter || selectedTags.length > 0 || searchTerm.trim() || exactProjectFilterId);
 
     // Sync with external filter changes
     useEffect(() => {
@@ -54,9 +58,29 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
         }
     }, [initialGoalFilter]);
 
+    useEffect(() => {
+        const handleProjectFilterEvent = (event) => {
+            const projectId = String(event?.detail?.projectId || '').trim();
+            if (!projectId) return;
+
+            setSelectedProjectId(null);
+            setGoalFilter('');
+            setSelectedTags([]);
+            setSearchTerm('');
+            setExactProjectFilterId(projectId);
+            localStorage.setItem('dha_project_filter_id', projectId);
+        };
+
+        window.addEventListener('dha:filter-project', handleProjectFilterEvent);
+        return () => window.removeEventListener('dha:filter-project', handleProjectFilterEvent);
+    }, []);
+
     // Build filter query params (shared by initial fetch and load-more)
     const buildFilterParams = useCallback((page = 1) => {
         const params = new URLSearchParams({ page: String(page), limit: '100' });
+        if (exactProjectFilterId) {
+            params.set('projectId', exactProjectFilterId);
+        }
         if (goalFilter) {
             const descendantIds = getDescendantGoalIds(goals, goalFilter);
             const allGoalIds = [String(goalFilter), ...descendantIds.map(String)];
@@ -69,7 +93,7 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
             params.set('search', searchTerm.trim());
         }
         return params;
-    }, [goalFilter, selectedTags, searchTerm, goals]);
+    }, [exactProjectFilterId, goalFilter, selectedTags, searchTerm, goals]);
 
     // Fetch filtered projects from server when filters change
     useEffect(() => {
@@ -102,7 +126,7 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
 
         fetchFiltered();
         return () => { cancelled = true; };
-    }, [goalFilter, selectedTags, searchTerm, goals, authFetch, buildFilterParams, hasActiveFilters]);
+    }, [exactProjectFilterId, goalFilter, selectedTags, searchTerm, goals, authFetch, buildFilterParams, hasActiveFilters]);
 
     // Load more filtered projects
     const loadMoreFilteredProjects = useCallback(async () => {
@@ -125,15 +149,26 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
 
     // Load full details when a project is selected
     useEffect(() => {
-        if (selectedProjectId) {
-            const project = projects.find(p => p.id == selectedProjectId);
-            if (project && !project._detailsLoaded) {
-                setIsLoadingDetails(true);
-                loadProjectDetails(selectedProjectId).finally(() => {
+        if (!selectedProjectId) return;
+
+        let cancelled = false;
+        const project = projects.find(p => p.id == selectedProjectId);
+        if (project && project._detailsLoaded) return;
+
+        setIsLoadingDetails(true);
+        loadProjectDetails(selectedProjectId)
+            .then((loaded) => {
+                if (!cancelled && !loaded) {
+                    setSelectedProjectId(null);
+                }
+            })
+            .finally(() => {
+                if (!cancelled) {
                     setIsLoadingDetails(false);
-                });
-            }
-        }
+                }
+            });
+
+        return () => { cancelled = true; };
     }, [selectedProjectId, projects, loadProjectDetails]);
 
     const selectedProject = projects.find(p => p.id == selectedProjectId);
@@ -148,13 +183,17 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
     };
 
     const handleFilterChange = (newGoalId) => {
+        if (exactProjectFilterId) {
+            setExactProjectFilterId('');
+            localStorage.removeItem('dha_project_filter_id');
+        }
         setGoalFilter(newGoalId);
         if (!newGoalId && onClearFilter) onClearFilter();
     };
 
     // Show loading state if we have a selected ID but no project found yet (likely initial load)
     if (selectedProjectId && !selectedProject) {
-        if (loading) {
+        if (loading || isLoadingDetails) {
             return (
                 <div className="flex justify-center items-center h-full">
                     <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
@@ -216,6 +255,17 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
                     : `${displayProjects.length} project(s)`
                 }
             >
+                {exactProjectFilterId && (
+                    <button
+                        className="btn-secondary btn-sm shared-clear-btn"
+                        onClick={() => {
+                            setExactProjectFilterId('');
+                            localStorage.removeItem('dha_project_filter_id');
+                        }}
+                    >
+                        <X size={14} /> Clear Project Filter
+                    </button>
+                )}
                 {searchTerm && (
                     <button className="btn-secondary btn-sm shared-clear-btn" onClick={() => setSearchTerm('')}>
                         <X size={14} /> Clear Search

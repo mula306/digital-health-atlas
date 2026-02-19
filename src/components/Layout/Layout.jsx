@@ -67,6 +67,7 @@ export function Layout({ children, currentView, onViewChange }) {
     const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
     const [commandQuery, setCommandQuery] = useState('');
     const [selectedCommandIndex, setSelectedCommandIndex] = useState(0);
+    const [allCommandProjects, setAllCommandProjects] = useState([]);
     const [recentViews, setRecentViews] = useState(() => {
         if (typeof window === 'undefined') return [];
         try {
@@ -134,8 +135,8 @@ export function Layout({ children, currentView, onViewChange }) {
         });
     }, []);
 
-    const handleNavClick = useCallback((viewId) => {
-        onViewChange(viewId);
+    const handleNavClick = useCallback((viewId, options = {}) => {
+        onViewChange(viewId, options);
         trackRecentView(viewId);
         if (isMobileView) {
             setIsSidebarOpen(false);
@@ -165,6 +166,7 @@ export function Layout({ children, currentView, onViewChange }) {
                     return status === 'red' || status === 'yellow';
                 }).length;
 
+                setAllCommandProjects(allProjects);
                 setPortfolioPulseStats({
                     totalProjects: allProjects.length,
                     attentionNeeded: attentionFromStatus,
@@ -172,6 +174,7 @@ export function Layout({ children, currentView, onViewChange }) {
                 });
             } catch {
                 if (!isMounted) return;
+                setAllCommandProjects([]);
                 setPortfolioPulseStats(null);
             }
         };
@@ -279,17 +282,18 @@ export function Layout({ children, currentView, onViewChange }) {
     }, [projects]);
 
     const projectCommands = useMemo(() => {
-        return projects.slice(0, 200).map(project => ({
+        const sourceProjects = allCommandProjects.length > 0 ? allCommandProjects : projects;
+        return sourceProjects.map(project => ({
             id: `project-${project.id}`,
             type: 'project',
             label: project.title,
-            description: `${goalNameById[String(project.goalId)] || 'Unlinked goal'} - ${project.completion || 0}% complete`,
+            description: `${goalNameById[String(project.goalId)] || 'Unlinked goal'} - ${typeof project.completion === 'number' ? `${project.completion}% complete` : 'Open project'}`,
             icon: Folder,
             projectId: project.id,
-            keywords: `${project.title} ${goalNameById[String(project.goalId)] || ''} project`.toLowerCase(),
+            keywords: `${project.title} ${goalNameById[String(project.goalId)] || ''} project ${project.id}`.toLowerCase(),
             baseScore: 65
         }));
-    }, [goalNameById, projects]);
+    }, [allCommandProjects, goalNameById, projects]);
 
     const goalCommands = useMemo(() => {
         return goals.slice(0, 120).map(goal => ({
@@ -318,7 +322,15 @@ export function Layout({ children, currentView, onViewChange }) {
         }
 
         if (command.type === 'project') {
-            localStorage.setItem('dha_selected_project_id', String(command.projectId));
+            const projectId = String(command.projectId);
+            localStorage.removeItem('dha_selected_project_id');
+            localStorage.setItem('dha_project_filter_id', projectId);
+            window.dispatchEvent(new CustomEvent('dha:filter-project', {
+                detail: {
+                    projectId,
+                    projectTitle: command.label
+                }
+            }));
             handleNavClick('projects');
         }
 

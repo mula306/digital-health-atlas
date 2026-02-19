@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useData } from '../../context/DataContext';
 import { CascadingGoalFilter } from './CascadingGoalFilter';
-import { Tag, X } from 'lucide-react';
+import { Tag, Activity, X } from 'lucide-react';
 import './FilterBar.css';
 
 /**
@@ -13,6 +13,9 @@ import './FilterBar.css';
  *  - onGoalFilterChange: (id) => void
  *  - selectedTags: string[] (selected tag ids)
  *  - onTagsChange: (tags: string[]) => void
+ *  - selectedStatuses: string[] (selected status keys)
+ *  - onStatusesChange: (statuses: string[]) => void
+ *  - statusOptions: { id: string, label: string, color?: string }[]
  *  - countLabel: string (e.g., "42 project(s)")
  *  - children: extra buttons rendered in the filter row
  */
@@ -21,11 +24,15 @@ export function FilterBar({
     onGoalFilterChange,
     selectedTags = [],
     onTagsChange,
+    selectedStatuses = [],
+    onStatusesChange,
+    statusOptions = [],
     countLabel,
     children
 }) {
     const { tagGroups } = useData();
     const [showTagFilter, setShowTagFilter] = useState(false);
+    const [showStatusFilter, setShowStatusFilter] = useState(false);
 
     // Get only active tags grouped for the filter UI
     const activeTags = useMemo(() => {
@@ -46,12 +53,22 @@ export function FilterBar({
         onTagsChange(next);
     };
 
+    const toggleStatus = (statusId) => {
+        if (!onStatusesChange) return;
+        const normalized = String(statusId).toLowerCase();
+        const next = selectedStatuses.includes(normalized)
+            ? selectedStatuses.filter(id => id !== normalized)
+            : [...selectedStatuses, normalized];
+        onStatusesChange(next);
+    };
+
     const clearAll = () => {
         onGoalFilterChange('');
         if (onTagsChange) onTagsChange([]);
+        if (onStatusesChange) onStatusesChange([]);
     };
 
-    const hasAnyFilter = goalFilter || selectedTags.length > 0;
+    const hasAnyFilter = goalFilter || selectedTags.length > 0 || selectedStatuses.length > 0;
 
     return (
         <div className="shared-filter-bar glass">
@@ -65,6 +82,16 @@ export function FilterBar({
                     >
                         <Tag size={14} />
                         Tags{selectedTags.length > 0 && <span className="shared-tag-count">{selectedTags.length}</span>}
+                    </button>
+                )}
+
+                {statusOptions.length > 0 && onStatusesChange && (
+                    <button
+                        className={`btn-secondary btn-sm shared-tag-toggle ${showStatusFilter ? 'active' : ''} ${selectedStatuses.length > 0 ? 'has-selection' : ''}`}
+                        onClick={() => setShowStatusFilter(!showStatusFilter)}
+                    >
+                        <Activity size={14} />
+                        Status{selectedStatuses.length > 0 && <span className="shared-tag-count">{selectedStatuses.length}</span>}
                     </button>
                 )}
 
@@ -101,6 +128,27 @@ export function FilterBar({
                             </div>
                         </div>
                     ))}
+                </div>
+            )}
+
+            {showStatusFilter && statusOptions.length > 0 && (
+                <div className="shared-tag-panel">
+                    <div className="exec-tag-group">
+                        <span className="exec-tag-group-label">Status</span>
+                        <div className="exec-tag-options">
+                            {statusOptions.map(status => (
+                                <button
+                                    key={status.id}
+                                    className={`exec-tag-pill ${selectedStatuses.includes(String(status.id).toLowerCase()) ? 'selected' : ''}`}
+                                    onClick={() => toggleStatus(status.id)}
+                                    style={{ '--tag-color': status.color || '#6366f1' }}
+                                >
+                                    <span className="exec-tag-dot" style={{ background: status.color || '#6366f1' }}></span>
+                                    {status.label}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
                 </div>
             )}
         </div>

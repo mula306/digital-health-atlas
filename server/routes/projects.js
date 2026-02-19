@@ -86,6 +86,8 @@ router.get('/', checkPermission(['can_view_projects', 'can_view_exec_dashboard']
         if (limit > 100) limit = 100; // Clamp limit
         const offset = (page - 1) * limit;
         const search = req.query.search || '';
+        const projectIdParam = req.query.projectId;
+        const projectId = Number.isNaN(parseInt(projectIdParam, 10)) ? null : parseInt(projectIdParam, 10);
         // Support both single goalId and comma-separated goalIds
         const goalId = req.query.goalId || null;
         const goalIdsParam = req.query.goalIds || '';
@@ -98,7 +100,7 @@ router.get('/', checkPermission(['can_view_projects', 'can_view_exec_dashboard']
             : [];
 
         // Check cache first
-        const cacheKey = `${CACHE_KEYS.PROJECT_PREFIX}${page}_${limit}_${search}_${goalIds.join('-')}_${tagIds.join('-')}`;
+        const cacheKey = `${CACHE_KEYS.PROJECT_PREFIX}${page}_${limit}_${search}_${projectId || ''}_${goalIds.join('-')}_${tagIds.join('-')}`;
         const cached = cache.get(cacheKey);
         if (cached) {
             return res.json(cached);
@@ -113,6 +115,11 @@ router.get('/', checkPermission(['can_view_projects', 'can_view_exec_dashboard']
 
         // Build WHERE clause for filtering
         const conditions = [];
+        if (projectId !== null) {
+            conditions.push('p.id = @projectId');
+            requestParams.projectId = projectId;
+            countParams.projectId = projectId;
+        }
         if (search) {
             conditions.push(`(p.title LIKE @search OR p.description LIKE @search)`);
             requestParams.search = `%${search}%`;

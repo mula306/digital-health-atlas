@@ -74,16 +74,22 @@ export function AppContent() {
         setCurrentView('metrics');
     };
 
-    const handleViewChange = (view) => {
+    const handleViewChange = (view, options = {}) => {
+        const preserveSelectedProject = options?.preserveSelectedProject === true;
+        const selectedProjectId = options?.selectedProjectId ? String(options.selectedProjectId) : null;
+
         if (view !== 'projects') {
             setProjectFilter(null);
         }
         if (view !== 'metrics') {
             setMetricsFilter(null);
         }
-        // Reset selected project on main navigation changes
-        // This ensures clicking "Projects" in sidebar always goes to the list
-        localStorage.removeItem('dha_selected_project_id');
+        // Reset selected project on main navigation changes, unless explicitly preserving it
+        if (preserveSelectedProject && selectedProjectId) {
+            localStorage.setItem('dha_selected_project_id', selectedProjectId);
+        } else {
+            localStorage.removeItem('dha_selected_project_id');
+        }
 
         // Clear hash when navigating away from public intake
         if (window.location.hash.startsWith('#/intake/')) {

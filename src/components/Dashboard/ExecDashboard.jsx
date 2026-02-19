@@ -50,6 +50,7 @@ export function ExecDashboard() {
     const [searchTerm, setSearchTerm] = useState('');
     const [selectedGoalId, setSelectedGoalId] = useState('');
     const [selectedTags, setSelectedTags] = useState([]);
+    const [selectedStatuses, setSelectedStatuses] = useState([]);
     const [selectedProject, setSelectedProject] = useState(null);
     const tableRef = useRef(null);
 
@@ -289,6 +290,40 @@ export function ExecDashboard() {
     }, []);
 
     // Process data using Cascading Filter logic
+    const statusOptions = useMemo(() => {
+        const sourceProjects = allProjects.length > 0 ? allProjects : projects;
+        const seen = new Set();
+
+        sourceProjects.forEach(p => {
+            const report = p.report || getLatestStatusReport(p.id);
+            const key = report?.overallStatus ? String(report.overallStatus).toLowerCase() : 'unknown';
+            seen.add(key);
+        });
+
+        const preferredOrder = ['red', 'yellow', 'green', 'unknown'];
+        const labelFor = (status) => {
+            if (status === 'unknown') return 'No Report';
+            return status.charAt(0).toUpperCase() + status.slice(1);
+        };
+
+        const options = [...seen].map(status => ({
+            id: status,
+            label: labelFor(status),
+            color: getStatusColor(status)
+        }));
+
+        options.sort((a, b) => {
+            const ai = preferredOrder.indexOf(a.id);
+            const bi = preferredOrder.indexOf(b.id);
+            if (ai === -1 && bi === -1) return a.label.localeCompare(b.label);
+            if (ai === -1) return 1;
+            if (bi === -1) return -1;
+            return ai - bi;
+        });
+
+        return options;
+    }, [allProjects, projects, getLatestStatusReport]);
+
     const groupedData = useMemo(() => {
         // Use allProjects if available, otherwise fallback to context projects (paginated)
         const sourceProjects = allProjects.length > 0 ? allProjects : projects;
@@ -331,9 +366,10 @@ export function ExecDashboard() {
                 id: p.id,
                 title: p.title,
                 ...h,
-                overallStatus: report ? report.overallStatus : 'unknown',
+                overallStatus: report?.overallStatus ? String(report.overallStatus).toLowerCase() : 'unknown',
                 execSummary: report ? report.executiveSummary : 'No report filed',
-                report: report
+                report: report,
+                reportCount: p.reportCount || 0
             };
         });
 
@@ -341,7 +377,10 @@ export function ExecDashboard() {
         const finalFiltered = mapped.filter(item => {
             const matchesSearch = item.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
                 item.execSummary?.toLowerCase().includes(searchTerm.toLowerCase());
-            return matchesSearch;
+            const matchesStatus = selectedStatuses.length === 0
+                ? true
+                : selectedStatuses.includes(item.overallStatus || 'unknown');
+            return matchesSearch && matchesStatus;
         });
 
         // Group by Organization -> Division
@@ -365,16 +404,16 @@ export function ExecDashboard() {
         });
 
         return groups;
-    }, [projects, allProjects, goals, getLatestStatusReport, searchTerm, selectedGoalId, selectedTags]);
+    }, [projects, allProjects, goals, getLatestStatusReport, searchTerm, selectedGoalId, selectedTags, selectedStatuses]);
 
-    const getStatusColor = (status) => {
+    function getStatusColor(status) {
         switch (status) {
             case 'green': return '#10b981';
             case 'yellow': return '#f59e0b';
             case 'red': return '#ef4444';
             default: return '#9ca3af';
         }
-    };
+    }
 
     return (
         <div className="exec-dashboard">
@@ -402,6 +441,9 @@ export function ExecDashboard() {
                 onGoalFilterChange={setSelectedGoalId}
                 selectedTags={selectedTags}
                 onTagsChange={setSelectedTags}
+                selectedStatuses={selectedStatuses}
+                onStatusesChange={setSelectedStatuses}
+                statusOptions={statusOptions}
                 countLabel={`${Object.values(groupedData).reduce((acc, org) => acc + Object.values(org).reduce((acc2, div) => acc2 + div.length, 0), 0)} project(s)`}
             >
                 {searchTerm && (
@@ -492,12 +534,11 @@ export function ExecDashboard() {
                                                     {/* Projects */}
                                                     {projects.map(project => {
                                                         const report = project.report || getLatestStatusReport(project.id);
-                                                        const statusColor = report ? getStatusColor(report.overallStatus) : '#e5e7eb';
+                                                        const normalizedStatus = report?.overallStatus ? String(report.overallStatus).toLowerCase() : 'unknown';
+                                                        const statusColor = report ? getStatusColor(normalizedStatus) : '#e5e7eb';
                                                         const statusLabel = report
-                                                            ? (report.overallStatus.charAt(0).toUpperCase() + report.overallStatus.slice(1))
+                                                            ? (normalizedStatus.charAt(0).toUpperCase() + normalizedStatus.slice(1))
                                                             : 'No Report';
-
-                                                        const reportCountText = project.reportCount > 0 ? `${project.reportCount} reports` : '';
 
                                                         return (
                                                             <tr
@@ -508,11 +549,6 @@ export function ExecDashboard() {
                                                             >
                                                                 <td className="text-sm text-gray-600 font-normal">
                                                                     <div className="exec-project-title">{project.title}</div>
-                                                                    {reportCountText && (
-                                                                        <div className="text-xs text-gray-500 mt-1">
-                                                                            {reportCountText}
-                                                                        </div>
-                                                                    )}
                                                                 </td>
                                                                 <td className="text-center">
                                                                     <div

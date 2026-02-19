@@ -425,10 +425,19 @@ export function DataProvider({ children }) {
             const detailedProject = await res.json();
 
             if (detailedProject) {
-                // Update local state with the detailed version
-                setProjects(prev => prev.map(p =>
-                    p.id === projectId ? { ...p, ...detailedProject, _detailsLoaded: true } : p
-                ));
+                const normalizedId = String(projectId);
+                const detailedWithFlag = { ...detailedProject, _detailsLoaded: true };
+
+                // Upsert the detailed project so selecting an unloaded project still opens correctly
+                setProjects(prev => {
+                    const existingIndex = prev.findIndex(p => String(p.id) === normalizedId);
+                    if (existingIndex === -1) {
+                        return [...prev, detailedWithFlag];
+                    }
+                    return prev.map(p =>
+                        String(p.id) === normalizedId ? { ...p, ...detailedWithFlag } : p
+                    );
+                });
             }
 
             return detailedProject;
