@@ -713,6 +713,18 @@ export function DataProvider({ children }) {
         return await res.json();
     }, [authFetch]);
 
+    const fetchGovernanceUsers = useCallback(async (params = {}) => {
+        const searchParams = new URLSearchParams();
+        Object.entries(params).forEach(([key, value]) => {
+            if (value !== undefined && value !== null && String(value).trim() !== '') {
+                searchParams.set(key, String(value));
+            }
+        });
+        const suffix = searchParams.toString() ? `?${searchParams.toString()}` : '';
+        const res = await authFetch(`${API_BASE}/governance/users${suffix}`);
+        return await res.json();
+    }, [authFetch]);
+
     const fetchGovernanceBoards = useCallback(async (params = {}) => {
         const searchParams = new URLSearchParams();
         Object.entries(params).forEach(([key, value]) => {
@@ -1157,6 +1169,7 @@ export function DataProvider({ children }) {
             intakeForms, addIntakeForm, updateIntakeForm, deleteIntakeForm,
             intakeSubmissions, mySubmissions, addIntakeSubmission, updateIntakeSubmission,
             getGovernanceSettings, updateGovernanceSettings,
+            fetchGovernanceUsers,
             fetchGovernanceBoards, createGovernanceBoard, updateGovernanceBoard,
             fetchGovernanceBoardMembers, upsertGovernanceBoardMember,
             fetchGovernanceCriteriaVersions, createGovernanceCriteriaVersion,

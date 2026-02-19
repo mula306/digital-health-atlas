@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ClipboardList, Plus, RefreshCw, Save, Settings2, Users } from 'lucide-react';
+import { ClipboardList, Plus, RefreshCw, Save, Search, Settings2, Users } from 'lucide-react';
 import { useData } from '../../context/DataContext';
 import { useToast } from '../../context/ToastContext';
 
@@ -38,6 +38,7 @@ export function GovernanceConfig() {
     const {
         getGovernanceSettings,
         updateGovernanceSettings,
+        fetchGovernanceUsers,
         fetchGovernanceBoards,
         createGovernanceBoard,
         updateGovernanceBoard,
@@ -71,6 +72,9 @@ export function GovernanceConfig() {
     const [newBoardActive, setNewBoardActive] = useState(true);
 
     const [members, setMembers] = useState([]);
+    const [availableUsers, setAvailableUsers] = useState([]);
+    const [memberUserSearch, setMemberUserSearch] = useState('');
+    const [usersLoading, setUsersLoading] = useState(false);
     const [memberUserOid, setMemberUserOid] = useState('');
     const [memberRole, setMemberRole] = useState('member');
 
@@ -91,6 +95,30 @@ export function GovernanceConfig() {
             .filter(item => item.enabled)
             .reduce((sum, item) => sum + (Number(item.weight) || 0), 0);
     }, [criteriaDraft]);
+
+    const memberOptions = useMemo(() => {
+        if (!memberUserOid || availableUsers.some(user => user.oid === memberUserOid)) {
+            return availableUsers;
+        }
+
+        const existingMember = members.find(member => member.userOid === memberUserOid);
+        if (existingMember) {
+            return [
+                {
+                    oid: existingMember.userOid,
+                    name: existingMember.userName || existingMember.userEmail || 'Selected user',
+                    email: existingMember.userEmail || null
+                },
+                ...availableUsers
+            ];
+        }
+
+        return [{ oid: memberUserOid, name: 'Selected user', email: null }, ...availableUsers];
+    }, [availableUsers, memberUserOid, members]);
+
+    const selectedMemberOption = useMemo(() => {
+        return memberOptions.find(user => user.oid === memberUserOid) || null;
+    }, [memberOptions, memberUserOid]);
 
     const loadBoardDetails = useCallback(async (boardId, preferredVersionId = null) => {
         if (!boardId) {
@@ -125,6 +153,28 @@ export function GovernanceConfig() {
             toast.error(err.message || 'Failed to load governance board details');
         }
     }, [fetchGovernanceBoardMembers, fetchGovernanceCriteriaVersions, toast]);
+
+    const loadGovernanceUsers = useCallback(async (searchText = '') => {
+        if (!selectedBoardId) {
+            setAvailableUsers([]);
+            return;
+        }
+
+        try {
+            setUsersLoading(true);
+            const result = await fetchGovernanceUsers({
+                q: searchText,
+                limit: 30
+            });
+            setAvailableUsers(Array.isArray(result) ? result : []);
+        } catch (err) {
+            console.error('Failed to load governance users:', err);
+            toast.error(err.message || 'Failed to load users');
+            setAvailableUsers([]);
+        } finally {
+            setUsersLoading(false);
+        }
+    }, [fetchGovernanceUsers, selectedBoardId, toast]);
 
     const loadAll = useCallback(async (isRefresh = false) => {
         try {
@@ -195,6 +245,21 @@ export function GovernanceConfig() {
         if (!selectedVersion) return;
         setCriteriaDraft(cloneCriteria(selectedVersion.criteria || []));
     }, [selectedVersionId, selectedVersion]);
+
+    useEffect(() => {
+        if (!selectedBoardId) {
+            setAvailableUsers([]);
+            setMemberUserSearch('');
+            setMemberUserOid('');
+            return;
+        }
+
+        const timeoutId = setTimeout(() => {
+            loadGovernanceUsers(memberUserSearch);
+        }, 250);
+
+        return () => clearTimeout(timeoutId);
+    }, [selectedBoardId, memberUserSearch, loadGovernanceUsers]);
 
     const handleSaveSettings = async () => {
         try {
@@ -268,7 +333,7 @@ export function GovernanceConfig() {
     const handleAddOrUpdateMember = async () => {
         if (!selectedBoardId) return;
         if (!memberUserOid.trim()) {
-            toast.error('User OID is required');
+            toast.error('Select a user');
             return;
         }
         try {
@@ -281,6 +346,7 @@ export function GovernanceConfig() {
             const nextMembers = await fetchGovernanceBoardMembers(selectedBoardId, { includeInactive: true });
             setMembers(nextMembers);
             setMemberUserOid('');
+            setMemberUserSearch('');
             setMemberRole('member');
             toast.success('Governance member saved');
         } catch (err) {
@@ -412,14 +478,17 @@ export function GovernanceConfig() {
     return (
         <div className="admin-content glass governance-config">
             <div className="governance-toolbar">
-                <h3><Settings2 size={18} /> Governance Configuration</h3>
+                <div className="governance-toolbar-title">
+                    <h3><Settings2 size={18} /> Governance Configuration</h3>
+                    <p>Manage board membership, voting policy, and criteria versions.</p>
+                </div>
                 <button className="btn-secondary" onClick={() => loadAll(true)} disabled={refreshing}>
                     <RefreshCw size={14} /> {refreshing ? 'Refreshing...' : 'Refresh'}
                 </button>
             </div>
 
             <section className="governance-section">
-                <h4>Global Setting</h4>
+                <h4>Global Settings</h4>
                 <div className="governance-grid">
                     <div className="form-group">
                         <label>Governance</label>
@@ -477,11 +546,11 @@ export function GovernanceConfig() {
                         Require quorum before final decision
                     </label>
                     <button className="btn-primary" onClick={handleSaveSettings} disabled={settingsSaving}>
-                        <Save size={14} /> {settingsSaving ? 'Saving...' : 'Save Setting'}
+                        <Save size={14} /> {settingsSaving ? 'Saving...' : 'Save Settings'}
                     </button>
                 </div>
                 {!phase3Ready && (
-                    <p className="governance-muted" style={{ marginTop: '0.5rem' }}>
+                    <p className="governance-alert">
                         Phase 3 schema is not installed yet. Run `npm run migrate:governance:phase2` in `server`.
                     </p>
                 )}
@@ -563,14 +632,44 @@ export function GovernanceConfig() {
                     <section className="governance-section">
                         <h4><Users size={16} /> Board Members</h4>
                         <div className="governance-grid">
-                            <div className="form-group">
-                                <label>User OID</label>
-                                <input
-                                    type="text"
+                            <div className="form-group governance-user-field">
+                                <label>User (from Users table)</label>
+                                <div className="governance-user-search">
+                                    <Search size={14} />
+                                    <input
+                                        type="text"
+                                        value={memberUserSearch}
+                                        onChange={(e) => setMemberUserSearch(e.target.value)}
+                                        placeholder="Search by name or email"
+                                    />
+                                </div>
+                                <select
                                     value={memberUserOid}
                                     onChange={(e) => setMemberUserOid(e.target.value)}
-                                    placeholder="Azure AD object id"
-                                />
+                                    disabled={usersLoading && memberOptions.length === 0}
+                                >
+                                    <option value="">
+                                        {usersLoading ? 'Loading users...' : 'Select user'}
+                                    </option>
+                                    {memberOptions.map(user => (
+                                        <option key={user.oid} value={user.oid}>
+                                            {user.name}{user.email ? ` (${user.email})` : ''}
+                                        </option>
+                                    ))}
+                                </select>
+                                <p className="governance-muted">
+                                    {memberOptions.length > 0
+                                        ? `${memberOptions.length} user${memberOptions.length === 1 ? '' : 's'} available`
+                                        : 'No matching users found in Users table'}
+                                </p>
+                                {selectedMemberOption && (
+                                    <div className="governance-selected-user">
+                                        <span className="governance-selected-user-name">{selectedMemberOption.name}</span>
+                                        {selectedMemberOption.email && (
+                                            <span className="governance-selected-user-email">{selectedMemberOption.email}</span>
+                                        )}
+                                    </div>
+                                )}
                             </div>
                             <div className="form-group">
                                 <label>Role</label>
@@ -604,11 +703,25 @@ export function GovernanceConfig() {
                                         members.map(member => (
                                             <tr key={member.id}>
                                                 <td>
-                                                    <div>{member.userName || member.userEmail || member.userOid}</div>
-                                                    <div className="governance-muted">{member.userOid}</div>
+                                                    <div className="governance-user-name">
+                                                        {member.userName || member.userEmail || 'Unknown user'}
+                                                    </div>
+                                                    <div className="governance-muted">
+                                                        {member.userEmail
+                                                            ? member.userEmail
+                                                            : (member.userName ? 'No email on profile' : 'User profile missing from Users table')}
+                                                    </div>
                                                 </td>
-                                                <td>{member.role}</td>
-                                                <td>{member.isActive ? 'Active' : 'Inactive'}</td>
+                                                <td>
+                                                    <span className={`governance-pill ${member.role === 'chair' ? 'chair' : 'member'}`}>
+                                                        {member.role === 'chair' ? 'Chair' : 'Member'}
+                                                    </span>
+                                                </td>
+                                                <td>
+                                                    <span className={`governance-pill ${member.isActive ? 'active' : 'inactive'}`}>
+                                                        {member.isActive ? 'Active' : 'Inactive'}
+                                                    </span>
+                                                </td>
                                                 <td>
                                                     <button
                                                         className="btn-secondary"
@@ -626,7 +739,7 @@ export function GovernanceConfig() {
                         </div>
                     </section>
 
-                    <section className="governance-section">
+                    <section className="governance-section governance-criteria-section">
                         <h4><ClipboardList size={16} /> Criteria Versions</h4>
                         <div className="governance-grid">
                             <div className="form-group">
@@ -646,7 +759,7 @@ export function GovernanceConfig() {
                             </div>
                         </div>
 
-                        <div className="governance-inline-row">
+                        <div className="governance-inline-row governance-criteria-toolbar">
                             <span className="governance-muted">
                                 {selectedVersion
                                     ? `Editing v${selectedVersion.versionNo} (${selectedVersion.status})`
@@ -667,8 +780,8 @@ export function GovernanceConfig() {
                             </div>
                         </div>
 
-                        <div className="governance-table-wrap">
-                            <table className="permissions-table">
+                        <div className="governance-table-wrap governance-criteria-table-wrap">
+                            <table className="permissions-table governance-criteria-table">
                                 <thead>
                                     <tr>
                                         <th>Name</th>

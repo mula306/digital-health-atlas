@@ -277,6 +277,74 @@ router.put('/settings', checkPermission('can_manage_governance'), async (req, re
 
 // ==================== BOARDS ====================
 
+router.get('/users', checkPermission('can_manage_governance'), async (req, res) => {
+    try {
+        const rawQuery = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+        const requestedLimit = parseInt(req.query.limit, 10);
+        const limit = Number.isNaN(requestedLimit)
+            ? 25
+            : Math.max(1, Math.min(100, requestedLimit));
+
+        const pool = await getPool();
+        const request = pool.request()
+            .input('limit', sql.Int, limit);
+
+        let whereClause = '';
+        let orderClause = `
+            ORDER BY
+                CASE WHEN u.lastLogin IS NULL THEN 1 ELSE 0 END,
+                u.lastLogin DESC,
+                u.name ASC
+        `;
+
+        if (rawQuery) {
+            request
+                .input('q', sql.NVarChar(255), rawQuery)
+                .input('qContains', sql.NVarChar(260), `%${rawQuery}%`)
+                .input('qPrefix', sql.NVarChar(260), `${rawQuery}%`);
+
+            whereClause = `
+                WHERE u.name LIKE @qContains
+                   OR u.email LIKE @qContains
+                   OR u.oid LIKE @qContains
+            `;
+            orderClause = `
+                ORDER BY
+                    CASE
+                        WHEN u.name = @q THEN 0
+                        WHEN u.email = @q THEN 1
+                        WHEN u.name LIKE @qPrefix THEN 2
+                        WHEN u.email LIKE @qPrefix THEN 3
+                        ELSE 4
+                    END,
+                    CASE WHEN u.lastLogin IS NULL THEN 1 ELSE 0 END,
+                    u.lastLogin DESC,
+                    u.name ASC
+            `;
+        }
+
+        const result = await request.query(`
+            SELECT TOP (@limit)
+                u.oid,
+                u.name,
+                u.email,
+                u.lastLogin
+            FROM Users u
+            ${whereClause}
+            ${orderClause}
+        `);
+
+        res.json(result.recordset.map(row => ({
+            oid: row.oid,
+            name: row.name,
+            email: row.email || null,
+            lastLogin: row.lastLogin || null
+        })));
+    } catch (err) {
+        handleError(res, 'fetching governance users', err);
+    }
+});
+
 router.get('/boards', checkPermission(['can_view_governance_queue', 'can_manage_governance']), async (req, res) => {
     try {
         const includeInactive = parseBooleanOrNull(req.query.includeInactive);
@@ -472,6 +540,14 @@ router.post('/boards/:id/members', checkPermission('can_manage_governance'), asy
             .query('SELECT id, name FROM GovernanceBoard WHERE id = @id');
         if (boardResult.recordset.length === 0) return res.status(404).json({ error: 'Board not found' });
 
+        const directoryUserResult = await pool.request()
+            .input('oid', sql.NVarChar(100), trimmedOid)
+            .query('SELECT TOP 1 oid, name, email FROM Users WHERE oid = @oid');
+        if (directoryUserResult.recordset.length === 0) {
+            return res.status(400).json({ error: 'User not found in Users table' });
+        }
+        const directoryUser = directoryUserResult.recordset[0];
+
         const existing = await pool.request()
             .input('boardId', sql.Int, boardId)
             .input('userOid', sql.NVarChar(100), trimmedOid)
@@ -520,9 +596,18 @@ router.post('/boards/:id/members', checkPermission('can_manage_governance'), asy
             action: 'governance.member_upsert',
             entityType: 'governance_membership',
             entityId: membershipId,
-            entityTitle: `${boardResult.recordset[0].name}: ${trimmedOid}`,
+            entityTitle: `${boardResult.recordset[0].name}: ${directoryUser.name || trimmedOid}`,
             user,
-            after: { boardId, userOid: trimmedOid, role: memberRole, isActive: !!activeFlag, effectiveFrom, effectiveTo },
+            after: {
+                boardId,
+                userOid: trimmedOid,
+                userName: directoryUser.name || null,
+                userEmail: directoryUser.email || null,
+                role: memberRole,
+                isActive: !!activeFlag,
+                effectiveFrom,
+                effectiveTo
+            },
             req
         });
 
