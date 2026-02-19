@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Plus, Trash2, Copy, Check, FileText } from 'lucide-react';
 import { useData } from '../../context/DataContext';
 import './Intake.css';
@@ -13,14 +13,36 @@ const FIELD_TYPES = [
 ];
 
 export function IntakeFormBuilder({ form, onClose }) {
-    const { addIntakeForm, updateIntakeForm, goals } = useData();
+    const { addIntakeForm, updateIntakeForm, goals, fetchGovernanceBoards, hasPermission } = useData();
     const isEditing = !!form;
+    const canManageGovernance = hasPermission('can_manage_governance');
 
     const [name, setName] = useState(form?.name || '');
     const [description, setDescription] = useState(form?.description || '');
     const [fields, setFields] = useState(form?.fields || []);
     const [defaultGoalId, setDefaultGoalId] = useState(form?.defaultGoalId || '');
+    const [governanceMode, setGovernanceMode] = useState(form?.governanceMode || 'off');
+    const [governanceBoardId, setGovernanceBoardId] = useState(form?.governanceBoardId || '');
+    const [governanceBoards, setGovernanceBoards] = useState([]);
     const [copied, setCopied] = useState(false);
+
+    useEffect(() => {
+        let cancelled = false;
+        async function loadBoards() {
+            if (!canManageGovernance) return;
+            try {
+                const boards = await fetchGovernanceBoards({ includeInactive: true });
+                if (!cancelled) setGovernanceBoards(Array.isArray(boards) ? boards : []);
+            } catch (err) {
+                console.warn('Failed to load governance boards', err);
+                if (!cancelled) setGovernanceBoards([]);
+            }
+        }
+        loadBoards();
+        return () => {
+            cancelled = true;
+        };
+    }, [canManageGovernance, fetchGovernanceBoards]);
 
     const addField = () => {
         setFields([...fields, {
@@ -50,12 +72,20 @@ export function IntakeFormBuilder({ form, onClose }) {
 
     const handleSubmit = (e) => {
         e.preventDefault();
+        if (canManageGovernance && governanceMode !== 'off' && !governanceBoardId) {
+            return;
+        }
+
         const formData = {
             name,
             description,
             fields,
             defaultGoalId: defaultGoalId || null
         };
+        if (canManageGovernance) {
+            formData.governanceMode = governanceMode;
+            formData.governanceBoardId = governanceMode === 'off' ? null : (governanceBoardId || null);
+        }
 
         if (isEditing) {
             updateIntakeForm(form.id, formData);
@@ -109,8 +139,49 @@ export function IntakeFormBuilder({ form, onClose }) {
                     {goals.map(g => (
                         <option key={g.id} value={g.id}>{g.title}</option>
                     ))}
-                </select>
+                    </select>
             </div>
+
+            {canManageGovernance && (
+                <>
+                    <div className="form-group">
+                        <label>Governance Policy</label>
+                        <select
+                            value={governanceMode}
+                            onChange={(e) => {
+                                const mode = e.target.value;
+                                setGovernanceMode(mode);
+                                if (mode === 'off') setGovernanceBoardId('');
+                            }}
+                        >
+                            <option value="off">Off (default intake flow)</option>
+                            <option value="optional">Optional (manager decides per submission)</option>
+                            <option value="required">Required (always enters governance if enabled)</option>
+                        </select>
+                    </div>
+
+                    <div className="form-group">
+                        <label>Governance Board {governanceMode !== 'off' ? '*' : '(optional)'}</label>
+                        <select
+                            value={governanceBoardId}
+                            onChange={(e) => setGovernanceBoardId(e.target.value)}
+                            disabled={governanceMode === 'off'}
+                        >
+                            <option value="">{governanceMode === 'off' ? 'No board required' : 'Select board'}</option>
+                            {governanceBoards.map(board => (
+                                <option key={board.id} value={board.id}>
+                                    {board.name} {board.isActive ? '' : '(Inactive)'}
+                                </option>
+                            ))}
+                        </select>
+                        {governanceMode !== 'off' && !governanceBoardId && (
+                            <p style={{ marginTop: '0.35rem', fontSize: '0.8rem', color: '#b45309' }}>
+                                Select a board when policy is optional or required.
+                            </p>
+                        )}
+                    </div>
+                </>
+            )}
 
             <div className="form-section">
                 <div className="section-header">
@@ -214,7 +285,11 @@ export function IntakeFormBuilder({ form, onClose }) {
 
             <div className="form-actions">
                 <button type="button" onClick={onClose} className="btn-secondary">Cancel</button>
-                <button type="submit" className="btn-primary" disabled={!name || fields.length === 0}>
+                <button
+                    type="submit"
+                    className="btn-primary"
+                    disabled={!name || fields.length === 0 || (canManageGovernance && governanceMode !== 'off' && !governanceBoardId)}
+                >
                     {isEditing ? 'Save Changes' : 'Create Form'}
                 </button>
             </div>

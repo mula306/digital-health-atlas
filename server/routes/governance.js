@@ -35,6 +35,33 @@ const parseBooleanOrNull = (value) => {
     return null;
 };
 
+const toFiniteIntOrNull = (value) => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return null;
+    return Math.trunc(n);
+};
+
+const hasGovernancePhase3Schema = async (pool) => {
+    const result = await pool.request().query(`
+        SELECT
+            CASE WHEN COL_LENGTH('GovernanceSettings', 'quorumPercent') IS NOT NULL THEN 1 ELSE 0 END AS hasQuorumPercent,
+            CASE WHEN COL_LENGTH('GovernanceSettings', 'quorumMinCount') IS NOT NULL THEN 1 ELSE 0 END AS hasQuorumMinCount,
+            CASE WHEN COL_LENGTH('GovernanceSettings', 'decisionRequiresQuorum') IS NOT NULL THEN 1 ELSE 0 END AS hasDecisionRequiresQuorum,
+            CASE WHEN COL_LENGTH('GovernanceSettings', 'voteWindowDays') IS NOT NULL THEN 1 ELSE 0 END AS hasVoteWindowDays,
+            CASE WHEN COL_LENGTH('GovernanceReview', 'policySnapshotJson') IS NOT NULL THEN 1 ELSE 0 END AS hasPolicySnapshot,
+            CASE WHEN COL_LENGTH('GovernanceReview', 'voteDeadlineAt') IS NOT NULL THEN 1 ELSE 0 END AS hasVoteDeadline
+    `);
+    const row = result.recordset[0] || {};
+    return !!(
+        row.hasQuorumPercent &&
+        row.hasQuorumMinCount &&
+        row.hasDecisionRequiresQuorum &&
+        row.hasVoteWindowDays &&
+        row.hasPolicySnapshot &&
+        row.hasVoteDeadline
+    );
+};
+
 const normalizeCriteria = (criteria) => {
     if (!Array.isArray(criteria) || criteria.length === 0) {
         throw new Error('criteria must be a non-empty array');
@@ -107,8 +134,14 @@ router.get('/settings', requireAuth, async (req, res) => {
     try {
         const pool = await getPool();
         const settings = await getOrCreateGovernanceSettings(pool);
+        const phase3Ready = await hasGovernancePhase3Schema(pool);
         res.json({
             governanceEnabled: !!settings.governanceEnabled,
+            quorumPercent: phase3Ready ? Number(settings.quorumPercent || 60) : 60,
+            quorumMinCount: phase3Ready ? Number(settings.quorumMinCount || 1) : 1,
+            decisionRequiresQuorum: phase3Ready ? !!settings.decisionRequiresQuorum : true,
+            voteWindowDays: phase3Ready && settings.voteWindowDays !== null ? Number(settings.voteWindowDays) : null,
+            phase3Ready,
             updatedAt: settings.updatedAt,
             updatedByOid: settings.updatedByOid || null
         });
@@ -125,20 +158,85 @@ router.put('/settings', checkPermission('can_manage_governance'), async (req, re
         }
 
         const pool = await getPool();
+        const phase3Ready = await hasGovernancePhase3Schema(pool);
         const current = await getOrCreateGovernanceSettings(pool);
         const user = getAuthUser(req);
 
-        await pool.request()
+        const currentQuorumPercent = Number(current.quorumPercent || 60);
+        const currentQuorumMinCount = Number(current.quorumMinCount || 1);
+        const currentDecisionRequiresQuorum = current.decisionRequiresQuorum === undefined ? true : !!current.decisionRequiresQuorum;
+        const currentVoteWindowDays = current.voteWindowDays === undefined ? null : current.voteWindowDays;
+
+        let quorumPercent = currentQuorumPercent;
+        let quorumMinCount = currentQuorumMinCount;
+        let decisionRequiresQuorum = currentDecisionRequiresQuorum;
+        let voteWindowDays = currentVoteWindowDays;
+
+        if (phase3Ready) {
+            if (req.body.quorumPercent !== undefined) {
+                const parsed = toFiniteIntOrNull(req.body.quorumPercent);
+                if (parsed === null || parsed < 1 || parsed > 100) {
+                    return res.status(400).json({ error: 'quorumPercent must be an integer between 1 and 100' });
+                }
+                quorumPercent = parsed;
+            }
+            if (req.body.quorumMinCount !== undefined) {
+                const parsed = toFiniteIntOrNull(req.body.quorumMinCount);
+                if (parsed === null || parsed < 1) {
+                    return res.status(400).json({ error: 'quorumMinCount must be an integer >= 1' });
+                }
+                quorumMinCount = parsed;
+            }
+            if (req.body.decisionRequiresQuorum !== undefined) {
+                if (typeof req.body.decisionRequiresQuorum !== 'boolean') {
+                    return res.status(400).json({ error: 'decisionRequiresQuorum must be boolean' });
+                }
+                decisionRequiresQuorum = req.body.decisionRequiresQuorum;
+            }
+            if (req.body.voteWindowDays !== undefined) {
+                if (req.body.voteWindowDays === null || req.body.voteWindowDays === '') {
+                    voteWindowDays = null;
+                } else {
+                    const parsed = toFiniteIntOrNull(req.body.voteWindowDays);
+                    if (parsed === null || parsed < 1 || parsed > 90) {
+                        return res.status(400).json({ error: 'voteWindowDays must be null or an integer between 1 and 90' });
+                    }
+                    voteWindowDays = parsed;
+                }
+            }
+        }
+
+        const request = pool.request()
             .input('id', sql.Int, current.id)
             .input('governanceEnabled', sql.Bit, governanceEnabled ? 1 : 0)
-            .input('updatedByOid', sql.NVarChar(100), user?.oid || null)
-            .query(`
+            .input('updatedByOid', sql.NVarChar(100), user?.oid || null);
+
+        if (phase3Ready) {
+            await request
+                .input('quorumPercent', sql.Int, quorumPercent)
+                .input('quorumMinCount', sql.Int, quorumMinCount)
+                .input('decisionRequiresQuorum', sql.Bit, decisionRequiresQuorum ? 1 : 0)
+                .input('voteWindowDays', sql.Int, voteWindowDays)
+                .query(`
+                    UPDATE GovernanceSettings
+                    SET governanceEnabled = @governanceEnabled,
+                        quorumPercent = @quorumPercent,
+                        quorumMinCount = @quorumMinCount,
+                        decisionRequiresQuorum = @decisionRequiresQuorum,
+                        voteWindowDays = @voteWindowDays,
+                        updatedAt = GETDATE(),
+                        updatedByOid = @updatedByOid
+                    WHERE id = @id
+                `);
+        } else {
+            await request.query(`
                 UPDATE GovernanceSettings
                 SET governanceEnabled = @governanceEnabled,
                     updatedAt = GETDATE(),
                     updatedByOid = @updatedByOid
                 WHERE id = @id
             `);
+        }
 
         logAudit({
             action: 'governance.settings_update',
@@ -146,12 +244,32 @@ router.put('/settings', checkPermission('can_manage_governance'), async (req, re
             entityId: current.id,
             entityTitle: 'Global Governance Settings',
             user,
-            before: { governanceEnabled: !!current.governanceEnabled },
-            after: { governanceEnabled },
+            before: {
+                governanceEnabled: !!current.governanceEnabled,
+                quorumPercent: currentQuorumPercent,
+                quorumMinCount: currentQuorumMinCount,
+                decisionRequiresQuorum: currentDecisionRequiresQuorum,
+                voteWindowDays: currentVoteWindowDays
+            },
+            after: {
+                governanceEnabled,
+                quorumPercent: phase3Ready ? quorumPercent : currentQuorumPercent,
+                quorumMinCount: phase3Ready ? quorumMinCount : currentQuorumMinCount,
+                decisionRequiresQuorum: phase3Ready ? decisionRequiresQuorum : currentDecisionRequiresQuorum,
+                voteWindowDays: phase3Ready ? voteWindowDays : currentVoteWindowDays
+            },
             req
         });
 
-        res.json({ success: true, governanceEnabled });
+        res.json({
+            success: true,
+            governanceEnabled,
+            quorumPercent: phase3Ready ? quorumPercent : currentQuorumPercent,
+            quorumMinCount: phase3Ready ? quorumMinCount : currentQuorumMinCount,
+            decisionRequiresQuorum: phase3Ready ? decisionRequiresQuorum : currentDecisionRequiresQuorum,
+            voteWindowDays: phase3Ready ? voteWindowDays : currentVoteWindowDays,
+            phase3Ready
+        });
     } catch (err) {
         handleError(res, 'updating governance settings', err);
     }

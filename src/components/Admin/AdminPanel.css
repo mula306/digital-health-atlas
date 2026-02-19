@@ -158,6 +158,85 @@ input:checked+.slider:before {
     animation: spin 1s linear infinite;
 }
 
+.governance-config {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+.governance-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+}
+
+.governance-toolbar h3 {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 0;
+}
+
+.governance-section {
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: 1rem;
+    background: var(--bg-card);
+}
+
+.governance-section h4 {
+    margin: 0 0 0.75rem;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.governance-subcard {
+    margin-top: 0.9rem;
+    padding-top: 0.9rem;
+    border-top: 1px solid var(--border-color);
+}
+
+.governance-subcard h5 {
+    margin: 0 0 0.75rem;
+}
+
+.governance-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.75rem;
+}
+
+.governance-inline-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-top: 0.75rem;
+}
+
+.governance-inline-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.governance-table-wrap {
+    overflow-x: auto;
+    margin-top: 0.75rem;
+}
+
+.governance-table-wrap .permissions-table th:not(:first-child) {
+    text-align: left;
+    width: auto;
+}
+
+.governance-muted {
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+}
+
 @keyframes spin {
     from {
         transform: rotate(0deg);

@@ -1,18 +1,20 @@
 import React, { useState, useEffect } from 'react';
 import { useData } from '../../context/DataContext';
-import { Save, Shield, AlertTriangle, RefreshCw, Tag, Activity } from 'lucide-react';
+import { Save, Shield, AlertTriangle, RefreshCw, Tag, Activity, Scale } from 'lucide-react';
 import { useToast } from '../../context/ToastContext';
 import { TagManager } from './TagManager';
 import { AuditLogView } from './AuditLogView';
+import { GovernanceConfig } from './GovernanceConfig';
 import './AdminPanel.css';
 
 export function AdminPanel() {
-    const { permissions: contextPermissions, updatePermissionsBulk } = useData(); // Use context
+    const { permissions: contextPermissions, updatePermissionsBulk, hasPermission } = useData(); // Use context
     const { success, error: showError } = useToast();
     const [localPermissions, setLocalPermissions] = useState([]);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [activeTab, setActiveTab] = useState('permissions');
+    const canManageGovernance = hasPermission('can_manage_governance');
 
     // Define the structure of permissions for the UI
     const permissionGroups = [
@@ -62,6 +64,15 @@ export function AdminPanel() {
                 { key: 'can_view_incoming_requests', label: 'View Incoming Requests' },
                 { key: 'can_manage_intake_forms', label: 'Manage Forms (Add/Edit/Delete)' },
                 { key: 'can_manage_intake', label: 'Manage Submissions (Status/Date)' }
+            ]
+        },
+        {
+            category: 'Governance',
+            items: [
+                { key: 'can_view_governance_queue', label: 'View Governance Queue' },
+                { key: 'can_vote_governance', label: 'Submit Governance Votes' },
+                { key: 'can_decide_governance', label: 'Finalize Governance Decisions' },
+                { key: 'can_manage_governance', label: 'Manage Governance Settings' }
             ]
         },
         {
@@ -166,6 +177,14 @@ export function AdminPanel() {
                 >
                     <Activity size={16} /> Audit Log
                 </button>
+                {canManageGovernance && (
+                    <button
+                        className={`admin-tab ${activeTab === 'governance' ? 'active' : ''}`}
+                        onClick={() => setActiveTab('governance')}
+                    >
+                        <Scale size={16} /> Governance
+                    </button>
+                )}
             </div>
 
             {activeTab === 'permissions' && (
@@ -222,6 +241,10 @@ export function AdminPanel() {
 
             {activeTab === 'audit-log' && (
                 <AuditLogView />
+            )}
+
+            {activeTab === 'governance' && canManageGovernance && (
+                <GovernanceConfig />
             )}
         </div>
     );

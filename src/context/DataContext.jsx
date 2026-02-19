@@ -169,7 +169,7 @@ export function DataProvider({ children }) {
                 secondaryPromises.push(authFetch(`${API_BASE}/tags`).then(r => r.json()).then(setTagGroups).catch(e => console.warn('Tags fetch failed', e)));
 
                 // Intake Forms (if can view/manage)
-                if (checkPerm('can_view_intake') || checkPerm('can_manage_intake')) {
+                if (checkPerm('can_view_intake') || checkPerm('can_manage_intake') || checkPerm('can_manage_intake_forms')) {
                     secondaryPromises.push(authFetch(`${API_BASE}/intake/forms`).then(r => r.json()).then(setIntakeForms).catch(e => console.warn('Intake forms failed', e)));
                 }
 
@@ -700,6 +700,95 @@ export function DataProvider({ children }) {
         setMySubmissions(prev => prev.map(s => String(s.id) === String(id) ? { ...s, ...patch } : s));
     }, []);
 
+    const getGovernanceSettings = useCallback(async () => {
+        const res = await authFetch(`${API_BASE}/governance/settings`);
+        return await res.json();
+    }, [authFetch]);
+
+    const updateGovernanceSettings = useCallback(async (payload) => {
+        const res = await authFetch(`${API_BASE}/governance/settings`, {
+            method: 'PUT',
+            body: JSON.stringify(payload)
+        });
+        return await res.json();
+    }, [authFetch]);
+
+    const fetchGovernanceBoards = useCallback(async (params = {}) => {
+        const searchParams = new URLSearchParams();
+        Object.entries(params).forEach(([key, value]) => {
+            if (value !== undefined && value !== null && String(value).trim() !== '') {
+                searchParams.set(key, String(value));
+            }
+        });
+        const suffix = searchParams.toString() ? `?${searchParams.toString()}` : '';
+        const res = await authFetch(`${API_BASE}/governance/boards${suffix}`);
+        return await res.json();
+    }, [authFetch]);
+
+    const createGovernanceBoard = useCallback(async (payload) => {
+        const res = await authFetch(`${API_BASE}/governance/boards`, {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
+        return await res.json();
+    }, [authFetch]);
+
+    const updateGovernanceBoard = useCallback(async (boardId, payload) => {
+        const res = await authFetch(`${API_BASE}/governance/boards/${boardId}`, {
+            method: 'PUT',
+            body: JSON.stringify(payload)
+        });
+        return await res.json();
+    }, [authFetch]);
+
+    const fetchGovernanceBoardMembers = useCallback(async (boardId, params = {}) => {
+        const searchParams = new URLSearchParams();
+        Object.entries(params).forEach(([key, value]) => {
+            if (value !== undefined && value !== null && String(value).trim() !== '') {
+                searchParams.set(key, String(value));
+            }
+        });
+        const suffix = searchParams.toString() ? `?${searchParams.toString()}` : '';
+        const res = await authFetch(`${API_BASE}/governance/boards/${boardId}/members${suffix}`);
+        return await res.json();
+    }, [authFetch]);
+
+    const upsertGovernanceBoardMember = useCallback(async (boardId, payload) => {
+        const res = await authFetch(`${API_BASE}/governance/boards/${boardId}/members`, {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
+        return await res.json();
+    }, [authFetch]);
+
+    const fetchGovernanceCriteriaVersions = useCallback(async (boardId) => {
+        const res = await authFetch(`${API_BASE}/governance/boards/${boardId}/criteria/versions`);
+        return await res.json();
+    }, [authFetch]);
+
+    const createGovernanceCriteriaVersion = useCallback(async (boardId, payload) => {
+        const res = await authFetch(`${API_BASE}/governance/boards/${boardId}/criteria/versions`, {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
+        return await res.json();
+    }, [authFetch]);
+
+    const updateGovernanceCriteriaVersion = useCallback(async (boardId, versionId, payload) => {
+        const res = await authFetch(`${API_BASE}/governance/boards/${boardId}/criteria/versions/${versionId}`, {
+            method: 'PUT',
+            body: JSON.stringify(payload)
+        });
+        return await res.json();
+    }, [authFetch]);
+
+    const publishGovernanceCriteriaVersion = useCallback(async (boardId, versionId) => {
+        const res = await authFetch(`${API_BASE}/governance/boards/${boardId}/criteria/versions/${versionId}/publish`, {
+            method: 'POST'
+        });
+        return await res.json();
+    }, [authFetch]);
+
     const fetchIntakeGovernanceQueue = useCallback(async (params = {}) => {
         const searchParams = new URLSearchParams();
         Object.entries(params).forEach(([key, value]) => {
@@ -1067,6 +1156,11 @@ export function DataProvider({ children }) {
             updateTask, deleteTask,
             intakeForms, addIntakeForm, updateIntakeForm, deleteIntakeForm,
             intakeSubmissions, mySubmissions, addIntakeSubmission, updateIntakeSubmission,
+            getGovernanceSettings, updateGovernanceSettings,
+            fetchGovernanceBoards, createGovernanceBoard, updateGovernanceBoard,
+            fetchGovernanceBoardMembers, upsertGovernanceBoardMember,
+            fetchGovernanceCriteriaVersions, createGovernanceCriteriaVersion,
+            updateGovernanceCriteriaVersion, publishGovernanceCriteriaVersion,
             fetchIntakeGovernanceQueue, getSubmissionGovernance, startSubmissionGovernance,
             submitSubmissionGovernanceVote, decideSubmissionGovernance, applySubmissionGovernance, skipSubmissionGovernance,
             addConversationMessage, markConversationRead, migrateInfoRequestsToConversation, convertSubmissionToProject,

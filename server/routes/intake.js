@@ -44,9 +44,80 @@ const hasGovernancePhase1Schema = async (pool) => {
     }
 };
 
+const hasGovernancePhase3Schema = async (pool) => {
+    try {
+        const result = await pool.request().query(`
+            SELECT
+                CASE WHEN COL_LENGTH('GovernanceSettings', 'quorumPercent') IS NOT NULL THEN 1 ELSE 0 END AS hasQuorumPercent,
+                CASE WHEN COL_LENGTH('GovernanceSettings', 'quorumMinCount') IS NOT NULL THEN 1 ELSE 0 END AS hasQuorumMinCount,
+                CASE WHEN COL_LENGTH('GovernanceSettings', 'decisionRequiresQuorum') IS NOT NULL THEN 1 ELSE 0 END AS hasDecisionRequiresQuorum,
+                CASE WHEN COL_LENGTH('GovernanceSettings', 'voteWindowDays') IS NOT NULL THEN 1 ELSE 0 END AS hasVoteWindowDays,
+                CASE WHEN COL_LENGTH('GovernanceReview', 'policySnapshotJson') IS NOT NULL THEN 1 ELSE 0 END AS hasPolicySnapshot,
+                CASE WHEN COL_LENGTH('GovernanceReview', 'voteDeadlineAt') IS NOT NULL THEN 1 ELSE 0 END AS hasVoteDeadline
+        `);
+        const row = result.recordset[0] || {};
+        return !!(
+            row.hasQuorumPercent &&
+            row.hasQuorumMinCount &&
+            row.hasDecisionRequiresQuorum &&
+            row.hasVoteWindowDays &&
+            row.hasPolicySnapshot &&
+            row.hasVoteDeadline
+        );
+    } catch {
+        return false;
+    }
+};
+
 const toFiniteNumber = (value) => {
     const n = Number(value);
     return Number.isFinite(n) ? n : null;
+};
+
+const DEFAULT_GOVERNANCE_POLICY = Object.freeze({
+    quorumPercent: 60,
+    quorumMinCount: 1,
+    decisionRequiresQuorum: true,
+    voteWindowDays: null
+});
+
+const normalizeGovernancePolicy = (policy) => {
+    const rawPercent = Number(policy?.quorumPercent);
+    const rawMinCount = Number(policy?.quorumMinCount);
+    const rawWindowDays = policy?.voteWindowDays === null || policy?.voteWindowDays === undefined || policy?.voteWindowDays === ''
+        ? null
+        : Number(policy.voteWindowDays);
+    const percent = Number.isFinite(rawPercent) ? Math.min(100, Math.max(1, Math.trunc(rawPercent))) : DEFAULT_GOVERNANCE_POLICY.quorumPercent;
+    const minCount = Number.isFinite(rawMinCount) ? Math.max(1, Math.trunc(rawMinCount)) : DEFAULT_GOVERNANCE_POLICY.quorumMinCount;
+    let voteWindowDays = null;
+    if (rawWindowDays !== null && Number.isFinite(rawWindowDays)) {
+        voteWindowDays = Math.min(90, Math.max(1, Math.trunc(rawWindowDays)));
+    }
+    const decisionRequiresQuorum = policy?.decisionRequiresQuorum === undefined
+        ? DEFAULT_GOVERNANCE_POLICY.decisionRequiresQuorum
+        : !!policy.decisionRequiresQuorum;
+    return {
+        quorumPercent: percent,
+        quorumMinCount: minCount,
+        decisionRequiresQuorum,
+        voteWindowDays
+    };
+};
+
+const parsePolicySnapshot = (policySnapshotJson) => {
+    if (!policySnapshotJson) return null;
+    try {
+        const parsed = JSON.parse(policySnapshotJson);
+        return normalizeGovernancePolicy(parsed);
+    } catch {
+        return null;
+    }
+};
+
+const calculateRequiredVotes = (eligibleVoterCount, policy) => {
+    if (!Number.isFinite(eligibleVoterCount) || eligibleVoterCount <= 0) return 0;
+    const byPercent = Math.ceil((eligibleVoterCount * policy.quorumPercent) / 100);
+    return Math.max(policy.quorumMinCount, byPercent);
 };
 
 const normalizeCriteriaSnapshot = (criteriaJson) => {
@@ -160,6 +231,33 @@ const resolveGovernanceDefaults = async (pool, formId) => {
     };
 };
 
+const fetchGovernancePolicySettings = async (pool) => {
+    const phase3Ready = await hasGovernancePhase3Schema(pool);
+    if (!phase3Ready) return { ...DEFAULT_GOVERNANCE_POLICY };
+    const result = await pool.request().query(`
+        SELECT TOP 1 quorumPercent, quorumMinCount, decisionRequiresQuorum, voteWindowDays
+        FROM GovernanceSettings
+        ORDER BY id
+    `);
+    const row = result.recordset[0] || {};
+    return normalizeGovernancePolicy(row);
+};
+
+const normalizeGovernanceMode = (value, fallback = 'off') => {
+    if (typeof value !== 'string') return fallback;
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'off' || normalized === 'optional' || normalized === 'required') {
+        return normalized;
+    }
+    return fallback;
+};
+
+const parseNullableBoardId = (value) => {
+    if (value === undefined || value === null || value === '') return null;
+    const parsed = parseInt(value, 10);
+    return Number.isNaN(parsed) ? null : parsed;
+};
+
 // ==================== INTAKE FORMS ====================
 
 // Get all intake forms
@@ -174,6 +272,8 @@ router.get('/forms', checkPermission('can_view_intake'), async (req, res) => {
             description: form.description,
             fields: JSON.parse(form.fields || '[]'),
             defaultGoalId: form.defaultGoalId ? form.defaultGoalId.toString() : null,
+            governanceMode: normalizeGovernanceMode(form.governanceMode, 'off'),
+            governanceBoardId: form.governanceBoardId ? form.governanceBoardId.toString() : null,
             createdAt: form.createdAt
         }));
 
@@ -186,23 +286,77 @@ router.get('/forms', checkPermission('can_view_intake'), async (req, res) => {
 // Create intake form
 router.post('/forms', checkPermission('can_manage_intake_forms'), async (req, res) => {
     try {
-        const { name, description, fields, defaultGoalId } = req.body;
+        const { name, description, fields, defaultGoalId, governanceMode, governanceBoardId } = req.body;
         const pool = await getPool();
-        const result = await pool.request()
+        const schemaReady = await hasGovernanceSchema(pool);
+        const normalizedMode = normalizeGovernanceMode(governanceMode, 'off');
+        let parsedBoardId = parseNullableBoardId(governanceBoardId);
+
+        if (schemaReady && normalizedMode !== 'off' && parsedBoardId === null) {
+            return res.status(400).json({ error: 'governanceBoardId is required when governanceMode is optional or required' });
+        }
+
+        if (schemaReady && parsedBoardId !== null) {
+            const boardExists = await pool.request()
+                .input('id', sql.Int, parsedBoardId)
+                .query('SELECT TOP 1 id FROM GovernanceBoard WHERE id = @id');
+            if (boardExists.recordset.length === 0) {
+                return res.status(400).json({ error: 'Invalid governanceBoardId' });
+            }
+        }
+
+        if (!schemaReady) {
+            parsedBoardId = null;
+        }
+
+        const request = pool.request()
             .input('name', sql.NVarChar, name)
             .input('description', sql.NVarChar, description)
             .input('fields', sql.NVarChar, JSON.stringify(fields))
-            .input('defaultGoalId', sql.Int, defaultGoalId ? parseInt(defaultGoalId) : null)
-            .query('INSERT INTO IntakeForms (name, description, fields, defaultGoalId) OUTPUT INSERTED.id, INSERTED.createdAt VALUES (@name, @description, @fields, @defaultGoalId)');
+            .input('defaultGoalId', sql.Int, defaultGoalId ? parseInt(defaultGoalId, 10) : null);
+
+        let result;
+        if (schemaReady) {
+            request
+                .input('governanceMode', sql.NVarChar(20), normalizedMode)
+                .input('governanceBoardId', sql.Int, parsedBoardId);
+            result = await request.query(`
+                INSERT INTO IntakeForms (name, description, fields, defaultGoalId, governanceMode, governanceBoardId)
+                OUTPUT INSERTED.id, INSERTED.createdAt
+                VALUES (@name, @description, @fields, @defaultGoalId, @governanceMode, @governanceBoardId)
+            `);
+        } else {
+            result = await request.query(`
+                INSERT INTO IntakeForms (name, description, fields, defaultGoalId)
+                OUTPUT INSERTED.id, INSERTED.createdAt
+                VALUES (@name, @description, @fields, @defaultGoalId)
+            `);
+        }
 
         const newId = result.recordset[0].id.toString();
-        logAudit({ action: 'intake_form.create', entityType: 'intake_form', entityId: newId, entityTitle: name, user: getAuthUser(req), after: { name, description, defaultGoalId }, req });
+        logAudit({
+            action: 'intake_form.create',
+            entityType: 'intake_form',
+            entityId: newId,
+            entityTitle: name,
+            user: getAuthUser(req),
+            after: {
+                name,
+                description,
+                defaultGoalId,
+                governanceMode: schemaReady ? normalizedMode : 'off',
+                governanceBoardId: schemaReady && parsedBoardId !== null ? String(parsedBoardId) : null
+            },
+            req
+        });
         res.json({
             id: newId,
             name,
             description,
             fields,
             defaultGoalId,
+            governanceMode: schemaReady ? normalizedMode : 'off',
+            governanceBoardId: schemaReady && parsedBoardId !== null ? String(parsedBoardId) : null,
             createdAt: result.recordset[0].createdAt
         });
     } catch (err) {
@@ -213,19 +367,81 @@ router.post('/forms', checkPermission('can_manage_intake_forms'), async (req, re
 // Update intake form
 router.put('/forms/:id', checkPermission('can_manage_intake_forms'), async (req, res) => {
     try {
-        const { name, description, fields, defaultGoalId } = req.body;
+        const { name, description, fields, defaultGoalId, governanceMode, governanceBoardId } = req.body;
         const id = parseInt(req.params.id);
         const pool = await getPool();
-        const prev = await pool.request().input('id', sql.Int, id).query('SELECT name, description, defaultGoalId FROM IntakeForms WHERE id = @id');
-        await pool.request()
+        const schemaReady = await hasGovernanceSchema(pool);
+        const prev = await pool.request()
+            .input('id', sql.Int, id)
+            .query('SELECT name, description, defaultGoalId, governanceMode, governanceBoardId FROM IntakeForms WHERE id = @id');
+        if (prev.recordset.length === 0) return res.status(404).json({ error: 'Form not found' });
+
+        const current = prev.recordset[0];
+        const normalizedMode = schemaReady
+            ? normalizeGovernanceMode(governanceMode, normalizeGovernanceMode(current.governanceMode, 'off'))
+            : 'off';
+        let parsedBoardId = schemaReady
+            ? parseNullableBoardId(governanceBoardId !== undefined ? governanceBoardId : current.governanceBoardId)
+            : null;
+
+        if (schemaReady && normalizedMode !== 'off' && parsedBoardId === null) {
+            return res.status(400).json({ error: 'governanceBoardId is required when governanceMode is optional or required' });
+        }
+
+        if (schemaReady && parsedBoardId !== null) {
+            const boardExists = await pool.request()
+                .input('id', sql.Int, parsedBoardId)
+                .query('SELECT TOP 1 id FROM GovernanceBoard WHERE id = @id');
+            if (boardExists.recordset.length === 0) {
+                return res.status(400).json({ error: 'Invalid governanceBoardId' });
+            }
+        }
+
+        const request = pool.request()
             .input('id', sql.Int, id)
             .input('name', sql.NVarChar, name)
             .input('description', sql.NVarChar, description)
             .input('fields', sql.NVarChar, JSON.stringify(fields))
-            .input('defaultGoalId', sql.Int, defaultGoalId ? parseInt(defaultGoalId) : null)
-            .query('UPDATE IntakeForms SET name = @name, description = @description, fields = @fields, defaultGoalId = @defaultGoalId WHERE id = @id');
+            .input('defaultGoalId', sql.Int, defaultGoalId ? parseInt(defaultGoalId, 10) : null);
 
-        logAudit({ action: 'intake_form.update', entityType: 'intake_form', entityId: id, entityTitle: name, user: getAuthUser(req), before: prev.recordset[0], after: { name, description, defaultGoalId }, req });
+        if (schemaReady) {
+            await request
+                .input('governanceMode', sql.NVarChar(20), normalizedMode)
+                .input('governanceBoardId', sql.Int, parsedBoardId)
+                .query(`
+                    UPDATE IntakeForms
+                    SET name = @name,
+                        description = @description,
+                        fields = @fields,
+                        defaultGoalId = @defaultGoalId,
+                        governanceMode = @governanceMode,
+                        governanceBoardId = @governanceBoardId
+                    WHERE id = @id
+                `);
+        } else {
+            await request.query(`
+                UPDATE IntakeForms
+                SET name = @name, description = @description, fields = @fields, defaultGoalId = @defaultGoalId
+                WHERE id = @id
+            `);
+        }
+
+        logAudit({
+            action: 'intake_form.update',
+            entityType: 'intake_form',
+            entityId: id,
+            entityTitle: name,
+            user: getAuthUser(req),
+            before: prev.recordset[0],
+            after: {
+                name,
+                description,
+                defaultGoalId,
+                governanceMode: schemaReady ? normalizedMode : null,
+                governanceBoardId: schemaReady && parsedBoardId !== null ? String(parsedBoardId) : null
+            },
+            req
+        });
         res.json({ success: true });
     } catch (err) {
         handleError(res, 'updating intake form', err);
@@ -744,6 +960,10 @@ router.post('/submissions/:id/governance/start', requireAuth, async (req, res) =
         if (!(await hasGovernanceSchema(pool)) || !(await hasGovernancePhase1Schema(pool))) {
             return res.status(503).json({ error: 'Governance phase 1 schema not installed. Run governance phase 1 migration first.' });
         }
+        const isPhase3Ready = await hasGovernancePhase3Schema(pool);
+        const policySettings = isPhase3Ready
+            ? await fetchGovernancePolicySettings(pool)
+            : { ...DEFAULT_GOVERNANCE_POLICY };
 
         const submissionResult = await pool.request()
             .input('id', sql.Int, submissionId)
@@ -860,18 +1080,43 @@ router.post('/submissions/:id/governance/start', requireAuth, async (req, res) =
 
         const tx = new sql.Transaction(pool);
         let reviewId;
+        let voteDeadlineAt = null;
         try {
             await tx.begin();
 
             const createReviewRequest = new sql.Request(tx);
-            const reviewInsert = await createReviewRequest
+            createReviewRequest
                 .input('submissionId', sql.Int, submissionId)
                 .input('boardId', sql.Int, submission.governanceBoardId)
                 .input('reviewRound', sql.Int, nextRound)
                 .input('criteriaVersionId', sql.Int, criteriaVersion.id)
                 .input('criteriaSnapshotJson', sql.NVarChar(sql.MAX), JSON.stringify(criteriaSnapshot))
-                .input('startedByOid', sql.NVarChar(100), user.oid)
-                .query(`
+                .input('startedByOid', sql.NVarChar(100), user.oid);
+
+            let reviewInsert;
+            if (isPhase3Ready) {
+                const voteWindowDays = policySettings.voteWindowDays;
+                voteDeadlineAt = voteWindowDays
+                    ? new Date(Date.now() + (voteWindowDays * 24 * 60 * 60 * 1000))
+                    : null;
+                reviewInsert = await createReviewRequest
+                    .input('policySnapshotJson', sql.NVarChar(sql.MAX), JSON.stringify(policySettings))
+                    .input('voteDeadlineAt', sql.DateTime2, voteDeadlineAt)
+                    .query(`
+                        INSERT INTO GovernanceReview (
+                            submissionId, boardId, reviewRound, status,
+                            criteriaVersionId, criteriaSnapshotJson, startedByOid,
+                            policySnapshotJson, voteDeadlineAt
+                        )
+                        OUTPUT INSERTED.id
+                        VALUES (
+                            @submissionId, @boardId, @reviewRound, 'in-review',
+                            @criteriaVersionId, @criteriaSnapshotJson, @startedByOid,
+                            @policySnapshotJson, @voteDeadlineAt
+                        )
+                    `);
+            } else {
+                reviewInsert = await createReviewRequest.query(`
                     INSERT INTO GovernanceReview (
                         submissionId, boardId, reviewRound, status,
                         criteriaVersionId, criteriaSnapshotJson, startedByOid
@@ -882,6 +1127,7 @@ router.post('/submissions/:id/governance/start', requireAuth, async (req, res) =
                         @criteriaVersionId, @criteriaSnapshotJson, @startedByOid
                     )
                 `);
+            }
             reviewId = reviewInsert.recordset[0].id;
 
             for (const participant of participantsResult.recordset) {
@@ -926,7 +1172,9 @@ router.post('/submissions/:id/governance/start', requireAuth, async (req, res) =
                 boardId: submission.governanceBoardId,
                 criteriaVersionId: criteriaVersion.id,
                 criteriaVersionNo: criteriaVersion.versionNo,
-                participantCount: participantsResult.recordset.length
+                participantCount: participantsResult.recordset.length,
+                policy: policySettings,
+                voteDeadlineAt
             },
             req
         });
@@ -937,7 +1185,9 @@ router.post('/submissions/:id/governance/start', requireAuth, async (req, res) =
             reviewRound: nextRound,
             criteriaVersionId: criteriaVersion.id.toString(),
             criteriaVersionNo: criteriaVersion.versionNo,
-            participantCount: participantsResult.recordset.length
+            participantCount: participantsResult.recordset.length,
+            policy: policySettings,
+            voteDeadlineAt
         });
     } catch (err) {
         handleError(res, 'starting governance review', err);
@@ -957,6 +1207,7 @@ router.get('/submissions/:id/governance', requireAuth, async (req, res) => {
         if (!(await hasGovernanceSchema(pool)) || !(await hasGovernancePhase1Schema(pool))) {
             return res.status(503).json({ error: 'Governance phase 1 schema not installed. Run governance phase 1 migration first.' });
         }
+        const phase3Ready = await hasGovernancePhase3Schema(pool);
 
         const submissionResult = await pool.request()
             .input('id', sql.Int, submissionId)
@@ -1002,7 +1253,8 @@ router.get('/submissions/:id/governance', requireAuth, async (req, res) => {
             .query(`
                 SELECT TOP 1
                     id, submissionId, boardId, reviewRound, status, decision, decisionReason,
-                    criteriaVersionId, criteriaSnapshotJson, startedAt, startedByOid, decidedAt, decidedByOid
+                    criteriaVersionId, criteriaSnapshotJson, startedAt, startedByOid, decidedAt, decidedByOid,
+                    ${phase3Ready ? 'policySnapshotJson, voteDeadlineAt' : 'NULL AS policySnapshotJson, NULL AS voteDeadlineAt'}
                 FROM GovernanceReview
                 WHERE submissionId = @submissionId
                 ORDER BY reviewRound DESC
@@ -1091,6 +1343,11 @@ router.get('/submissions/:id/governance', requireAuth, async (req, res) => {
         const participationPct = eligibleVoterCount > 0
             ? Math.round((scoreSummary.voteCount / eligibleVoterCount) * 100)
             : 0;
+        const policy = parsePolicySnapshot(review.policySnapshotJson) || (await fetchGovernancePolicySettings(pool));
+        const requiredVotes = calculateRequiredVotes(eligibleVoterCount, policy);
+        const quorumMet = scoreSummary.voteCount >= requiredVotes;
+        const voteDeadlineAt = review.voteDeadlineAt || null;
+        const deadlinePassed = voteDeadlineAt ? new Date(voteDeadlineAt).getTime() < Date.now() : false;
 
         res.json({
             submission: {
@@ -1118,6 +1375,9 @@ router.get('/submissions/:id/governance', requireAuth, async (req, res) => {
                 criteria: criteriaSnapshot.sort((a, b) => a.sortOrder - b.sortOrder),
                 startedAt: review.startedAt,
                 startedByOid: review.startedByOid || null,
+                voteDeadlineAt,
+                deadlinePassed,
+                policy,
                 decidedAt: review.decidedAt || null,
                 decidedByOid: review.decidedByOid || null,
                 participants: participantsResult.recordset.map(p => ({
@@ -1134,7 +1394,9 @@ router.get('/submissions/:id/governance', requireAuth, async (req, res) => {
                     priorityScore: scoreSummary.priorityScore,
                     voteCount: scoreSummary.voteCount,
                     eligibleVoterCount,
-                    participationPct
+                    participationPct,
+                    requiredVotes,
+                    quorumMet
                 }
             }
         });
@@ -1159,12 +1421,14 @@ router.post('/submissions/:id/governance/votes', requireAuth, async (req, res) =
         if (!(await hasGovernanceSchema(pool)) || !(await hasGovernancePhase1Schema(pool))) {
             return res.status(503).json({ error: 'Governance phase 1 schema not installed. Run governance phase 1 migration first.' });
         }
+        const phase3Ready = await hasGovernancePhase3Schema(pool);
 
         const reviewResult = await pool.request()
             .input('submissionId', sql.Int, submissionId)
             .query(`
                 SELECT TOP 1
-                    id, submissionId, status, criteriaSnapshotJson
+                    id, submissionId, status, criteriaSnapshotJson,
+                    ${phase3Ready ? 'policySnapshotJson, voteDeadlineAt' : 'NULL AS policySnapshotJson, NULL AS voteDeadlineAt'}
                 FROM GovernanceReview
                 WHERE submissionId = @submissionId
                 ORDER BY reviewRound DESC
@@ -1177,6 +1441,9 @@ router.post('/submissions/:id/governance/votes', requireAuth, async (req, res) =
         const review = reviewResult.recordset[0];
         if (review.status !== 'in-review') {
             return res.status(409).json({ error: 'Governance review is not open for voting.' });
+        }
+        if (review.voteDeadlineAt && new Date(review.voteDeadlineAt).getTime() < Date.now()) {
+            return res.status(409).json({ error: 'Voting window has closed for this review.' });
         }
 
         const participantResult = await pool.request()
@@ -1288,7 +1555,8 @@ router.post('/submissions/:id/governance/votes', requireAuth, async (req, res) =
             reviewId: review.id.toString(),
             voteId: voteId.toString(),
             priorityScore: scoreSummary.priorityScore,
-            voteCount: scoreSummary.voteCount
+            voteCount: scoreSummary.voteCount,
+            voteDeadlineAt: review.voteDeadlineAt || null
         });
     } catch (err) {
         handleError(res, 'submitting governance vote', err);
@@ -1318,11 +1586,14 @@ router.post('/submissions/:id/governance/decide', requireAuth, async (req, res) 
         if (!(await hasGovernanceSchema(pool)) || !(await hasGovernancePhase1Schema(pool))) {
             return res.status(503).json({ error: 'Governance phase 1 schema not installed. Run governance phase 1 migration first.' });
         }
+        const phase3Ready = await hasGovernancePhase3Schema(pool);
 
         const reviewResult = await pool.request()
             .input('submissionId', sql.Int, submissionId)
             .query(`
-                SELECT TOP 1 id, status, criteriaSnapshotJson
+                SELECT TOP 1
+                    id, status, criteriaSnapshotJson,
+                    ${phase3Ready ? 'policySnapshotJson, voteDeadlineAt' : 'NULL AS policySnapshotJson, NULL AS voteDeadlineAt'}
                 FROM GovernanceReview
                 WHERE submissionId = @submissionId
                 ORDER BY reviewRound DESC
@@ -1350,6 +1621,33 @@ router.post('/submissions/:id/governance/decide', requireAuth, async (req, res) 
 
         const criteria = normalizeCriteriaSnapshot(review.criteriaSnapshotJson);
         const scoreSummary = calculatePriorityScore(criteria, allVotes);
+        let requiredVotes = 0;
+        let quorumMet = true;
+        let policy = { ...DEFAULT_GOVERNANCE_POLICY };
+        if (phase3Ready) {
+            policy = parsePolicySnapshot(review.policySnapshotJson) || (await fetchGovernancePolicySettings(pool));
+            const participantsResult = await pool.request()
+                .input('reviewId', sql.Int, review.id)
+                .query(`
+                    SELECT COUNT(*) AS eligibleVoterCount
+                    FROM GovernanceReviewParticipant
+                    WHERE reviewId = @reviewId AND isEligibleVoter = 1
+                `);
+            const eligibleVoterCount = Number(participantsResult.recordset[0]?.eligibleVoterCount || 0);
+            requiredVotes = calculateRequiredVotes(eligibleVoterCount, policy);
+            quorumMet = scoreSummary.voteCount >= requiredVotes;
+            if (policy.decisionRequiresQuorum && !quorumMet) {
+                return res.status(409).json({
+                    error: `Quorum not met. ${scoreSummary.voteCount}/${requiredVotes} votes received.`,
+                    quorum: {
+                        requiredVotes,
+                        voteCount: scoreSummary.voteCount,
+                        quorumMet,
+                        policy
+                    }
+                });
+            }
+        }
 
         const tx = new sql.Transaction(pool);
         try {
@@ -1403,7 +1701,10 @@ router.post('/submissions/:id/governance/decide', requireAuth, async (req, res) 
                 decision,
                 decisionReason,
                 priorityScore: scoreSummary.priorityScore,
-                voteCount: scoreSummary.voteCount
+                voteCount: scoreSummary.voteCount,
+                requiredVotes,
+                quorumMet,
+                policy
             },
             req
         });
@@ -1413,7 +1714,12 @@ router.post('/submissions/:id/governance/decide', requireAuth, async (req, res) 
             reviewId: review.id.toString(),
             decision,
             priorityScore: scoreSummary.priorityScore,
-            voteCount: scoreSummary.voteCount
+            voteCount: scoreSummary.voteCount,
+            quorum: {
+                requiredVotes,
+                quorumMet,
+                policy
+            }
         });
     } catch (err) {
         handleError(res, 'finalizing governance decision', err);

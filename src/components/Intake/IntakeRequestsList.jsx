@@ -687,12 +687,24 @@ export function IntakeRequestsList({ initialFilter = 'all' }) {
                                     <div style={{ marginTop: '0.75rem' }}>
                                         <div style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginBottom: '0.75rem' }}>
                                             Participation: {governanceSummary?.voteCount ?? 0} / {governanceSummary?.eligibleVoterCount ?? 0} voters ({governanceSummary?.participationPct ?? 0}%)
+                                            {governanceSummary?.requiredVotes !== undefined && (
+                                                <span style={{ marginLeft: '0.75rem' }}>
+                                                    Quorum: {governanceSummary.voteCount ?? 0}/{governanceSummary.requiredVotes}
+                                                    {governanceSummary.quorumMet ? ' (met)' : ' (pending)'}
+                                                </span>
+                                            )}
                                             {governanceSummary?.priorityScore !== null && governanceSummary?.priorityScore !== undefined && (
                                                 <span style={{ marginLeft: '0.75rem' }}>
                                                     Current Score: {governanceSummary.priorityScore}
                                                 </span>
                                             )}
                                         </div>
+                                        {governanceReview.voteDeadlineAt && (
+                                            <div style={{ fontSize: '0.78rem', marginBottom: '0.75rem', color: governanceReview.deadlinePassed ? '#b91c1c' : 'var(--text-tertiary)' }}>
+                                                Voting deadline: {formatDate(governanceReview.voteDeadlineAt)}
+                                                {governanceReview.deadlinePassed ? ' (closed)' : ''}
+                                            </div>
+                                        )}
 
                                         {canVoteGovernance && governanceReview.status === 'in-review' && (
                                             <div style={{ border: '1px solid var(--border-color)', borderRadius: '8px', padding: '0.75rem', marginBottom: '0.75rem' }}>
@@ -784,10 +796,19 @@ export function IntakeRequestsList({ initialFilter = 'all' }) {
                                                     />
                                                 </div>
                                                 <div className="form-actions" style={{ marginTop: '0.75rem' }}>
-                                                    <button className="btn-primary" onClick={handleDecide} disabled={governanceActionLoading}>
+                                                    <button
+                                                        className="btn-primary"
+                                                        onClick={handleDecide}
+                                                        disabled={governanceActionLoading || (governanceReview.policy?.decisionRequiresQuorum && governanceSummary?.quorumMet === false)}
+                                                    >
                                                         Save Decision
                                                     </button>
                                                 </div>
+                                                {governanceReview.policy?.decisionRequiresQuorum && governanceSummary?.quorumMet === false && (
+                                                    <div style={{ marginTop: '0.5rem', fontSize: '0.78rem', color: '#b45309' }}>
+                                                        Quorum is required before final decision.
+                                                    </div>
+                                                )}
                                             </div>
                                         )}
 
