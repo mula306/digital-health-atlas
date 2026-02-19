@@ -1,7 +1,5 @@
 import express from 'express';
-import { getPool, sql } from '../db.js';
 import { requireAuth } from '../middleware/authMiddleware.js';
-import { handleError } from '../utils/errorHandler.js';
 
 const router = express.Router();
 

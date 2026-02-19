@@ -89,21 +89,9 @@ export function Dashboard() {
     const onTrackKpis = allKpis.filter(k => k.target && (k.current / k.target) >= 0.5).length;
     const behindKpis = totalKpis - onTrackKpis;
 
-    // Get goal name for display
-    const selectedGoalName = goalFilter
-        ? goals.find(g => g.id === goalFilter)?.title
-        : null;
-
     if (loading && !stats) {
         return (
             <div className="dashboard">
-                <div className="view-header">
-                    <div>
-                        <h2>Project Dashboard</h2>
-                        <p className="view-subtitle">Overview of your goals, projects, and tasks.</p>
-                    </div>
-                </div>
-
                 <FilterBar
                     goalFilter={goalFilter}
                     onGoalFilterChange={setGoalFilter}
@@ -161,18 +149,6 @@ export function Dashboard() {
 
     return (
         <div className="dashboard">
-            <div className="view-header">
-                <div>
-                    <h2>Project Dashboard</h2>
-                    <p className="view-subtitle">
-                        {selectedGoalName
-                            ? `Filtered by: ${selectedGoalName}`
-                            : 'Overview of your goals, projects, and tasks.'
-                        }
-                    </p>
-                </div>
-            </div>
-
             {/* Filters */}
             <FilterBar
                 goalFilter={goalFilter}

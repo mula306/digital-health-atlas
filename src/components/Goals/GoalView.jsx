@@ -47,11 +47,7 @@ export function GoalView({ onNavigateToProjects, onNavigateToMetrics }) {
 
     return (
         <div className="goals-view">
-            <div className="view-header">
-                <div>
-                    <h2>Strategic Goals</h2>
-                    <p className="view-subtitle">Align organization objectives from top to bottom.</p>
-                </div>
+            <div className="view-header actions-only">
                 <div className="header-actions">
                     <div className="expand-controls">
                         <button

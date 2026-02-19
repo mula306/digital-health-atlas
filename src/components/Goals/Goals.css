@@ -10,6 +10,11 @@
     margin-bottom: 2.5rem;
 }
 
+.view-header.actions-only {
+    justify-content: flex-end;
+    margin-bottom: 1rem;
+}
+
 .header-actions {
     display: flex;
     align-items: center;

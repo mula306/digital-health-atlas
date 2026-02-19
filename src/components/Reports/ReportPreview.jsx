@@ -21,42 +21,59 @@ export function ReportPreview({ selectedProjectIds, allProjects = [] }) {
 
     // Fetch full reports for ALL selected projects to ensure we have milestones/details for the main view
     useEffect(() => {
-        if (reportProjects.length === 0) return;
+        if (reportProjects.length === 0) {
+            return;
+        }
 
-        const fetchFullReports = async () => {
-            setLoadingFullReports(true);
+        let isMounted = true;
+
+        const fetchBatch = async () => {
+            // Determine which reports we still need to fetch
+            const projectsToFetch = reportProjects.filter(p => !fullReports[p.id]);
+
+            if (projectsToFetch.length === 0) {
+                if (isMounted) setLoadingFullReports(false);
+                return;
+            }
+
+            if (isMounted) setLoadingFullReports(true);
+
+            // BATCHING: Only fetch the first 5 items
+            // This relies on the state update triggering the effect again to fetch the next batch
+            const batch = projectsToFetch.slice(0, 5);
             const newReports = {};
-            try {
-                // Determine which reports we still need to fetch
-                const projectsToFetch = reportProjects.filter(p => !fullReports[p.id]);
 
-                if (projectsToFetch.length === 0) {
-                    setLoadingFullReports(false);
-                    return;
-                }
-
-                await Promise.all(
-                    projectsToFetch.map(async (project) => {
-                        try {
-                            const res = await authFetch(`${API_BASE}/projects/${project.id}/reports`);
-                            if (res.ok) {
-                                const reports = await res.json();
-                                if (reports.length > 0) {
-                                    newReports[project.id] = reports[0]; // Latest report
-                                }
+            await Promise.all(
+                batch.map(async (project) => {
+                    try {
+                        const res = await authFetch(`${API_BASE}/projects/${project.id}/reports`);
+                        if (res.ok) {
+                            const reports = await res.json();
+                            if (reports.length > 0) {
+                                newReports[project.id] = reports[0]; // Latest report
+                            } else {
+                                // Mark as fetched even if empty to prevent infinite loop
+                                newReports[project.id] = null;
                             }
-                        } catch (err) {
-                            console.error(`Error fetching report for project ${project.id}:`, err);
+                        } else {
+                            // If failed, mark as null to avoid re-fetching forever
+                            newReports[project.id] = null;
                         }
-                    })
-                );
+                    } catch (err) {
+                        console.error(`Error fetching report for project ${project.id}:`, err);
+                        newReports[project.id] = null; // Mark as failed
+                    }
+                })
+            );
+
+            if (isMounted) {
                 setFullReports(prev => ({ ...prev, ...newReports }));
-            } finally {
-                setLoadingFullReports(false);
             }
         };
 
-        fetchFullReports();
+        fetchBatch();
+
+        return () => { isMounted = false; };
     }, [reportProjects, fullReports, authFetch]); // dependency on reportProjects encompasses selectedProjectIds changes
 
     // Helper: Find the Division level (second level in hierarchy, child of root organization) for a project

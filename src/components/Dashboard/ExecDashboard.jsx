@@ -377,11 +377,7 @@ export function ExecDashboard() {
 
     return (
         <div className="exec-dashboard">
-            <div className="view-header">
-                <div>
-                    <h2>Executive Summary</h2>
-                    <p className="view-subtitle">High-level portfolio status overview</p>
-                </div>
+            <div className="view-header actions-only">
                 <div className="header-actions">
                     <div className="search-bar">
                         <Search size={18} />
@@ -417,18 +413,20 @@ export function ExecDashboard() {
             {/* Table */}
             <div className="table-container glass">
                 {fetchError && (
-                    <div className="bg-red-50 border-l-4 border-red-500 p-4 mb-4 mx-4 mt-4">
-                        <div className="flex">
-                            <div className="flex-shrink-0">
-                                <svg className="h-5 w-5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
-                                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
-                                </svg>
-                            </div>
-                            <div className="ml-3">
-                                <p className="text-sm text-red-700">
-                                    Error loading full portfolio: {fetchError}
-                                </p>
-                            </div>
+                    <div className="mx-4 mt-4 mb-2">
+                        <div className="inline-flex items-center gap-2 px-3 py-2 rounded-md bg-red-50 border border-red-200 text-red-700 shadow-sm">
+                            <svg
+                                viewBox="0 0 20 20"
+                                fill="currentColor"
+                                style={{ width: '14px', height: '14px', minWidth: '14px', color: '#ef4444' }}
+                            >
+                                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                            </svg>
+                            <span className="text-xs font-medium">
+                                {(fetchError.includes('Too many requests') || fetchError.includes('429'))
+                                    ? `Rate limit hit: ${fetchError}`
+                                    : `Error: ${fetchError}`}
+                            </span>
                         </div>
                     </div>
                 )}

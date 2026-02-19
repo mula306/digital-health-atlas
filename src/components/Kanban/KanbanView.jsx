@@ -184,11 +184,7 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
 
     return (
         <div className="kanban-view">
-            <div className="view-header">
-                <div>
-                    <h2>Projects</h2>
-                    <p className="view-subtitle">Manage tasks across your initiatives.</p>
-                </div>
+            <div className="view-header actions-only">
                 <div className="header-actions">
                     <div className="search-bar">
                         <Search size={18} />

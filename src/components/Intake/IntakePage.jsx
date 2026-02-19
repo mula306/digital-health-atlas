@@ -54,14 +54,13 @@ export function IntakePage() {
 
     return (
         <div className="intake-page">
-            <div className="intake-header">
-                <h1>Intake Portal</h1>
-                {canManageForms && activeTab === 'forms' && (
+            {canManageForms && activeTab === 'forms' && (
+                <div className="intake-header intake-header-actions">
                     <button className="btn-primary" onClick={() => { setEditingForm(null); setShowFormModal(true); }}>
                         <Plus size={18} /> New Form
                     </button>
-                )}
-            </div>
+                </div>
+            )}
 
             {/* Main Tabs */}
             <div className="intake-tabs">

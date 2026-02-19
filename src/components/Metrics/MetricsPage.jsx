@@ -3,7 +3,7 @@ import { useState, useMemo } from 'react';
 import { useData } from '../../context/DataContext';
 import { getDescendantGoalIds } from '../../utils/goalHelpers';
 import { FilterBar } from '../UI/FilterBar';
-import { TrendingUp, Target, BarChart2 } from 'lucide-react';
+import { TrendingUp, Target } from 'lucide-react';
 import { formatKpiValue } from '../../utils';
 import './MetricsPage.css';
 
@@ -92,13 +92,6 @@ export function MetricsPage({ initialGoalFilter, onClearFilter }) {
 
     return (
         <div className="metrics-page">
-            <div className="metrics-header">
-                <div>
-                    <h1><BarChart2 size={24} style={{ display: 'inline', marginRight: '0.5rem' }} /> Metrics Dashboard</h1>
-                    <p className="subtitle">Track Key Performance Indicators across the organization.</p>
-                </div>
-            </div>
-
             <FilterBar
                 goalFilter={goalFilter}
                 onGoalFilterChange={handleFilterChange}

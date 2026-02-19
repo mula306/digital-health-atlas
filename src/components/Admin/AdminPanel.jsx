@@ -138,18 +138,14 @@ export function AdminPanel() {
 
     return (
         <div className="admin-panel">
-            <header className="admin-header">
-                <div>
-                    <h1><Shield size={24} /> Administration</h1>
-                    <p>Manage permissions, tag taxonomy, and audit log</p>
-                </div>
-                {activeTab === 'permissions' && (
+            {activeTab === 'permissions' && (
+                <header className="admin-header actions-only">
                     <button className="btn-primary" onClick={saveChanges} disabled={saving}>
                         {saving ? <RefreshCw className="spin" size={18} /> : <Save size={18} />}
                         Apply Changes
                     </button>
-                )}
-            </header>
+                </header>
+            )}
 
             <div className="admin-tabs">
                 <button

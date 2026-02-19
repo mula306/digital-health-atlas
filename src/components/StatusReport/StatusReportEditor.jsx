@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { useMsal } from '@azure/msal-react';
 import {
     Plus, Trash2, ChevronDown, ChevronUp, Users,
     Target, AlertTriangle, CheckCircle, FileText
@@ -13,10 +12,9 @@ import './StatusReport.css';
 export function StatusReportEditor({ projectId, projectTitle: _projectTitle, previousReport, onSave, onCancel }) {
     const { addStatusReport, currentUser } = useData();
     const { success } = useToast();
-    const { instance } = useMsal();
 
     // Initialize from previous report or defaults
-    const [author, setAuthor] = useState(currentUser?.name || '');
+    const [author] = useState(currentUser?.name || '');
     const [reportDate, setReportDate] = useState(new Date().toISOString().split('T')[0]);
     const [overallStatus, setOverallStatus] = useState(previousReport?.overallStatus || 'green');
     const [purpose, setPurpose] = useState(previousReport?.purpose || '');

@@ -12,6 +12,11 @@
     margin-bottom: 2rem;
 }
 
+.admin-header.actions-only {
+    justify-content: flex-end;
+    margin-bottom: 1rem;
+}
+
 .admin-header h1 {
     display: flex;
     align-items: center;

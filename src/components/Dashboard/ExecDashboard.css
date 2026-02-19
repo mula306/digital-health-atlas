@@ -7,6 +7,12 @@
     overflow: hidden;
 }
 
+.exec-dashboard .view-header.actions-only {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 0.5rem;
+}
+
 /* Search Bar - Matches Layout.css */
 .search-bar {
     position: relative;

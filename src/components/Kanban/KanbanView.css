@@ -10,6 +10,11 @@
     margin-bottom: 2.5rem;
 }
 
+.view-header.actions-only {
+    justify-content: flex-end;
+    margin-bottom: 1rem;
+}
+
 .view-header h2 {
     font-size: 1.75rem;
     font-weight: 700;
