@@ -4,7 +4,7 @@ import { apiRequest } from '../../authConfig';
 import {
     Clock, User, Database, Plus, Pencil, Trash2,
     ChevronLeft, ChevronRight, X, Search,
-    Activity, BarChart3, Globe
+    Activity, BarChart3, Globe, Filter
 } from 'lucide-react';
 import './AuditLogView.css';
 
@@ -159,6 +159,7 @@ export function AuditLogView() {
         from: '',
         to: ''
     });
+    const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState(false);
 
     const authFetch = useCallback(async (url, options = {}) => {
         const headers = new Headers(options.headers || {});
@@ -254,44 +255,86 @@ export function AuditLogView() {
             )}
 
             {/* Filters */}
-            <div className="audit-filters">
-                <Search size={16} style={{ color: 'var(--text-secondary)', flexShrink: 0 }} />
-                <input
-                    type="text"
-                    placeholder="Search by name..."
-                    value={filters.search}
-                    onChange={e => handleFilterChange('search', e.target.value)}
-                />
-                <select
-                    value={filters.entityType}
-                    onChange={e => handleFilterChange('entityType', e.target.value)}
-                >
-                    <option value="">All Types</option>
-                    {entityTypes.map(t => <option key={t} value={t}>{t.replace('_', ' ')}</option>)}
-                </select>
-                <select
-                    value={filters.action}
-                    onChange={e => handleFilterChange('action', e.target.value)}
-                >
-                    <option value="">All Actions</option>
-                    {actionOptions.map(a => <option key={a} value={a}>{ACTION_LABELS[a]}</option>)}
-                </select>
-                <input
-                    type="date"
-                    value={filters.from}
-                    onChange={e => handleFilterChange('from', e.target.value)}
-                    title="From date"
-                />
-                <input
-                    type="date"
-                    value={filters.to}
-                    onChange={e => handleFilterChange('to', e.target.value)}
-                    title="To date"
-                />
-                {hasActiveFilters && (
-                    <button className="audit-filter-reset" onClick={resetFilters}>
-                        <X size={14} /> Clear
+            <div className="audit-filters-container" style={{ marginBottom: '1.5rem' }}>
+                <div className="audit-filters-primary" style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                    <div className="audit-search-box" style={{ flex: 1, position: 'relative', display: 'flex', alignItems: 'center' }}>
+                        <Search size={16} style={{ color: 'var(--text-secondary)', position: 'absolute', left: '0.75rem' }} />
+                        <input
+                            type="text"
+                            placeholder="Search audit log..."
+                            value={filters.search}
+                            onChange={e => handleFilterChange('search', e.target.value)}
+                            style={{ width: '100%', paddingLeft: '2.5rem', height: '36px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-card)' }}
+                        />
+                        {filters.search && (
+                            <button
+                                className="audit-filter-reset-icon"
+                                onClick={() => handleFilterChange('search', '')}
+                                style={{ position: 'absolute', right: '0.5rem', background: 'none', border: 'none', color: 'var(--text-tertiary)', cursor: 'pointer', padding: '0.25rem' }}
+                            >
+                                <X size={14} />
+                            </button>
+                        )}
+                    </div>
+                    <button
+                        className={`btn-secondary btn-sm ${advancedFiltersOpen ? 'active' : ''}`}
+                        onClick={() => setAdvancedFiltersOpen(!advancedFiltersOpen)}
+                    >
+                        <Filter size={16} /> Filters
+                        {hasActiveFilters && !filters.search && <span className="filter-badge" style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--primary-color)', display: 'inline-block', marginLeft: '0.25rem' }}></span>}
                     </button>
+                </div>
+
+                {advancedFiltersOpen && (
+                    <div className="audit-filters-advanced" style={{ display: 'flex', gap: '0.75rem', marginTop: '0.75rem', flexWrap: 'wrap', padding: '1rem', backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)' }}>
+                        <div className="filter-group">
+                            <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>Entity Type</label>
+                            <select
+                                value={filters.entityType}
+                                onChange={e => handleFilterChange('entityType', e.target.value)}
+                                style={{ height: '32px' }}
+                            >
+                                <option value="">All Types</option>
+                                {entityTypes.map(t => <option key={t} value={t}>{t.replace('_', ' ')}</option>)}
+                            </select>
+                        </div>
+                        <div className="filter-group">
+                            <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>Action</label>
+                            <select
+                                value={filters.action}
+                                onChange={e => handleFilterChange('action', e.target.value)}
+                                style={{ height: '32px' }}
+                            >
+                                <option value="">All Actions</option>
+                                {actionOptions.map(a => <option key={a} value={a}>{ACTION_LABELS[a]}</option>)}
+                            </select>
+                        </div>
+                        <div className="filter-group">
+                            <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>From Date</label>
+                            <input
+                                type="date"
+                                value={filters.from}
+                                onChange={e => handleFilterChange('from', e.target.value)}
+                                style={{ height: '32px' }}
+                            />
+                        </div>
+                        <div className="filter-group">
+                            <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>To Date</label>
+                            <input
+                                type="date"
+                                value={filters.to}
+                                onChange={e => handleFilterChange('to', e.target.value)}
+                                style={{ height: '32px' }}
+                            />
+                        </div>
+                        {hasActiveFilters && (
+                            <div className="filter-group" style={{ display: 'flex', alignItems: 'flex-end' }}>
+                                <button className="btn-ghost btn-sm" onClick={resetFilters} style={{ height: '32px' }}>
+                                    <X size={14} /> Clear All
+                                </button>
+                            </div>
+                        )}
+                    </div>
                 )}
             </div>
 

@@ -5,6 +5,7 @@
 
 .shared-filter-bar {
     display: flex;
+    flex-shrink: 0;
     flex-direction: column;
     gap: 0.75rem;
     padding: 1rem;
@@ -67,12 +68,18 @@
 }
 
 /* Tag panel (expandable) */
+.shared-advanced-filters {
+    margin-top: 1rem;
+    padding: 1rem;
+    background-color: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+}
+
 .shared-tag-panel {
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
-    padding-top: 0.75rem;
-    border-top: 1px solid var(--border-color);
 }
 
 /* Responsive */
@@ -86,4 +93,22 @@
         margin-left: 0;
         text-align: center;
     }
+}
+
+/* Clear Links */
+.shared-clear-link {
+    color: #ef4444;
+    font-size: 0.75rem;
+    font-weight: 500;
+    text-decoration: none;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+    transition: all 0.2s;
+}
+
+.shared-clear-link:hover {
+    text-decoration: underline;
+    color: #b91c1c;
 }

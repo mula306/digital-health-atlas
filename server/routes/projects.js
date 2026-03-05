@@ -1,24 +1,26 @@
 import express from 'express';
 import { getPool, sql } from '../db.js';
 import { checkPermission, getAuthUser } from '../middleware/authMiddleware.js';
+import { requireOrg, withSharedScope } from '../middleware/orgScope.js';
 import { handleError } from '../utils/errorHandler.js';
 import { logAudit } from '../utils/auditLogger.js';
 import { cache, CACHE_KEYS, invalidateProjectCache } from '../utils/cache.js';
 import { buildInClause, addParams } from '../utils/sqlHelpers.js';
+import { validateGoalAssignment, loadGoalsForValidation } from '../utils/goalValidation.js';
 
 const router = express.Router();
 
 // ==================== PROJECTS ====================
 
 // Get lightweight executive summary of ALL projects
-router.get('/exec-summary', checkPermission(['can_view_exec_dashboard', 'can_view_projects']), async (req, res) => {
+router.get('/exec-summary', checkPermission(['can_view_exec_dashboard', 'can_view_projects']), withSharedScope, async (req, res) => {
     try {
         const pool = await getPool();
 
         // 1. Fetch Projects with Latest Report (Updated for JSON blob)
         const projectsQuery = `
             SELECT 
-                p.id, p.title, p.goalId,
+                p.id, p.title,
                 r.id as reportId, r.reportData, r.createdAt as reportDate,
                 (CASE WHEN EXISTS (SELECT 1 FROM StatusReports WHERE projectId = p.id) THEN 1 ELSE 0 END) as reportCount
             FROM Projects p
@@ -28,9 +30,10 @@ router.get('/exec-summary', checkPermission(['can_view_exec_dashboard', 'can_vie
                 WHERE sr.projectId = p.id
                 ORDER BY sr.createdAt DESC
             ) r
+            WHERE (p.orgId = @orgId OR p.id IN (SELECT projectId FROM ProjectOrgAccess WHERE orgId = @orgId) OR @orgId IS NULL)
             ORDER BY p.title ASC
         `;
-        const projectsResult = await pool.request().query(projectsQuery);
+        const projectsResult = await pool.request().input('orgId', sql.Int, req.orgId).query(projectsQuery);
 
         // 2. Fetch Project Tags
         const tagsResult = await pool.request().query('SELECT projectId, tagId, isPrimary FROM ProjectTags');
@@ -38,6 +41,14 @@ router.get('/exec-summary', checkPermission(['can_view_exec_dashboard', 'can_vie
         tagsResult.recordset.forEach(t => {
             if (!tagsByProject[t.projectId]) tagsByProject[t.projectId] = [];
             tagsByProject[t.projectId].push({ tagId: t.tagId, isPrimary: t.isPrimary });
+        });
+
+        // 2b. Fetch Project Goals
+        const pgResult = await pool.request().query('SELECT projectId, goalId FROM ProjectGoals');
+        const goalsByProject = {};
+        pgResult.recordset.forEach(pg => {
+            if (!goalsByProject[pg.projectId]) goalsByProject[pg.projectId] = [];
+            goalsByProject[pg.projectId].push(pg.goalId.toString());
         });
 
         // 3. Map Data and Parse JSON
@@ -64,7 +75,8 @@ router.get('/exec-summary', checkPermission(['can_view_exec_dashboard', 'can_vie
             return {
                 id: p.id.toString(),
                 title: p.title,
-                goalId: p.goalId ? p.goalId.toString() : null,
+                goalIds: goalsByProject[p.id] || [],
+                goalId: (goalsByProject[p.id] || [])[0] || null, // backwards compat
                 tags: tagsByProject[p.id] || [],
                 reportCount: p.reportCount || 0,
                 report: reportDetails
@@ -78,7 +90,7 @@ router.get('/exec-summary', checkPermission(['can_view_exec_dashboard', 'can_vie
 });
 
 // Get all projects with tasks and status reports (OPTIMIZED with JOINs and pagination)
-router.get('/', checkPermission(['can_view_projects', 'can_view_exec_dashboard']), async (req, res) => {
+router.get('/', checkPermission(['can_view_projects', 'can_view_exec_dashboard']), withSharedScope, async (req, res) => {
     try {
         // Pagination params
         const page = parseInt(req.query.page) || 1;
@@ -119,6 +131,11 @@ router.get('/', checkPermission(['can_view_projects', 'can_view_exec_dashboard']
 
         // Build WHERE clause for filtering
         const conditions = [];
+        if (req.orgId) {
+            conditions.push('(p.orgId = @orgId OR p.id IN (SELECT projectId FROM ProjectOrgAccess WHERE orgId = @orgId))');
+            requestParams.orgId = req.orgId;
+            countParams.orgId = req.orgId;
+        }
         if (projectId !== null) {
             conditions.push('p.id = @projectId');
             requestParams.projectId = projectId;
@@ -133,10 +150,10 @@ router.get('/', checkPermission(['can_view_projects', 'can_view_exec_dashboard']
         let tagJoin = '';
         let statusJoin = '';
 
-        // Safe Goal Filtering
+        // Safe Goal Filtering (via ProjectGoals join table)
         if (goalIds.length > 0) {
             const { text, params } = buildInClause('goalId', goalIds);
-            conditions.push(`p.goalId IN (${text})`);
+            conditions.push(`p.id IN (SELECT projectId FROM ProjectGoals WHERE goalId IN (${text}))`);
             Object.assign(requestParams, params);
             Object.assign(countParams, params);
         }
@@ -185,7 +202,7 @@ router.get('/', checkPermission(['can_view_projects', 'can_view_exec_dashboard']
 
         // Single optimized query with JOIN - fetch projects with pagination
         const query = `
-            SELECT DISTINCT p.id, p.title, p.description, p.status, p.goalId, p.createdAt
+            SELECT DISTINCT p.id, p.title, p.description, p.status, p.createdAt
             FROM Projects p
             ${tagJoin}
             ${statusJoin}
@@ -221,12 +238,14 @@ router.get('/', checkPermission(['can_view_projects', 'can_view_exec_dashboard']
         const latestReportsRequest = pool.request();
         addParams(latestReportsRequest, idParams);
 
+        const projectGoalsRequest = pool.request();
+        addParams(projectGoalsRequest, idParams);
+
         const projectTagsRequest = pool.request();
         addParams(projectTagsRequest, idParams);
 
-        const [tasksResult, reportsResult, latestReportsResult, projectTagsResult] = await Promise.all([
+        const [tasksResult, reportsResult, latestReportsResult, projectTagsResult, projectGoalsResult] = await Promise.all([
             // Fetch only necessary task fields active tasks filtering
-            // Note: dueDate does not exist in schema, using endDate
             tasksRequest.query(`SELECT projectId, id, title, status, endDate FROM Tasks WHERE projectId IN (${idInClause})`),
             reportsRequest.query(`SELECT projectId, COUNT(*) as count FROM StatusReports WHERE projectId IN (${idInClause}) GROUP BY projectId`),
             // Fetch latest report for each project efficiently
@@ -246,7 +265,9 @@ router.get('/', checkPermission(['can_view_projects', 'can_view_exec_dashboard']
                 FROM ProjectTags pt
                 INNER JOIN Tags t ON pt.tagId = t.id
                 WHERE pt.projectId IN (${idInClause})
-            `)
+            `),
+            // Fetch project goals
+            projectGoalsRequest.query(`SELECT projectId, goalId FROM ProjectGoals WHERE projectId IN (${idInClause})`)
         ]);
 
         // Build maps for efficient lookup
@@ -254,6 +275,13 @@ router.get('/', checkPermission(['can_view_projects', 'can_view_exec_dashboard']
         const reportCountMap = new Map();
         const latestReportMap = new Map();
         const projectTagMap = new Map();
+        const projectGoalMap = new Map();
+
+        // Build project goals map
+        projectGoalsResult.recordset.forEach(pg => {
+            if (!projectGoalMap.has(pg.projectId)) projectGoalMap.set(pg.projectId, []);
+            projectGoalMap.get(pg.projectId).push(pg.goalId.toString());
+        });
 
         // Build project tags map
         projectTagsResult.recordset.forEach(pt => {
@@ -327,23 +355,25 @@ router.get('/', checkPermission(['can_view_projects', 'can_view_exec_dashboard']
             }
         });
 
-        const projects = projectsResult.recordset.map(project => ({
-            id: project.id.toString(),
-            title: project.title,
-            description: project.description,
-            status: project.status || 'active',
-            goalId: project.goalId ? project.goalId.toString() : null,
-            createdAt: project.createdAt,
-            completion: completionMap.get(project.id) || 0,
-            // Light payload: Include active tasks for dashboard (overdue/in-progress lists)
-            tasks: (activeTasksMap.get(project.id) || []),
-            // We still need total task count for progress calculation
-            taskCount: (projectTasks[project.id] || []).length,
-            completedTaskCount: completedCountMap.get(project.id) || 0,
-            reportCount: reportCountMap.get(project.id) || 0,
-            latestReport: latestReportMap.get(String(project.id)) || null,
-            tags: projectTagMap.get(project.id) || []
-        }));
+        const projects = projectsResult.recordset.map(project => {
+            const gIds = projectGoalMap.get(project.id) || [];
+            return {
+                id: project.id.toString(),
+                title: project.title,
+                description: project.description,
+                status: project.status || 'active',
+                goalIds: gIds,
+                goalId: gIds[0] || null, // backwards compat
+                createdAt: project.createdAt,
+                completion: completionMap.get(project.id) || 0,
+                tasks: (activeTasksMap.get(project.id) || []),
+                taskCount: (projectTasks[project.id] || []).length,
+                completedTaskCount: completedCountMap.get(project.id) || 0,
+                reportCount: reportCountMap.get(project.id) || 0,
+                latestReport: latestReportMap.get(String(project.id)) || null,
+                tags: projectTagMap.get(project.id) || []
+            };
+        });
 
         const result = {
             projects,
@@ -379,6 +409,12 @@ router.get('/:id', checkPermission('can_view_projects'), async (req, res) => {
             return res.status(404).json({ error: 'Project not found' });
         }
         const project = projectResult.recordset[0];
+
+        // Fetch project goals
+        const goalsResult = await pool.request()
+            .input('projectId', sql.Int, id)
+            .query('SELECT goalId FROM ProjectGoals WHERE projectId = @projectId');
+        const goalIds = goalsResult.recordset.map(r => r.goalId.toString());
 
         // Fetch all tasks
         const tasksResult = await pool.request()
@@ -431,7 +467,8 @@ router.get('/:id', checkPermission('can_view_projects'), async (req, res) => {
             title: project.title,
             description: project.description,
             status: project.status,
-            goalId: project.goalId ? project.goalId.toString() : null,
+            goalIds,
+            goalId: goalIds[0] || null, // backwards compat
             createdAt: project.createdAt,
             completion,
             tasks,
@@ -444,21 +481,43 @@ router.get('/:id', checkPermission('can_view_projects'), async (req, res) => {
 });
 
 // Create project
-router.post('/', checkPermission('can_create_project'), async (req, res) => {
+router.post('/', checkPermission('can_create_project'), requireOrg, async (req, res) => {
     try {
-        const { title, description, goalId, status } = req.body;
+        const { title, description, status } = req.body;
+        // Support both goalIds[] (new) and goalId (legacy)
+        const goalIds = req.body.goalIds || (req.body.goalId ? [req.body.goalId] : []);
+        const parsedGoalIds = goalIds.map(id => parseInt(id)).filter(id => !isNaN(id));
+
+        // Validate hierarchy
+        if (parsedGoalIds.length > 1) {
+            const allGoals = await loadGoalsForValidation();
+            const validation = validateGoalAssignment(allGoals, parsedGoalIds);
+            if (!validation.valid) {
+                return res.status(400).json({ error: validation.error });
+            }
+        }
+
         const pool = await getPool();
         const result = await pool.request()
             .input('title', sql.NVarChar, title)
             .input('description', sql.NVarChar(sql.MAX), description)
             .input('status', sql.NVarChar, status || 'active')
-            .input('goalId', sql.Int, goalId ? parseInt(goalId) : null)
-            .query('INSERT INTO Projects (title, description, status, goalId) OUTPUT INSERTED.id VALUES (@title, @description, @status, @goalId)');
+            .input('orgId', sql.Int, req.orgId)
+            .query('INSERT INTO Projects (title, description, status, orgId) OUTPUT INSERTED.id VALUES (@title, @description, @status, @orgId)');
+
+        const newId = result.recordset[0].id;
+
+        // Insert goal associations
+        for (const gId of parsedGoalIds) {
+            await pool.request()
+                .input('projectId', sql.Int, newId)
+                .input('goalId', sql.Int, gId)
+                .query('INSERT INTO ProjectGoals (projectId, goalId) VALUES (@projectId, @goalId)');
+        }
 
         invalidateProjectCache();
-        const newId = result.recordset[0].id.toString();
-        logAudit({ action: 'project.create', entityType: 'project', entityId: newId, entityTitle: title, user: getAuthUser(req), after: { title, description, goalId }, req });
-        res.json({ id: newId, title, description, goalId, tasks: [], statusReports: [] });
+        logAudit({ action: 'project.create', entityType: 'project', entityId: newId.toString(), entityTitle: title, user: getAuthUser(req), after: { title, description, goalIds: parsedGoalIds }, req });
+        res.json({ id: newId.toString(), title, description, goalIds: parsedGoalIds.map(String), goalId: parsedGoalIds[0]?.toString() || null, tasks: [], statusReports: [] });
     } catch (err) {
         handleError(res, 'creating project', err);
     }
@@ -467,24 +526,50 @@ router.post('/', checkPermission('can_create_project'), async (req, res) => {
 // Update project
 router.put('/:id', checkPermission('can_edit_project'), async (req, res) => {
     try {
-        const { title, description, status, goalId } = req.body;
+        const { title, description, status } = req.body;
         if (!title) {
             return res.status(400).json({ error: 'Missing required field: title' });
         }
         const id = parseInt(req.params.id);
+
+        // Support both goalIds[] (new) and goalId (legacy)
+        const goalIds = req.body.goalIds || (req.body.goalId ? [req.body.goalId] : []);
+        const parsedGoalIds = goalIds.map(gid => parseInt(gid)).filter(gid => !isNaN(gid));
+
+        // Validate hierarchy
+        if (parsedGoalIds.length > 1) {
+            const allGoals = await loadGoalsForValidation();
+            const validation = validateGoalAssignment(allGoals, parsedGoalIds);
+            if (!validation.valid) {
+                return res.status(400).json({ error: validation.error });
+            }
+        }
+
         const pool = await getPool();
-        const prev = await pool.request().input('id', sql.Int, id).query('SELECT title, description, status, goalId FROM Projects WHERE id = @id');
+        const prev = await pool.request().input('id', sql.Int, id).query('SELECT title, description, status FROM Projects WHERE id = @id');
         const beforeState = prev.recordset[0];
+
+        // Update project fields
         await pool.request()
             .input('id', sql.Int, id)
             .input('title', sql.NVarChar, title)
             .input('description', sql.NVarChar(sql.MAX), description)
             .input('status', sql.NVarChar, status)
-            .input('goalId', sql.Int, goalId ? parseInt(goalId) : null)
-            .query('UPDATE Projects SET title = @title, description = @description, status = @status, goalId = @goalId WHERE id = @id');
+            .query('UPDATE Projects SET title = @title, description = @description, status = @status WHERE id = @id');
+
+        // Replace goal associations
+        await pool.request().input('projectId', sql.Int, id)
+            .query('DELETE FROM ProjectGoals WHERE projectId = @projectId');
+
+        for (const gId of parsedGoalIds) {
+            await pool.request()
+                .input('projectId', sql.Int, id)
+                .input('goalId', sql.Int, gId)
+                .query('INSERT INTO ProjectGoals (projectId, goalId) VALUES (@projectId, @goalId)');
+        }
 
         invalidateProjectCache();
-        logAudit({ action: 'project.update', entityType: 'project', entityId: id, entityTitle: title, user: getAuthUser(req), before: beforeState, after: { title, description, status, goalId }, req });
+        logAudit({ action: 'project.update', entityType: 'project', entityId: id, entityTitle: title, user: getAuthUser(req), before: beforeState, after: { title, description, status, goalIds: parsedGoalIds }, req });
         res.json({ success: true });
     } catch (err) {
         handleError(res, 'updating project', err);
@@ -496,7 +581,7 @@ router.delete('/:id', checkPermission('can_delete_project'), async (req, res) =>
     try {
         const id = parseInt(req.params.id);
         const pool = await getPool();
-        const prev = await pool.request().input('id', sql.Int, id).query('SELECT title, status, goalId FROM Projects WHERE id = @id');
+        const prev = await pool.request().input('id', sql.Int, id).query('SELECT title, status FROM Projects WHERE id = @id');
         await pool.request()
             .input('id', sql.Int, id)
             .query('DELETE FROM Projects WHERE id = @id');

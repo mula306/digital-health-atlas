@@ -2,7 +2,7 @@
 -- Run this against SQL Server 2022 Docker container
 
 -- Create database
-IF NOT EXISTS (SELECT * FROM sys.databases WHERE name = 'ProjectKanban')
+IF NOT EXISTS (SELECT * FROM sys.databases WHERE name = 'DHAtlas')
 BEGIN
     CREATE DATABASE DHAtlas;
 END
@@ -429,14 +429,29 @@ CREATE TABLE GovernanceVote (
 GO
 
 -- Create indexes for common queries
-CREATE INDEX IX_Goals_ParentId ON Goals(parentId);
-CREATE INDEX IX_KPIs_GoalId ON KPIs(goalId);
-CREATE INDEX IX_Projects_GoalId ON Projects(goalId);
-CREATE INDEX IX_Tasks_ProjectId ON Tasks(projectId);
-CREATE INDEX IX_Tasks_Status ON Tasks(status);
-CREATE INDEX IX_StatusReports_ProjectId ON StatusReports(projectId);
-CREATE INDEX IX_IntakeSubmissions_FormId ON IntakeSubmissions(formId);
-CREATE INDEX IX_IntakeSubmissions_Status ON IntakeSubmissions(status);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Goals_ParentId')
+    CREATE INDEX IX_Goals_ParentId ON Goals(parentId);
+
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_KPIs_GoalId')
+    CREATE INDEX IX_KPIs_GoalId ON KPIs(goalId);
+
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Projects_GoalId')
+    CREATE INDEX IX_Projects_GoalId ON Projects(goalId);
+
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Tasks_ProjectId')
+    CREATE INDEX IX_Tasks_ProjectId ON Tasks(projectId);
+
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Tasks_Status')
+    CREATE INDEX IX_Tasks_Status ON Tasks(status);
+
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_StatusReports_ProjectId')
+    CREATE INDEX IX_StatusReports_ProjectId ON StatusReports(projectId);
+
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_IntakeSubmissions_FormId')
+    CREATE INDEX IX_IntakeSubmissions_FormId ON IntakeSubmissions(formId);
+
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_IntakeSubmissions_Status')
+    CREATE INDEX IX_IntakeSubmissions_Status ON IntakeSubmissions(status);
 GO
 
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_IntakeForms_GovernanceMode')

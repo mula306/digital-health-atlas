@@ -1,10 +1,9 @@
 .exec-dashboard {
-    height: 100%;
+    flex: 1;
     display: flex;
     flex-direction: column;
     gap: 1.5rem;
     padding: 1rem;
-    overflow: hidden;
 }
 
 .exec-dashboard .view-header.actions-only {
@@ -162,7 +161,9 @@
 
 .table-container {
     flex: 1;
-    overflow: auto;
+    min-height: 0;
+    overflow-x: auto;
+    overflow-y: visible;
     border-radius: 8px;
     padding: 0;
 }

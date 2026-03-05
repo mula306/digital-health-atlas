@@ -7,9 +7,11 @@
     "scripts": {
         "start": "node index.js",
         "dev": "node --watch index.js",
+        "setup-db": "node scripts/setup_db.js",
         "migrate:governance:phase0": "node scripts/run_migration.js migrate_governance_phase0.sql",
         "migrate:governance:phase1": "node scripts/run_migration.js migrate_governance_phase1.sql",
-        "migrate:governance:phase2": "node scripts/run_migration.js migrate_governance_phase2.sql"
+        "migrate:governance:phase2": "node scripts/run_migration.js migrate_governance_phase2.sql",
+        "migrate:multi-org": "node scripts/run_migration.js migrate_multi_org.sql"
     },
     "dependencies": {
         "@faker-js/faker": "^10.3.0",

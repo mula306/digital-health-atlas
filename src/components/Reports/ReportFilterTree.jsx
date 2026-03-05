@@ -1,5 +1,5 @@
-import { useState, useMemo } from 'react';
-import { ChevronRight, ChevronDown, Folder, CheckSquare, Square, Tag, Activity, X } from 'lucide-react';
+import { useState, useMemo, useEffect } from 'react';
+import { ChevronRight, ChevronDown, Folder, CheckSquare, Square, Tag, Activity, X, Search, Filter, Maximize2, Minimize2, Trash2 } from 'lucide-react';
 import { useData } from '../../context/DataContext';
 import { getDescendantGoalIds } from '../../utils/goalHelpers';
 import '../UI/ProjectTagSelector.css';
@@ -10,8 +10,8 @@ export function ReportFilterTree({ onSelectionChange, allProjects = [] }) {
     const [expandedIds, setExpandedIds] = useState(new Set());
     const [selectedTags, setSelectedTags] = useState([]);
     const [selectedStatuses, setSelectedStatuses] = useState([]);
-    const [showTagFilter, setShowTagFilter] = useState(false);
-    const [showStatusFilter, setShowStatusFilter] = useState(false);
+    const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+    const [searchQuery, setSearchQuery] = useState('');
 
     // Get only active tags grouped for the filter UI
     const activeTags = useMemo(() => {
@@ -84,6 +84,11 @@ export function ReportFilterTree({ onSelectionChange, allProjects = [] }) {
 
         let filtered = source;
 
+        if (searchQuery.trim()) {
+            const q = searchQuery.toLowerCase().trim();
+            filtered = filtered.filter(p => (p.title || '').toLowerCase().includes(q));
+        }
+
         if (selectedTags.length > 0) {
             filtered = filtered.filter(p => {
                 if (!p.tags || p.tags.length === 0) return false;
@@ -110,7 +115,10 @@ export function ReportFilterTree({ onSelectionChange, allProjects = [] }) {
                 .map(goal => ({
                     ...goal,
                     children: buildTree(goal.id),
-                    projects: filteredProjects.filter(p => p.goalId === goal.id)
+                    projects: filteredProjects.filter(p => {
+                        const pGoalIds = (p.goalIds || (p.goalId ? [p.goalId] : [])).map(String);
+                        return pGoalIds.includes(String(goal.id));
+                    })
                 }));
         };
 
@@ -121,15 +129,51 @@ export function ReportFilterTree({ onSelectionChange, allProjects = [] }) {
         };
 
         const raw = buildTree(null);
-        // When filters are active, hide empty branches
-        if (selectedTags.length > 0 || selectedStatuses.length > 0) {
+        // When filters or search are active, hide empty branches
+        if (selectedTags.length > 0 || selectedStatuses.length > 0 || searchQuery.trim()) {
             const prune = (nodes) => nodes
                 .filter(n => hasProjects(n))
                 .map(n => ({ ...n, children: prune(n.children) }));
             return prune(raw);
         }
         return raw;
-    }, [goals, filteredProjects, selectedTags, selectedStatuses]);
+    }, [goals, filteredProjects, selectedTags, selectedStatuses, searchQuery]);
+
+    // Expand nodes when searching
+    useEffect(() => {
+        if (searchQuery.trim() && treeData.length > 0) {
+            const getIds = (nodes) => {
+                let ids = [];
+                nodes.forEach(n => {
+                    ids.push(`goal-${n.id}`);
+                    ids = ids.concat(getIds(n.children));
+                });
+                return ids;
+            };
+            setExpandedIds(new Set(getIds(treeData)));
+        }
+    }, [searchQuery, treeData]);
+
+    const handleExpandAll = () => {
+        const getIds = (nodes) => {
+            let ids = [];
+            nodes.forEach(n => {
+                ids.push(`goal-${n.id}`);
+                ids = ids.concat(getIds(n.children));
+            });
+            return ids;
+        };
+        setExpandedIds(new Set(getIds(treeData)));
+    };
+
+    const handleCollapseAll = () => {
+        setExpandedIds(new Set());
+    };
+
+    const handleClearSelection = () => {
+        setSelectedIds(new Set());
+        onSelectionChange([]);
+    };
 
     // Toggle expansion
     const toggleExpand = (id) => {
@@ -178,7 +222,10 @@ export function ReportFilterTree({ onSelectionChange, allProjects = [] }) {
         // Calculate available reports (Own + Descendants)
         const descendantIds = getDescendantGoalIds(goals, node.id);
         const allRelatedGoalIds = [node.id, ...descendantIds];
-        const linkedProjects = filteredProjects.filter(p => allRelatedGoalIds.includes(p.goalId));
+        const linkedProjects = filteredProjects.filter(p => {
+            const pGoalIds = (p.goalIds || (p.goalId ? [p.goalId] : [])).map(String);
+            return pGoalIds.some(gid => allRelatedGoalIds.map(String).includes(gid));
+        });
         const availableReports = linkedProjects.reduce((sum, p) => sum + (p.reportCount || 0), 0);
 
         return (
@@ -243,85 +290,100 @@ export function ReportFilterTree({ onSelectionChange, allProjects = [] }) {
 
     return (
         <div className="report-filter-tree">
-            {/* Tag filter toggle */}
-            <div className="report-tag-filter-header">
-                <button
-                    className={`btn-secondary btn-sm report-tag-toggle ${showTagFilter ? 'active' : ''} ${selectedTags.length > 0 ? 'has-selection' : ''}`}
-                    onClick={() => setShowTagFilter(!showTagFilter)}
-                >
-                    <Tag size={14} />
-                    Filter by Tags
-                    {selectedTags.length > 0 && <span className="report-tag-count">{selectedTags.length}</span>}
-                </button>
-                {statusOptions.length > 0 && (
+            {/* Search and Utility Bar */}
+            <div className="report-tree-tools" style={{ padding: '0 0.5rem 1rem 0', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                    <div style={{ flex: 1, position: 'relative', display: 'flex', alignItems: 'center' }}>
+                        <Search size={16} style={{ position: 'absolute', left: '0.5rem', color: 'var(--text-secondary)' }} />
+                        <input
+                            type="text"
+                            placeholder="Search projects by name..."
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            style={{ width: '100%', paddingLeft: '2.2rem', height: '36px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-card)' }}
+                        />
+                        {searchQuery && (
+                            <button onClick={() => setSearchQuery('')} style={{ position: 'absolute', right: '0.5rem', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', padding: '0.25rem' }}>
+                                <X size={14} />
+                            </button>
+                        )}
+                    </div>
                     <button
-                        className={`btn-secondary btn-sm report-tag-toggle ${showStatusFilter ? 'active' : ''} ${selectedStatuses.length > 0 ? 'has-selection' : ''}`}
-                        onClick={() => setShowStatusFilter(!showStatusFilter)}
+                        className={`btn-secondary btn-sm ${showAdvancedFilters ? 'active' : ''}`}
+                        onClick={() => setShowAdvancedFilters(!showAdvancedFilters)}
+                        title="Advanced Filters"
                     >
-                        <Activity size={14} />
-                        Filter by Status
-                        {selectedStatuses.length > 0 && <span className="report-tag-count">{selectedStatuses.length}</span>}
+                        <Filter size={16} /> Filters
+                        {(selectedTags.length > 0 || selectedStatuses.length > 0) && (
+                            <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--primary-color)', display: 'inline-block', marginLeft: '0.25rem' }} />
+                        )}
                     </button>
-                )}
-                {selectedTags.length > 0 && (
-                    <button
-                        className="btn-secondary btn-sm report-clear-tags"
-                        onClick={() => setSelectedTags([])}
-                    >
-                        <X size={12} /> Clear
-                    </button>
-                )}
-                {selectedStatuses.length > 0 && (
-                    <button
-                        className="btn-secondary btn-sm report-clear-tags"
-                        onClick={() => setSelectedStatuses([])}
-                    >
-                        <X size={12} /> Clear
-                    </button>
-                )}
+                </div>
+
+                <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center', justifyContent: 'flex-start', flexWrap: 'wrap' }}>
+                    <button className="btn-ghost btn-sm" onClick={handleExpandAll} title="Expand All"><Maximize2 size={14} /> Expand All</button>
+                    <button className="btn-ghost btn-sm" onClick={handleCollapseAll} title="Collapse All"><Minimize2 size={14} /> Collapse All</button>
+                    {selectedIds.size > 0 && (
+                        <button className="btn-ghost btn-sm" onClick={handleClearSelection} style={{ color: 'var(--error-color)' }} title="Clear Selection">
+                            <Trash2 size={14} /> Clear
+                        </button>
+                    )}
+                </div>
             </div>
 
-            {showTagFilter && activeTags.length > 0 && (
-                <div className="report-tag-panel">
-                    {activeTags.map(group => (
-                        <div key={group.id} className="report-tag-group">
-                            <span className="report-tag-group-label">{group.name}</span>
-                            <div className="report-tag-options">
-                                {group.tags.map(tag => (
+            {/* Advanced Filters Panel */}
+            {showAdvancedFilters && (
+                <div className="report-advanced-filters" style={{ padding: '1rem', backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', marginBottom: '1rem' }}>
+
+                    {activeTags.length > 0 && (
+                        <div className="report-tag-panel" style={{ marginBottom: statusOptions.length > 0 ? '1rem' : 0 }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                                <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)' }}><Tag size={12} style={{ marginRight: 4, display: 'inline' }} /> Tags</span>
+                                {selectedTags.length > 0 && <button className="btn-link btn-sm" style={{ padding: 0 }} onClick={() => setSelectedTags([])}>Clear Tags</button>}
+                            </div>
+
+                            {activeTags.map(group => (
+                                <div key={group.id} className="report-tag-group" style={{ marginBottom: '0.5rem' }}>
+                                    <span className="report-tag-group-label" style={{ fontSize: '0.75rem', marginBottom: '0.25rem', display: 'block' }}>{group.name}</span>
+                                    <div className="report-tag-options" style={{ display: 'flex', flexWrap: 'wrap', gap: '0.25rem' }}>
+                                        {group.tags.map(tag => (
+                                            <button
+                                                key={tag.id}
+                                                className={`exec-tag-pill ${selectedTags.includes(String(tag.id)) ? 'selected' : ''}`}
+                                                onClick={() => toggleTag(String(tag.id))}
+                                                style={{ '--tag-color': tag.color || '#6366f1', padding: '2px 8px', fontSize: '0.75rem' }}
+                                            >
+                                                <span className="exec-tag-dot" style={{ background: tag.color || '#6366f1' }}></span>
+                                                {tag.name}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+
+                    {statusOptions.length > 0 && (
+                        <div className="report-tag-panel">
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                                <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)' }}><Activity size={12} style={{ marginRight: 4, display: 'inline' }} /> Statuses</span>
+                                {selectedStatuses.length > 0 && <button className="btn-link btn-sm" style={{ padding: 0 }} onClick={() => setSelectedStatuses([])}>Clear Statuses</button>}
+                            </div>
+                            <div className="report-tag-options" style={{ display: 'flex', flexWrap: 'wrap', gap: '0.25rem' }}>
+                                {statusOptions.map(status => (
                                     <button
-                                        key={tag.id}
-                                        className={`exec-tag-pill ${selectedTags.includes(String(tag.id)) ? 'selected' : ''}`}
-                                        onClick={() => toggleTag(String(tag.id))}
-                                        style={{ '--tag-color': tag.color || '#6366f1' }}
+                                        key={status.id}
+                                        className={`exec-tag-pill ${selectedStatuses.includes(String(status.id).toLowerCase()) ? 'selected' : ''}`}
+                                        onClick={() => toggleStatus(status.id)}
+                                        style={{ '--tag-color': status.color || '#6366f1', padding: '2px 8px', fontSize: '0.75rem' }}
                                     >
-                                        <span className="exec-tag-dot" style={{ background: tag.color || '#6366f1' }}></span>
-                                        {tag.name}
+                                        <span className="exec-tag-dot" style={{ background: status.color || '#6366f1' }}></span>
+                                        {status.label}
                                     </button>
                                 ))}
                             </div>
                         </div>
-                    ))}
-                </div>
-            )}
-
-            {showStatusFilter && statusOptions.length > 0 && (
-                <div className="report-tag-panel">
-                    <div className="report-tag-group">
-                        <span className="report-tag-group-label">Status</span>
-                        <div className="report-tag-options">
-                            {statusOptions.map(status => (
-                                <button
-                                    key={status.id}
-                                    className={`exec-tag-pill ${selectedStatuses.includes(String(status.id).toLowerCase()) ? 'selected' : ''}`}
-                                    onClick={() => toggleStatus(status.id)}
-                                    style={{ '--tag-color': status.color || '#6366f1' }}
-                                >
-                                    <span className="exec-tag-dot" style={{ background: status.color || '#6366f1' }}></span>
-                                    {status.label}
-                                </button>
-                            ))}
-                        </div>
-                    </div>
+                    )}
                 </div>
             )}
 

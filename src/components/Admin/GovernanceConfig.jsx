@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ClipboardList, Plus, RefreshCw, Save, Search, Settings2, Users } from 'lucide-react';
+import { ClipboardList, Plus, RefreshCw, Save, Search, Settings2, Users, ArrowUp, ArrowDown } from 'lucide-react';
 import { useData } from '../../context/DataContext';
 import { useToast } from '../../context/ToastContext';
 
@@ -81,6 +81,7 @@ export function GovernanceConfig() {
     const [criteriaVersions, setCriteriaVersions] = useState([]);
     const [selectedVersionId, setSelectedVersionId] = useState('');
     const [criteriaDraft, setCriteriaDraft] = useState(cloneCriteria([]));
+    const [configTab, setConfigTab] = useState('settings');
 
     const selectedBoard = useMemo(() => {
         return boards.find(board => String(board.id) === String(selectedBoardId)) || null;
@@ -405,6 +406,21 @@ export function GovernanceConfig() {
         })));
     };
 
+    const moveCriterion = (index, direction) => {
+        if ((index === 0 && direction === -1) || (index === criteriaDraft.length - 1 && direction === 1)) return;
+
+        setCriteriaDraft(prev => {
+            const newArr = [...prev];
+            // Swap items
+            const temp = newArr[index];
+            newArr[index] = newArr[index + direction];
+            newArr[index + direction] = temp;
+
+            // Re-assign sort orders sequentially
+            return newArr.map((item, i) => ({ ...item, sortOrder: i + 1 }));
+        });
+    };
+
     const createDraftFromCurrent = async () => {
         if (!selectedBoardId) return;
         const payload = normalizeCriteriaForSave(criteriaDraft);
@@ -483,154 +499,195 @@ export function GovernanceConfig() {
                     <p>Manage board membership, voting policy, and criteria versions.</p>
                 </div>
                 <button className="btn-secondary" onClick={() => loadAll(true)} disabled={refreshing}>
-                    <RefreshCw size={14} /> {refreshing ? 'Refreshing...' : 'Refresh'}
+                    <RefreshCw size={14} className={refreshing ? 'spin' : ''} /> {refreshing ? 'Refreshing...' : 'Refresh'}
                 </button>
             </div>
 
-            <section className="governance-section">
-                <h4>Global Settings</h4>
-                <div className="governance-grid">
-                    <div className="form-group">
-                        <label>Governance</label>
+            {/* Tab Navigation */}
+            <nav className="governance-tabs">
+                <button
+                    className={`governance-tab ${configTab === 'settings' ? 'active' : ''}`}
+                    onClick={() => setConfigTab('settings')}
+                >
+                    <Settings2 size={15} /> Settings
+                </button>
+                <button
+                    className={`governance-tab ${configTab === 'boards' ? 'active' : ''}`}
+                    onClick={() => setConfigTab('boards')}
+                >
+                    <ClipboardList size={15} /> Boards
+                </button>
+                <button
+                    className={`governance-tab ${configTab === 'members' ? 'active' : ''}`}
+                    onClick={() => selectedBoardId ? setConfigTab('members') : null}
+                    disabled={!selectedBoardId}
+                    title={!selectedBoardId ? 'Select a board first' : ''}
+                >
+                    <Users size={15} /> Members
+                    {members.length > 0 && <span className="governance-tab-badge">{members.length}</span>}
+                </button>
+                <button
+                    className={`governance-tab ${configTab === 'criteria' ? 'active' : ''}`}
+                    onClick={() => selectedBoardId ? setConfigTab('criteria') : null}
+                    disabled={!selectedBoardId}
+                    title={!selectedBoardId ? 'Select a board first' : ''}
+                >
+                    <ClipboardList size={15} /> Criteria
+                    {criteriaVersions.length > 0 && <span className="governance-tab-badge">{criteriaVersions.length}</span>}
+                </button>
+            </nav>
+
+            {/* ─── Settings Tab ─── */}
+            {configTab === 'settings' && (
+                <section className="governance-section">
+                    <h4>Global Settings</h4>
+                    <div className="governance-grid">
+                        <div className="form-group">
+                            <label>Governance</label>
+                            <label className="required-checkbox">
+                                <input
+                                    type="checkbox"
+                                    checked={governanceEnabled}
+                                    onChange={(e) => setGovernanceEnabled(e.target.checked)}
+                                />
+                                Governance enabled globally
+                            </label>
+                        </div>
+                        <div className="form-group">
+                            <label>Voting Window (days, optional)</label>
+                            <input
+                                type="number"
+                                min="1"
+                                max="90"
+                                value={voteWindowDays}
+                                onChange={(e) => setVoteWindowDays(e.target.value)}
+                                placeholder="No deadline"
+                                disabled={!phase3Ready}
+                            />
+                        </div>
+                        <div className="form-group">
+                            <label>Quorum Percent (1-100)</label>
+                            <input
+                                type="number"
+                                min="1"
+                                max="100"
+                                value={quorumPercent}
+                                onChange={(e) => setQuorumPercent(Number(e.target.value))}
+                                disabled={!phase3Ready}
+                            />
+                        </div>
+                        <div className="form-group">
+                            <label>Quorum Minimum Votes</label>
+                            <input
+                                type="number"
+                                min="1"
+                                value={quorumMinCount}
+                                onChange={(e) => setQuorumMinCount(Number(e.target.value))}
+                                disabled={!phase3Ready}
+                            />
+                        </div>
+                    </div>
+                    <div className="governance-inline-row">
                         <label className="required-checkbox">
                             <input
                                 type="checkbox"
-                                checked={governanceEnabled}
-                                onChange={(e) => setGovernanceEnabled(e.target.checked)}
+                                checked={decisionRequiresQuorum}
+                                onChange={(e) => setDecisionRequiresQuorum(e.target.checked)}
+                                disabled={!phase3Ready}
                             />
-                            Governance enabled globally
+                            Require quorum before final decision
                         </label>
+                        <button className="btn-primary" onClick={handleSaveSettings} disabled={settingsSaving}>
+                            <Save size={14} /> {settingsSaving ? 'Saving...' : 'Save Settings'}
+                        </button>
                     </div>
-                    <div className="form-group">
-                        <label>Voting Window (days, optional)</label>
-                        <input
-                            type="number"
-                            min="1"
-                            max="90"
-                            value={voteWindowDays}
-                            onChange={(e) => setVoteWindowDays(e.target.value)}
-                            placeholder="No deadline"
-                            disabled={!phase3Ready}
-                        />
-                    </div>
-                    <div className="form-group">
-                        <label>Quorum Percent (1-100)</label>
-                        <input
-                            type="number"
-                            min="1"
-                            max="100"
-                            value={quorumPercent}
-                            onChange={(e) => setQuorumPercent(Number(e.target.value))}
-                            disabled={!phase3Ready}
-                        />
-                    </div>
-                    <div className="form-group">
-                        <label>Quorum Minimum Votes</label>
-                        <input
-                            type="number"
-                            min="1"
-                            value={quorumMinCount}
-                            onChange={(e) => setQuorumMinCount(Number(e.target.value))}
-                            disabled={!phase3Ready}
-                        />
-                    </div>
-                </div>
-                <div className="governance-inline-row">
-                    <label className="required-checkbox">
-                        <input
-                            type="checkbox"
-                            checked={decisionRequiresQuorum}
-                            onChange={(e) => setDecisionRequiresQuorum(e.target.checked)}
-                            disabled={!phase3Ready}
-                        />
-                        Require quorum before final decision
-                    </label>
-                    <button className="btn-primary" onClick={handleSaveSettings} disabled={settingsSaving}>
-                        <Save size={14} /> {settingsSaving ? 'Saving...' : 'Save Settings'}
-                    </button>
-                </div>
-                {!phase3Ready && (
-                    <p className="governance-alert">
-                        Phase 3 schema is not installed yet. Run `npm run migrate:governance:phase2` in `server`.
-                    </p>
-                )}
-            </section>
+                    {!phase3Ready && (
+                        <p className="governance-alert">
+                            Phase 3 schema is not installed yet. Run `npm run migrate:governance:phase2` in `server`.
+                        </p>
+                    )}
+                </section>
+            )}
 
-            <section className="governance-section">
-                <h4>Boards</h4>
-                <div className="governance-grid">
-                    <div className="form-group">
-                        <label>Select Board</label>
-                        <select value={selectedBoardId} onChange={(e) => setSelectedBoardId(e.target.value)}>
-                            <option value="">No boards yet</option>
-                            {boards.map(board => (
-                                <option key={board.id} value={board.id}>
-                                    {board.name} {board.isActive ? '' : '(Inactive)'}
-                                </option>
-                            ))}
-                        </select>
+            {/* ─── Boards Tab ─── */}
+            {configTab === 'boards' && (
+                <section className="governance-section">
+                    <h4>Governance Boards</h4>
+                    <div className="governance-grid">
+                        <div className="form-group">
+                            <label>Select Board</label>
+                            <select value={selectedBoardId} onChange={(e) => setSelectedBoardId(e.target.value)}>
+                                <option value="">No boards yet</option>
+                                {boards.map(board => (
+                                    <option key={board.id} value={board.id}>
+                                        {board.name} {board.isActive ? '' : '(Inactive)'}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                        <div className="form-group">
+                            <label>New Board Name</label>
+                            <input
+                                type="text"
+                                value={newBoardName}
+                                onChange={(e) => setNewBoardName(e.target.value)}
+                                placeholder="e.g., Clinical Governance Board"
+                            />
+                        </div>
                     </div>
-                    <div className="form-group">
-                        <label>New Board Name</label>
-                        <input
-                            type="text"
-                            value={newBoardName}
-                            onChange={(e) => setNewBoardName(e.target.value)}
-                            placeholder="e.g., Clinical Governance Board"
-                        />
+                    <div className="governance-inline-row">
+                        <label className="required-checkbox">
+                            <input
+                                type="checkbox"
+                                checked={newBoardActive}
+                                onChange={(e) => setNewBoardActive(e.target.checked)}
+                            />
+                            New board active
+                        </label>
+                        <button className="btn-secondary" onClick={handleCreateBoard} disabled={boardSaving}>
+                            <Plus size={14} /> Create Board
+                        </button>
                     </div>
-                </div>
-                <div className="governance-inline-row">
-                    <label className="required-checkbox">
-                        <input
-                            type="checkbox"
-                            checked={newBoardActive}
-                            onChange={(e) => setNewBoardActive(e.target.checked)}
-                        />
-                        New board active
-                    </label>
-                    <button className="btn-secondary" onClick={handleCreateBoard} disabled={boardSaving}>
-                        <Plus size={14} /> Create Board
-                    </button>
-                </div>
 
-                {selectedBoard && (
-                    <div className="governance-subcard">
-                        <h5>Edit Selected Board</h5>
-                        <div className="governance-grid">
-                            <div className="form-group">
-                                <label>Board Name</label>
-                                <input
-                                    type="text"
-                                    value={selectedBoardName}
-                                    onChange={(e) => setSelectedBoardName(e.target.value)}
-                                />
-                            </div>
-                            <div className="form-group">
-                                <label>Status</label>
-                                <label className="required-checkbox">
+                    {selectedBoard && (
+                        <div className="governance-subcard">
+                            <h5>Edit Selected Board</h5>
+                            <div className="governance-grid">
+                                <div className="form-group">
+                                    <label>Board Name</label>
                                     <input
-                                        type="checkbox"
-                                        checked={selectedBoardActive}
-                                        onChange={(e) => setSelectedBoardActive(e.target.checked)}
+                                        type="text"
+                                        value={selectedBoardName}
+                                        onChange={(e) => setSelectedBoardName(e.target.value)}
                                     />
-                                    Board is active
-                                </label>
+                                </div>
+                                <div className="form-group">
+                                    <label>Status</label>
+                                    <label className="required-checkbox">
+                                        <input
+                                            type="checkbox"
+                                            checked={selectedBoardActive}
+                                            onChange={(e) => setSelectedBoardActive(e.target.checked)}
+                                        />
+                                        Board is active
+                                    </label>
+                                </div>
+                            </div>
+                            <div className="form-actions">
+                                <button className="btn-primary" onClick={handleUpdateBoard} disabled={boardSaving}>
+                                    <Save size={14} /> Save Board
+                                </button>
                             </div>
                         </div>
-                        <div className="form-actions">
-                            <button className="btn-primary" onClick={handleUpdateBoard} disabled={boardSaving}>
-                                <Save size={14} /> Save Board
-                            </button>
-                        </div>
-                    </div>
-                )}
-            </section>
+                    )}
+                </section>
+            )}
 
-            {selectedBoardId && (
-                <>
+            {/* ─── Members Tab ─── */}
+            {configTab === 'members' && (
+                selectedBoardId ? (
                     <section className="governance-section">
-                        <h4><Users size={16} /> Board Members</h4>
+                        <h4><Users size={16} /> Board Members — {selectedBoard?.name || 'Board'}</h4>
                         <div className="governance-grid">
                             <div className="form-group governance-user-field">
                                 <label>User (from Users table)</label>
@@ -738,9 +795,19 @@ export function GovernanceConfig() {
                             </table>
                         </div>
                     </section>
+                ) : (
+                    <div className="governance-empty-tab">
+                        <Users size={32} />
+                        <p>Select a board on the <strong>Boards</strong> tab to manage its members.</p>
+                    </div>
+                )
+            )}
 
+            {/* ─── Criteria Tab ─── */}
+            {configTab === 'criteria' && (
+                selectedBoardId ? (
                     <section className="governance-section governance-criteria-section">
-                        <h4><ClipboardList size={16} /> Criteria Versions</h4>
+                        <h4><ClipboardList size={16} /> Criteria Versions — {selectedBoard?.name || 'Board'}</h4>
                         <div className="governance-grid">
                             <div className="form-group">
                                 <label>Version</label>
@@ -821,15 +888,27 @@ export function GovernanceConfig() {
                                                 </label>
                                             </td>
                                             <td>
-                                                <input
-                                                    type="number"
-                                                    min="1"
-                                                    value={criterion.sortOrder}
-                                                    onChange={(e) => handleUpdateCriterion(index, { sortOrder: Number(e.target.value) || index + 1 })}
-                                                />
+                                                <div style={{ display: 'flex', gap: '0.25rem' }}>
+                                                    <button
+                                                        className="btn-icon"
+                                                        onClick={() => moveCriterion(index, -1)}
+                                                        disabled={index === 0}
+                                                        title="Move Up"
+                                                    >
+                                                        <ArrowUp size={14} />
+                                                    </button>
+                                                    <button
+                                                        className="btn-icon"
+                                                        onClick={() => moveCriterion(index, 1)}
+                                                        disabled={index === criteriaDraft.length - 1}
+                                                        title="Move Down"
+                                                    >
+                                                        <ArrowDown size={14} />
+                                                    </button>
+                                                </div>
                                             </td>
                                             <td>
-                                                <button className="btn-secondary" onClick={() => handleRemoveCriterion(index)}>
+                                                <button className="btn-icon danger" onClick={() => handleRemoveCriterion(index)}>
                                                     Remove
                                                 </button>
                                             </td>
@@ -844,7 +923,12 @@ export function GovernanceConfig() {
                             </button>
                         </div>
                     </section>
-                </>
+                ) : (
+                    <div className="governance-empty-tab">
+                        <ClipboardList size={32} />
+                        <p>Select a board on the <strong>Boards</strong> tab to manage its criteria.</p>
+                    </div>
+                )
             )}
         </div>
     );

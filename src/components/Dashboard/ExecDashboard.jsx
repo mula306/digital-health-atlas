@@ -329,23 +329,18 @@ export function ExecDashboard() {
         const sourceProjects = allProjects.length > 0 ? allProjects : projects;
 
         // 1. Filter projects based on selected goal (and descendants)
-        // Mimics logic from KanbanView.jsx
         // 1a. Filter by goal
         let filteredProjects = sourceProjects;
 
         if (selectedGoalId) {
             const descendantIds = getDescendantGoalIds(goals, selectedGoalId);
-            // Normalize IDs to strings for comparison to avoid mismatches
             const targetIds = [selectedGoalId, ...descendantIds].map(id => String(id));
 
-            console.log(`Filtering: Selected ${selectedGoalId}, Found ${descendantIds.length} descendants.`);
-
             filteredProjects = sourceProjects.filter(p => {
-                if (!p.goalId) return false;
-                return targetIds.includes(String(p.goalId));
+                const pGoalIds = (p.goalIds || (p.goalId ? [p.goalId] : [])).map(String);
+                if (pGoalIds.length === 0) return false;
+                return pGoalIds.some(gid => targetIds.includes(gid));
             });
-
-            console.log(`Filtering Result: ${filteredProjects.length} / ${sourceProjects.length} projects match.`);
         }
 
         // 1b. Filter by selected tags (AND logic — project must have ALL selected tags)
@@ -359,8 +354,7 @@ export function ExecDashboard() {
 
         // 2. Process and Map
         const mapped = filteredProjects.map(p => {
-            const h = getProjectHierarchy(goals, p.goalId);
-            // Use pre-fetched report if available, otherwise try context
+            const h = getProjectHierarchy(goals, p.goalId || (p.goalIds && p.goalIds[0]) || null);
             const report = p.report || getLatestStatusReport(p.id);
             return {
                 id: p.id,

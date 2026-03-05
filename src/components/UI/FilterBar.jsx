@@ -1,12 +1,12 @@
 import { useState, useMemo } from 'react';
 import { useData } from '../../context/DataContext';
 import { CascadingGoalFilter } from './CascadingGoalFilter';
-import { Tag, Activity, X } from 'lucide-react';
+import { Tag, Activity, X, Filter } from 'lucide-react';
 import './FilterBar.css';
 
 /**
  * Shared FilterBar used across Dashboard, Goals, Projects, Metrics views.
- * Matches the ExecDashboard filter style: CascadingGoalFilter + Tag toggle + Clear All + count.
+ * Matches the Advanced filter style: CascadingGoalFilter + Filters accordion + Clear All + count.
  *
  * Props:
  *  - goalFilter: string (selected goal id)
@@ -31,8 +31,7 @@ export function FilterBar({
     children
 }) {
     const { tagGroups } = useData();
-    const [showTagFilter, setShowTagFilter] = useState(false);
-    const [showStatusFilter, setShowStatusFilter] = useState(false);
+    const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
 
     // Get only active tags grouped for the filter UI
     const activeTags = useMemo(() => {
@@ -75,23 +74,16 @@ export function FilterBar({
             <div className="shared-filter-row">
                 <CascadingGoalFilter value={goalFilter} onChange={onGoalFilterChange} />
 
-                {activeTags.length > 0 && (
+                {(activeTags.length > 0 || (statusOptions && statusOptions.length > 0)) && (
                     <button
-                        className={`btn-secondary btn-sm shared-tag-toggle ${showTagFilter ? 'active' : ''} ${selectedTags.length > 0 ? 'has-selection' : ''}`}
-                        onClick={() => setShowTagFilter(!showTagFilter)}
+                        className={`btn-secondary btn-sm shared-tag-toggle ${showAdvancedFilters ? 'active' : ''}`}
+                        onClick={() => setShowAdvancedFilters(!showAdvancedFilters)}
+                        title="Advanced Filters"
                     >
-                        <Tag size={14} />
-                        Tags{selectedTags.length > 0 && <span className="shared-tag-count">{selectedTags.length}</span>}
-                    </button>
-                )}
-
-                {statusOptions.length > 0 && onStatusesChange && (
-                    <button
-                        className={`btn-secondary btn-sm shared-tag-toggle ${showStatusFilter ? 'active' : ''} ${selectedStatuses.length > 0 ? 'has-selection' : ''}`}
-                        onClick={() => setShowStatusFilter(!showStatusFilter)}
-                    >
-                        <Activity size={14} />
-                        Status{selectedStatuses.length > 0 && <span className="shared-tag-count">{selectedStatuses.length}</span>}
+                        <Filter size={14} /> Filters
+                        {(selectedTags.length > 0 || selectedStatuses.length > 0) && (
+                            <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--accent-primary)', display: 'inline-block', marginLeft: '0.25rem' }} />
+                        )}
                     </button>
                 )}
 
@@ -108,47 +100,59 @@ export function FilterBar({
                 )}
             </div>
 
-            {showTagFilter && activeTags.length > 0 && (
-                <div className="shared-tag-panel">
-                    {activeTags.map(group => (
-                        <div key={group.id} className="exec-tag-group">
-                            <span className="exec-tag-group-label">{group.name}</span>
+            {/* Advanced Filters Panel */}
+            {showAdvancedFilters && (
+                <div className="shared-advanced-filters">
+
+                    {activeTags.length > 0 && (
+                        <div className="shared-tag-panel" style={{ borderTop: 'none', paddingTop: 0, paddingBottom: statusOptions.length > 0 ? '1rem' : 0, borderBottom: statusOptions.length > 0 ? '1px solid var(--border-color)' : 'none', marginBottom: statusOptions.length > 0 ? '1rem' : 0 }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+                                <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)' }}><Tag size={12} style={{ marginRight: 4, display: 'inline-flex', verticalAlign: 'middle', marginBottom: '2px' }} /> Tags</span>
+                                {selectedTags.length > 0 && <button className="shared-clear-link" onClick={() => onTagsChange && onTagsChange([])}>Clear Tags</button>}
+                            </div>
+
+                            {activeTags.map(group => (
+                                <div key={group.id} className="exec-tag-group" style={{ marginBottom: '0.5rem' }}>
+                                    <span className="exec-tag-group-label" style={{ fontSize: '0.75rem', marginBottom: '0.25rem', display: 'block' }}>{group.name}</span>
+                                    <div className="exec-tag-options">
+                                        {group.tags.map(tag => (
+                                            <button
+                                                key={tag.id}
+                                                className={`exec-tag-pill ${selectedTags.includes(String(tag.id)) ? 'selected' : ''}`}
+                                                onClick={() => toggleTag(String(tag.id))}
+                                                style={{ '--tag-color': tag.color || '#6366f1' }}
+                                            >
+                                                <span className="exec-tag-dot" style={{ background: tag.color || '#6366f1' }}></span>
+                                                {tag.name}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+
+                    {statusOptions.length > 0 && (
+                        <div className="shared-tag-panel" style={{ borderTop: 'none', paddingTop: 0 }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+                                <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)' }}><Activity size={12} style={{ marginRight: 4, display: 'inline-flex', verticalAlign: 'middle', marginBottom: '2px' }} /> Statuses</span>
+                                {selectedStatuses.length > 0 && <button className="shared-clear-link" onClick={() => onStatusesChange && onStatusesChange([])}>Clear Statuses</button>}
+                            </div>
                             <div className="exec-tag-options">
-                                {group.tags.map(tag => (
+                                {statusOptions.map(status => (
                                     <button
-                                        key={tag.id}
-                                        className={`exec-tag-pill ${selectedTags.includes(String(tag.id)) ? 'selected' : ''}`}
-                                        onClick={() => toggleTag(String(tag.id))}
-                                        style={{ '--tag-color': tag.color || '#6366f1' }}
+                                        key={status.id}
+                                        className={`exec-tag-pill ${selectedStatuses.includes(String(status.id).toLowerCase()) ? 'selected' : ''}`}
+                                        onClick={() => toggleStatus(status.id)}
+                                        style={{ '--tag-color': status.color || '#6366f1' }}
                                     >
-                                        <span className="exec-tag-dot" style={{ background: tag.color || '#6366f1' }}></span>
-                                        {tag.name}
+                                        <span className="exec-tag-dot" style={{ background: status.color || '#6366f1' }}></span>
+                                        {status.label}
                                     </button>
                                 ))}
                             </div>
                         </div>
-                    ))}
-                </div>
-            )}
-
-            {showStatusFilter && statusOptions.length > 0 && (
-                <div className="shared-tag-panel">
-                    <div className="exec-tag-group">
-                        <span className="exec-tag-group-label">Status</span>
-                        <div className="exec-tag-options">
-                            {statusOptions.map(status => (
-                                <button
-                                    key={status.id}
-                                    className={`exec-tag-pill ${selectedStatuses.includes(String(status.id).toLowerCase()) ? 'selected' : ''}`}
-                                    onClick={() => toggleStatus(status.id)}
-                                    style={{ '--tag-color': status.color || '#6366f1' }}
-                                >
-                                    <span className="exec-tag-dot" style={{ background: status.color || '#6366f1' }}></span>
-                                    {status.label}
-                                </button>
-                            ))}
-                        </div>
-                    </div>
+                    )}
                 </div>
             )}
         </div>

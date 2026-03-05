@@ -3,9 +3,9 @@
  * Single source of truth for the API base URL and common fetch helpers.
  */
 
-// Protocol-safe: respects https in production, falls back to current host on port 3001
-export const API_BASE = import.meta.env.VITE_API_URL
-    || `${window.location.protocol}//${window.location.hostname}:3001/api`;
+// Protocol-safe: uses relative path to let Vite dev server proxy handle it,
+// avoiding Mixed Content (HTTPS -> HTTP) blockers.
+export const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
 export class ApiError extends Error {
     constructor(status, message, data) {

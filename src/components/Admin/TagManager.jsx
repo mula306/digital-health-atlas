@@ -8,6 +8,46 @@ import {
 import { Modal } from '../UI/Modal'; // Import Modal
 import './TagManager.css';
 
+// Predefined accessible, brand-aligned color palette
+const TAG_COLORS = [
+    '#6366f1', // Indigo
+    '#10b981', // Emerald
+    '#f59e0b', // Amber
+    '#ef4444', // Rose
+    '#06b6d4', // Cyan
+    '#8b5cf6', // Violet
+    '#ec4899', // Pink
+    '#64748b'  // Slate
+];
+
+// Simple color swatch picker
+function ColorPalettePicker({ value, onChange }) {
+    return (
+        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+            {TAG_COLORS.map(color => (
+                <button
+                    key={color}
+                    type="button"
+                    onClick={() => onChange(color)}
+                    style={{
+                        width: '24px',
+                        height: '24px',
+                        borderRadius: '50%',
+                        backgroundColor: color,
+                        border: value === color ? '2px solid var(--text-primary)' : '2px solid transparent',
+                        padding: 0,
+                        cursor: 'pointer',
+                        boxShadow: value === color ? '0 0 0 2px var(--bg-card) inset' : 'none',
+                        transition: 'transform 0.1s',
+                        transform: value === color ? 'scale(1.1)' : 'scale(1)',
+                    }}
+                    title={color}
+                />
+            ))}
+        </div>
+    );
+}
+
 export function TagManager() {
     const {
         tagGroups, addTagGroup, updateTagGroup, deleteTagGroup,
@@ -285,12 +325,10 @@ export function TagManager() {
                                 {editingTag === `new-${group.id}` && (
                                     <div className="tag-form-card inline">
                                         <div className="tag-form-fields">
-                                            <div className="tag-form-row">
-                                                <input
-                                                    type="color"
+                                            <div className="tag-form-row" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '0.5rem' }}>
+                                                <ColorPalettePicker
                                                     value={tagForm.color}
-                                                    onChange={e => setTagForm(prev => ({ ...prev, color: e.target.value }))}
-                                                    className="color-picker"
+                                                    onChange={(color) => setTagForm(prev => ({ ...prev, color }))}
                                                 />
                                                 <input
                                                     type="text"
@@ -331,12 +369,10 @@ export function TagManager() {
                                         {editingTag === tag.id ? (
                                             <div className="tag-form-card inline">
                                                 <div className="tag-form-fields">
-                                                    <div className="tag-form-row">
-                                                        <input
-                                                            type="color"
+                                                    <div className="tag-form-row" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '0.5rem' }}>
+                                                        <ColorPalettePicker
                                                             value={tagForm.color}
-                                                            onChange={e => setTagForm(prev => ({ ...prev, color: e.target.value }))}
-                                                            className="color-picker"
+                                                            onChange={(color) => setTagForm(prev => ({ ...prev, color }))}
                                                         />
                                                         <input
                                                             type="text"

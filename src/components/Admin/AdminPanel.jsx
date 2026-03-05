@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { useData } from '../../context/DataContext';
-import { Save, Shield, AlertTriangle, RefreshCw, Tag, Activity, Scale } from 'lucide-react';
+import { Save, Shield, AlertTriangle, RefreshCw, Tag, Activity, Scale, Building2 } from 'lucide-react';
 import { useToast } from '../../context/ToastContext';
 import { TagManager } from './TagManager';
 import { AuditLogView } from './AuditLogView';
 import { GovernanceConfig } from './GovernanceConfig';
+import { OrganizationManager } from './OrganizationManager';
 import './AdminPanel.css';
 
 export function AdminPanel() {
@@ -118,6 +119,63 @@ export function AdminPanel() {
         });
     };
 
+    const toggleAllForRole = (role) => {
+        // Find all unique known permission keys across all categories
+        const allKeys = permissionGroups.flatMap(g => g.items.map(i => i.key));
+
+        // Are all of them currently allowed for this role?
+        const allAllowed = allKeys.every(k => isAllowed(role, k));
+
+        // Set target state to the opposite of allAllowed
+        const targetState = !allAllowed;
+
+        setLocalPermissions(prev => {
+            const newPerms = [...prev];
+            allKeys.forEach(key => {
+                const existingIndex = newPerms.findIndex(p => p.role === role && p.permission === key);
+                if (existingIndex >= 0) {
+                    newPerms[existingIndex] = { ...newPerms[existingIndex], isAllowed: targetState };
+                } else if (targetState) {
+                    newPerms.push({ role, permission: key, isAllowed: targetState });
+                }
+            });
+            return newPerms;
+        });
+    };
+
+    const toggleAllForCategory = (group) => {
+        const keys = group.items.map(i => i.key);
+
+        // Check if every role has every permission in this category enabled
+        let allAllowed = true;
+        for (const role of targetRoles) {
+            for (const key of keys) {
+                if (!isAllowed(role, key)) {
+                    allAllowed = false;
+                    break;
+                }
+            }
+            if (!allAllowed) break;
+        }
+
+        const targetState = !allAllowed;
+
+        setLocalPermissions(prev => {
+            const newPerms = [...prev];
+            for (const role of targetRoles) {
+                for (const key of keys) {
+                    const existingIndex = newPerms.findIndex(p => p.role === role && p.permission === key);
+                    if (existingIndex >= 0) {
+                        newPerms[existingIndex] = { ...newPerms[existingIndex], isAllowed: targetState };
+                    } else if (targetState) {
+                        newPerms.push({ role, permission: key, isAllowed: targetState });
+                    }
+                }
+            }
+            return newPerms;
+        });
+    };
+
     const saveChanges = async () => {
         setSaving(true);
         try {
@@ -149,103 +207,148 @@ export function AdminPanel() {
 
     return (
         <div className="admin-panel">
-            {activeTab === 'permissions' && (
-                <header className="admin-header actions-only">
+            <header className="admin-header">
+                <div>
+                    <h1>System Administration</h1>
+                    <p>Manage users, organizational structure, tags, and system settings.</p>
+                </div>
+                {activeTab === 'permissions' && (
                     <button className="btn-primary" onClick={saveChanges} disabled={saving}>
                         {saving ? <RefreshCw className="spin" size={18} /> : <Save size={18} />}
                         Apply Changes
                     </button>
-                </header>
-            )}
-
-            <div className="admin-tabs">
-                <button
-                    className={`admin-tab ${activeTab === 'permissions' ? 'active' : ''}`}
-                    onClick={() => setActiveTab('permissions')}
-                >
-                    <Shield size={16} /> Role Permissions
-                </button>
-                <button
-                    className={`admin-tab ${activeTab === 'tags' ? 'active' : ''}`}
-                    onClick={() => setActiveTab('tags')}
-                >
-                    <Tag size={16} /> Tag Management
-                </button>
-                <button
-                    className={`admin-tab ${activeTab === 'audit-log' ? 'active' : ''}`}
-                    onClick={() => setActiveTab('audit-log')}
-                >
-                    <Activity size={16} /> Audit Log
-                </button>
-                {canManageGovernance && (
-                    <button
-                        className={`admin-tab ${activeTab === 'governance' ? 'active' : ''}`}
-                        onClick={() => setActiveTab('governance')}
-                    >
-                        <Scale size={16} /> Governance
-                    </button>
                 )}
-            </div>
+            </header>
 
-            {activeTab === 'permissions' && (
-                <div className="admin-content glass">
-                    <table className="permissions-table">
-                        <thead>
-                            <tr>
-                                <th>Permission</th>
-                                <th>Editor</th>
-                                <th>Viewer</th>
-                                <th>Intake Manager</th>
-                                <th>Exec View</th>
-                                <th>Intake Submit</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {permissionGroups.map(group => (
-                                <React.Fragment key={group.category}>
-                                    <tr className="category-row">
-                                        <td colSpan={targetRoles.length + 1}>{group.category}</td>
-                                    </tr>
-                                    {group.items.map(item => (
-                                        <tr key={item.key}>
-                                            <td className="perm-label">{item.label}</td>
-                                            {targetRoles.map(role => (
-                                                <td key={role} className="chk-cell">
-                                                    <label className="switch">
-                                                        <input
-                                                            type="checkbox"
-                                                            checked={isAllowed(role, item.key)}
-                                                            onChange={() => handleToggle(role, item.key)}
-                                                        />
-                                                        <span className="slider round"></span>
-                                                    </label>
-                                                </td>
-                                            ))}
-                                        </tr>
-                                    ))}
-                                </React.Fragment>
-                            ))}
-                        </tbody>
-                    </table>
-
-                    <div className="admin-note">
-                        <AlertTriangle size={16} />
-                        <span>Note: <strong>Admins</strong> have full access to all features by default. Changes here apply to all users with the selected roles. Changes require a page reload to take effect for current users.</span>
-                    </div>
+            <div className="admin-layout">
+                {/* Vertical Sidebar */}
+                <div className="admin-sidebar">
+                    <button
+                        className={`admin-tab ${activeTab === 'permissions' ? 'active' : ''}`}
+                        onClick={() => setActiveTab('permissions')}
+                    >
+                        <Shield size={16} /> Role Permissions
+                    </button>
+                    <button
+                        className={`admin-tab ${activeTab === 'tags' ? 'active' : ''}`}
+                        onClick={() => setActiveTab('tags')}
+                    >
+                        <Tag size={16} /> Tag Management
+                    </button>
+                    <button
+                        className={`admin-tab ${activeTab === 'audit-log' ? 'active' : ''}`}
+                        onClick={() => setActiveTab('audit-log')}
+                    >
+                        <Activity size={16} /> Audit Log
+                    </button>
+                    {canManageGovernance && (
+                        <button
+                            className={`admin-tab ${activeTab === 'governance' ? 'active' : ''}`}
+                            onClick={() => setActiveTab('governance')}
+                        >
+                            <Scale size={16} /> Governance
+                        </button>
+                    )}
+                    <button
+                        className={`admin-tab ${activeTab === 'organizations' ? 'active' : ''}`}
+                        onClick={() => setActiveTab('organizations')}
+                    >
+                        <Building2 size={16} /> Organizations
+                    </button>
                 </div>
-            )}
 
-            {activeTab === 'tags' && (
-                <TagManager />
-            )}
+                {/* Main Content Area */}
+                <div className="admin-content-area">
 
-            {activeTab === 'audit-log' && (
-                <AuditLogView />
-            )}
+                    {activeTab === 'permissions' && (
+                        <div className="admin-content glass">
+                            <table className="permissions-table">
+                                <thead>
+                                    <tr>
+                                        <th>Permission</th>
+                                        {targetRoles.map(role => (
+                                            <th key={role}>
+                                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.25rem' }}>
+                                                    <span>{role === 'ExecView' ? 'Exec View' : role === 'IntakeSubmit' ? 'Intake Submit' : role === 'IntakeManager' ? 'Intake Manager' : role}</span>
+                                                    <button
+                                                        className="btn-ghost"
+                                                        style={{ fontSize: '0.7rem', padding: '0.1rem 0.4rem', color: 'var(--text-tertiary)' }}
+                                                        onClick={() => toggleAllForRole(role)}
+                                                        title={`Toggle all for ${role}`}
+                                                    >
+                                                        Toggle All
+                                                    </button>
+                                                </div>
+                                            </th>
+                                        ))}
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {permissionGroups.map(group => (
+                                        <React.Fragment key={group.category}>
+                                            <tr className="category-row">
+                                                <td>
+                                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                                        <span>{group.category}</span>
+                                                        <button
+                                                            className="btn-ghost"
+                                                            style={{ fontSize: '0.7rem', padding: '0.1rem 0.4rem', color: 'var(--text-tertiary)', textTransform: 'none', letterSpacing: 'normal' }}
+                                                            onClick={() => toggleAllForCategory(group)}
+                                                            title={`Toggle all for ${group.category}`}
+                                                        >
+                                                            Toggle All Row
+                                                        </button>
+                                                    </div>
+                                                </td>
+                                                <td colSpan={targetRoles.length}></td>
+                                            </tr>
+                                            {group.items.map(item => (
+                                                <tr key={item.key} className="permission-item-row" style={{ transition: 'background-color 0.2s', ':hover': { backgroundColor: 'var(--bg-secondary)' } }}>
+                                                    <td className="perm-label">{item.label}</td>
+                                                    {targetRoles.map(role => (
+                                                        <td key={role} className="chk-cell">
+                                                            <label className="switch">
+                                                                <input
+                                                                    type="checkbox"
+                                                                    checked={isAllowed(role, item.key)}
+                                                                    onChange={() => handleToggle(role, item.key)}
+                                                                />
+                                                                <span className="slider round"></span>
+                                                            </label>
+                                                        </td>
+                                                    ))}
+                                                </tr>
+                                            ))}
+                                        </React.Fragment>
+                                    ))}
+                                </tbody>
+                            </table>
 
-            {activeTab === 'governance' && canManageGovernance && (
-                <GovernanceConfig />
-            )}
+                            <div className="admin-note">
+                                <AlertTriangle size={16} />
+                                <span>Note: <strong>Admins</strong> have full access to all features by default. Changes here apply to all users with the selected roles. Changes require a page reload to take effect for current users.</span>
+                            </div>
+                        </div>
+                    )}
+
+                    {activeTab === 'tags' && (
+                        <TagManager />
+                    )}
+
+                    {activeTab === 'audit-log' && (
+                        <AuditLogView />
+                    )}
+
+                    {activeTab === 'governance' && canManageGovernance && (
+                        <GovernanceConfig />
+                    )}
+
+                    {activeTab === 'organizations' && (
+                        <OrganizationManager />
+                    )}
+
+                </div> {/* End .admin-content-area */}
+            </div> {/* End .admin-layout */}
         </div>
     );
 }

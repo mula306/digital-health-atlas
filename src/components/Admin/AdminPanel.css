@@ -158,6 +158,82 @@ input:checked+.slider:before {
     animation: spin 1s linear infinite;
 }
 
+.admin-layout {
+    display: flex;
+    gap: 2rem;
+    align-items: flex-start;
+}
+
+.admin-sidebar {
+    width: 240px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    background: var(--bg-card);
+    padding: 1rem;
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border-color);
+    box-shadow: var(--shadow-sm);
+    position: sticky;
+    top: 1rem;
+}
+
+.admin-content-area {
+    flex: 1;
+    min-width: 0;
+}
+
+.admin-tab {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 0.95rem;
+    font-weight: 500;
+    cursor: pointer;
+    border-radius: var(--radius-md);
+    transition: all 0.2s;
+    text-align: left;
+}
+
+.admin-tab:hover {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+}
+
+.admin-tab.active {
+    background: hsla(var(--hue-indigo), 60%, 50%, 0.1);
+    color: var(--accent-primary);
+    font-weight: 600;
+}
+
+.admin-tab svg {
+    flex-shrink: 0;
+}
+
+@media (max-width: 768px) {
+    .admin-layout {
+        flex-direction: column;
+    }
+
+    .admin-sidebar {
+        width: 100%;
+        position: static;
+        flex-direction: row;
+        overflow-x: auto;
+        padding: 0.5rem;
+    }
+
+    .admin-tab {
+        white-space: nowrap;
+        padding: 0.5rem 0.75rem;
+    }
+}
+
 .governance-config {
     display: flex;
     flex-direction: column;
@@ -460,5 +536,301 @@ input:checked+.slider:before {
 
     to {
         transform: rotate(360deg);
+    }
+}
+
+/* Governance Tab Navigation */
+.governance-tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 2px solid var(--border-color);
+    margin-bottom: 0;
+}
+
+.governance-tab {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.7rem 1.2rem;
+    background: transparent;
+    border: none;
+    color: var(--text-tertiary);
+    font-size: 0.85rem;
+    font-weight: 500;
+    cursor: pointer;
+    position: relative;
+    transition: color 0.2s, background 0.2s;
+    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+}
+
+.governance-tab:hover:not(:disabled) {
+    color: var(--text-primary);
+    background: var(--bg-secondary);
+}
+
+.governance-tab.active {
+    color: var(--accent-primary);
+    font-weight: 600;
+}
+
+.governance-tab.active::after {
+    content: '';
+    position: absolute;
+    bottom: -2px;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: var(--accent-primary);
+}
+
+.governance-tab:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.governance-tab-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 9px;
+    background: var(--accent-primary);
+    color: white;
+    font-size: 0.65rem;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.governance-empty-tab {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.75rem;
+    padding: 3rem 2rem;
+    color: var(--text-tertiary);
+    text-align: center;
+}
+
+.governance-empty-tab p {
+    font-size: 0.9rem;
+    margin: 0;
+}
+
+/* Governance Modal Panels (IntakeRequestsList) */
+.governance-summary-bar {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 0.5rem;
+    padding: 0.75rem;
+    background: var(--bg-secondary);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-color);
+    font-size: 0.82rem;
+}
+
+.governance-summary-item {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+}
+
+.governance-summary-item strong {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-tertiary);
+    font-weight: 600;
+}
+
+.governance-summary-item span {
+    color: var(--text-primary);
+    font-weight: 500;
+}
+
+.governance-panel {
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    margin-top: 0.5rem;
+}
+
+.governance-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.6rem 0.75rem;
+    background: var(--bg-secondary);
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.15s;
+    border: none;
+    width: 100%;
+    text-align: left;
+    color: var(--text-primary);
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.governance-panel-header:hover {
+    background: var(--bg-tertiary, var(--bg-secondary));
+}
+
+.governance-panel-header .panel-title {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.governance-panel-header .panel-toggle {
+    font-size: 0.7rem;
+    color: var(--text-tertiary);
+    transition: transform 0.2s;
+}
+
+.governance-panel-header .panel-toggle.open {
+    transform: rotate(180deg);
+}
+
+.governance-panel-content {
+    padding: 0.75rem;
+}
+
+.governance-action-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-top: 0.5rem;
+}
+
+.governance-quorum-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    margin-bottom: 0.5rem;
+}
+
+.governance-quorum-track {
+    flex: 1;
+    height: 6px;
+    background: var(--border-color);
+    border-radius: 3px;
+    overflow: hidden;
+    min-width: 60px;
+    max-width: 180px;
+}
+
+.governance-quorum-fill {
+    height: 100%;
+    border-radius: 3px;
+    background: var(--accent-primary);
+    transition: width 0.3s ease;
+}
+
+.governance-quorum-fill.met {
+    background: #10b981;
+}
+
+.governance-vote-card {
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 0.5rem;
+    font-size: 0.82rem;
+}
+
+.governance-vote-card+.governance-vote-card {
+    margin-top: 0.4rem;
+}
+
+.governance-vote-meta {
+    color: var(--text-tertiary);
+    font-size: 0.75rem;
+}
+
+.governance-vote-comment {
+    margin-top: 0.2rem;
+    color: var(--text-primary);
+}
+
+.governance-vote-conflict {
+    margin-top: 0.2rem;
+    font-size: 0.72rem;
+    color: #b45309;
+}
+
+.governance-warning {
+    font-size: 0.78rem;
+    color: #b45309;
+    margin-top: 0.5rem;
+}
+
+.governance-error {
+    font-size: 0.8rem;
+    color: #b91c1c;
+    margin-bottom: 0.5rem;
+}
+
+.governance-loading {
+    font-size: 0.8rem;
+    color: var(--text-tertiary);
+    margin-bottom: 0.5rem;
+}
+
+.governance-decided-note {
+    font-size: 0.85rem;
+    color: var(--text-tertiary);
+}
+
+.governance-deadline {
+    font-size: 0.78rem;
+    margin-bottom: 0.5rem;
+}
+
+.governance-deadline.passed {
+    color: #b91c1c;
+}
+
+.governance-deadline:not(.passed) {
+    color: var(--text-tertiary);
+}
+
+.status-badge.governance-not-started {
+    background: rgba(107, 114, 128, 0.1);
+    color: #6b7280;
+}
+
+.status-badge.governance-in-review {
+    background: rgba(59, 130, 246, 0.1);
+    color: #3b82f6;
+}
+
+.status-badge.governance-decided {
+    background: rgba(16, 185, 129, 0.1);
+    color: #10b981;
+}
+
+.status-badge.governance-skipped {
+    background: rgba(245, 158, 11, 0.1);
+    color: #f59e0b;
+}
+
+@media (max-width: 640px) {
+    .governance-tabs {
+        overflow-x: auto;
+    }
+
+    .governance-tab {
+        white-space: nowrap;
+        font-size: 0.8rem;
+        padding: 0.6rem 0.9rem;
+    }
+
+    .governance-summary-bar {
+        grid-template-columns: 1fr 1fr;
     }
 }

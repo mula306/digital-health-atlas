@@ -646,6 +646,132 @@ export function DataProvider({ children }) {
         }
     }, [authFetch]);
 
+
+    // ==================== ORGANIZATIONS ====================
+
+    const fetchOrganizations = useCallback(async () => {
+        const res = await authFetch(`${API_BASE}/admin/organizations`);
+        return await res.json();
+    }, [authFetch]);
+
+    const createOrganization = useCallback(async (payload) => {
+        const res = await authFetch(`${API_BASE}/admin/organizations`, {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
+        if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            throw new Error(data.error || 'Failed to create organization');
+        }
+        return await res.json();
+    }, [authFetch]);
+
+    const updateOrganization = useCallback(async (id, payload) => {
+        const res = await authFetch(`${API_BASE}/admin/organizations/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify(payload)
+        });
+        if (!res.ok) throw new Error('Failed to update organization');
+        return await res.json();
+    }, [authFetch]);
+
+    const assignUserToOrg = useCallback(async (userOid, orgId) => {
+        const res = await authFetch(`${API_BASE}/admin/users/${userOid}/organization`, {
+            method: 'PUT',
+            body: JSON.stringify({ orgId })
+        });
+        if (!res.ok) throw new Error('Failed to assign user to organization');
+        return await res.json();
+    }, [authFetch]);
+
+    const fetchProjectSharing = useCallback(async (projectId) => {
+        const res = await authFetch(`${API_BASE}/admin/projects/${projectId}/sharing`);
+        return await res.json();
+    }, [authFetch]);
+
+    const shareProject = useCallback(async (projectId, orgId, accessLevel = 'read') => {
+        const res = await authFetch(`${API_BASE}/admin/projects/${projectId}/sharing`, {
+            method: 'POST',
+            body: JSON.stringify({ orgId, accessLevel })
+        });
+        if (!res.ok) throw new Error('Failed to share project');
+        return await res.json();
+    }, [authFetch]);
+
+    const unshareProject = useCallback(async (projectId, orgId) => {
+        const res = await authFetch(`${API_BASE}/admin/projects/${projectId}/sharing/${orgId}`, {
+            method: 'DELETE'
+        });
+        if (!res.ok) throw new Error('Failed to remove sharing');
+        return await res.json();
+    }, [authFetch]);
+
+    // ==================== ORG SHARING (BULK + GOALS) ====================
+
+    const fetchOrgSharingSummary = useCallback(async (orgId) => {
+        const res = await authFetch(`${API_BASE}/admin/organizations/${orgId}/sharing-summary`);
+        if (!res.ok) throw new Error('Failed to fetch sharing summary');
+        return await res.json();
+    }, [authFetch]);
+
+    const bulkShareProjects = useCallback(async (projectIds, orgId, accessLevel = 'read') => {
+        const res = await authFetch(`${API_BASE}/admin/projects/bulk-share`, {
+            method: 'POST',
+            body: JSON.stringify({ projectIds, orgId, accessLevel })
+        });
+        if (!res.ok) throw new Error('Failed to bulk share projects');
+        return await res.json();
+    }, [authFetch]);
+
+    const bulkUnshareProjects = useCallback(async (projectIds, orgId) => {
+        const res = await authFetch(`${API_BASE}/admin/projects/bulk-unshare`, {
+            method: 'POST',
+            body: JSON.stringify({ projectIds, orgId })
+        });
+        if (!res.ok) throw new Error('Failed to bulk unshare projects');
+        return await res.json();
+    }, [authFetch]);
+
+    const fetchGoalSharing = useCallback(async (goalId) => {
+        const res = await authFetch(`${API_BASE}/admin/goals/${goalId}/sharing`);
+        return await res.json();
+    }, [authFetch]);
+
+    const shareGoal = useCallback(async (goalId, orgId, accessLevel = 'read', includeDescendants = true) => {
+        const res = await authFetch(`${API_BASE}/admin/goals/${goalId}/sharing`, {
+            method: 'POST',
+            body: JSON.stringify({ orgId, accessLevel, includeDescendants })
+        });
+        if (!res.ok) throw new Error('Failed to share goal');
+        return await res.json();
+    }, [authFetch]);
+
+    const unshareGoal = useCallback(async (goalId, orgId) => {
+        const res = await authFetch(`${API_BASE}/admin/goals/${goalId}/sharing/${orgId}`, {
+            method: 'DELETE'
+        });
+        if (!res.ok) throw new Error('Failed to unshare goal');
+        return await res.json();
+    }, [authFetch]);
+
+    const bulkShareGoals = useCallback(async (goalIds, orgId, accessLevel = 'read', includeDescendants = true) => {
+        const res = await authFetch(`${API_BASE}/admin/goals/bulk-share`, {
+            method: 'POST',
+            body: JSON.stringify({ goalIds, orgId, accessLevel, includeDescendants })
+        });
+        if (!res.ok) throw new Error('Failed to bulk share goals');
+        return await res.json();
+    }, [authFetch]);
+
+    const bulkUnshareGoals = useCallback(async (goalIds, orgId) => {
+        const res = await authFetch(`${API_BASE}/admin/goals/bulk-unshare`, {
+            method: 'POST',
+            body: JSON.stringify({ goalIds, orgId })
+        });
+        if (!res.ok) throw new Error('Failed to bulk unshare goals');
+        return await res.json();
+    }, [authFetch]);
+
     // ==================== INTAKE SUBMISSIONS ====================
 
     const [mySubmissions, setMySubmissions] = useState([]);
@@ -1201,6 +1327,10 @@ export function DataProvider({ children }) {
 
             permissions, hasPermission, updatePermissionsBulk,
 
+            fetchOrganizations, createOrganization, updateOrganization,
+            assignUserToOrg, fetchProjectSharing, shareProject, unshareProject,
+            fetchOrgSharingSummary, bulkShareProjects, bulkUnshareProjects,
+            fetchGoalSharing, shareGoal, unshareGoal, bulkShareGoals, bulkUnshareGoals,
             tagGroups, addTagGroup, updateTagGroup, deleteTagGroup,
             addTag, updateTag, deleteTag, updateProjectTags
         }}>

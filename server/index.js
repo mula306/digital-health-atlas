@@ -136,6 +136,9 @@ passport.use(new JwtStrategy(jwtOptions, async (jwt_payload, done) => {
             user.roles = dbRoles;
         }
 
+        // Attach orgId for multi-org scoping
+        user.orgId = user.orgId || null;
+
         return done(null, user);
     } catch (err) {
         return done(err, false);
@@ -159,6 +162,7 @@ app.use('/api/', (req, res, next) => {
 
         // Success
         req.user = user;
+        req.orgId = user.orgId || null; // Convenient org scope shorthand
         return next();
     })(req, res, next);
 });

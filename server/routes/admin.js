@@ -1,6 +1,7 @@
 import express from 'express';
 import { getPool, sql } from '../db.js';
 import { checkPermission, checkRole, getAuthUser, invalidatePermissionCache, requireAuth } from '../middleware/authMiddleware.js';
+import { requireOrg } from '../middleware/orgScope.js';
 import { handleError } from '../utils/errorHandler.js';
 import { logAudit } from '../utils/auditLogger.js';
 import { invalidateTagCache, invalidateProjectCache } from '../utils/cache.js';
@@ -405,6 +406,581 @@ router.get('/audit-log/stats', checkRole('Admin'), async (req, res) => {
         });
     } catch (err) {
         handleError(res, 'fetching audit log stats', err);
+    }
+});
+
+// ==================== ALL USERS (for member assignment) ====================
+
+// Returns all users with org info for admin member assignment panel
+router.get('/all-users', checkRole('Admin'), async (req, res) => {
+    try {
+        const pool = await getPool();
+        const result = await pool.request().query(`
+            SELECT u.oid, u.name, u.email, u.orgId, u.lastLogin,
+                   o.name AS orgName
+            FROM Users u
+            LEFT JOIN Organizations o ON u.orgId = o.id
+            ORDER BY u.name ASC
+        `);
+
+        res.json(result.recordset.map(u => ({
+            oid: u.oid,
+            name: u.name,
+            email: u.email || null,
+            orgId: u.orgId,
+            orgName: u.orgName || null,
+            lastLogin: u.lastLogin || null
+        })));
+    } catch (err) {
+        handleError(res, 'fetching all users', err);
+    }
+});
+
+// ==================== ORGANIZATIONS ====================
+
+// List all organizations
+router.get('/organizations', checkRole('Admin'), async (req, res) => {
+    try {
+        const pool = await getPool();
+        const result = await pool.request().query(`
+            SELECT o.*, 
+                   (SELECT COUNT(*) FROM Users u WHERE u.orgId = o.id) AS memberCount
+            FROM Organizations o
+            ORDER BY o.name ASC
+        `);
+        res.json(result.recordset.map(o => ({
+            id: o.id.toString(),
+            name: o.name,
+            slug: o.slug,
+            isActive: !!o.isActive,
+            createdAt: o.createdAt,
+            memberCount: o.memberCount || 0
+        })));
+    } catch (err) {
+        handleError(res, 'fetching organizations', err);
+    }
+});
+
+// Create organization
+router.post('/organizations', checkRole('Admin'), async (req, res) => {
+    try {
+        const { name, slug, isActive } = req.body;
+        if (!name || !slug) return res.status(400).json({ error: 'name and slug are required' });
+
+        const pool = await getPool();
+        const result = await pool.request()
+            .input('name', sql.NVarChar(255), name.trim())
+            .input('slug', sql.NVarChar(100), slug.trim().toLowerCase())
+            .input('isActive', sql.Bit, isActive !== false ? 1 : 0)
+            .query('INSERT INTO Organizations (name, slug, isActive) OUTPUT INSERTED.* VALUES (@name, @slug, @isActive)');
+
+        const org = result.recordset[0];
+        logAudit({ action: 'org.create', entityType: 'organization', entityId: org.id, entityTitle: name, user: getAuthUser(req), after: { name, slug }, req });
+        res.json({ id: org.id.toString(), name: org.name, slug: org.slug, isActive: !!org.isActive, createdAt: org.createdAt });
+    } catch (err) {
+        if (err.number === 2627) return res.status(409).json({ error: 'Organization name or slug already exists' });
+        handleError(res, 'creating organization', err);
+    }
+});
+
+// Update organization
+router.put('/organizations/:id', checkRole('Admin'), async (req, res) => {
+    try {
+        const { name, slug, isActive } = req.body;
+        const id = parseInt(req.params.id);
+        const pool = await getPool();
+
+        const updates = [];
+        const request = pool.request().input('id', sql.Int, id);
+        if (name !== undefined) { request.input('name', sql.NVarChar(255), name.trim()); updates.push('name = @name'); }
+        if (slug !== undefined) { request.input('slug', sql.NVarChar(100), slug.trim().toLowerCase()); updates.push('slug = @slug'); }
+        if (isActive !== undefined) { request.input('isActive', sql.Bit, isActive ? 1 : 0); updates.push('isActive = @isActive'); }
+
+        if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
+        await request.query(`UPDATE Organizations SET ${updates.join(', ')} WHERE id = @id`);
+
+        logAudit({ action: 'org.update', entityType: 'organization', entityId: id, entityTitle: name, user: getAuthUser(req), after: { name, slug, isActive }, req });
+        res.json({ success: true });
+    } catch (err) {
+        handleError(res, 'updating organization', err);
+    }
+});
+
+// Assign user to organization
+router.put('/users/:oid/organization', checkRole('Admin'), async (req, res) => {
+    try {
+        const { orgId } = req.body;
+        const oid = req.params.oid;
+        const pool = await getPool();
+
+        await pool.request()
+            .input('oid', sql.NVarChar(100), oid)
+            .input('orgId', sql.Int, orgId ? parseInt(orgId) : null)
+            .query('UPDATE Users SET orgId = @orgId WHERE oid = @oid');
+
+        logAudit({ action: 'user.org_assign', entityType: 'user', entityId: oid, entityTitle: oid, user: getAuthUser(req), after: { orgId }, req });
+        res.json({ success: true });
+    } catch (err) {
+        handleError(res, 'assigning user to organization', err);
+    }
+});
+
+// ==================== PROJECT SHARING ====================
+
+// Get organizations a project is shared with
+router.get('/projects/:projectId/sharing', checkRole('Admin'), async (req, res) => {
+    try {
+        const projectId = parseInt(req.params.projectId);
+        const pool = await getPool();
+        const result = await pool.request()
+            .input('projectId', sql.Int, projectId)
+            .query(`
+                SELECT poa.*, o.name AS orgName, o.slug AS orgSlug
+                FROM ProjectOrgAccess poa
+                INNER JOIN Organizations o ON o.id = poa.orgId
+                WHERE poa.projectId = @projectId
+            `);
+        res.json(result.recordset.map(r => ({
+            projectId: r.projectId.toString(),
+            orgId: r.orgId.toString(),
+            orgName: r.orgName,
+            orgSlug: r.orgSlug,
+            accessLevel: r.accessLevel,
+            grantedAt: r.grantedAt
+        })));
+    } catch (err) {
+        handleError(res, 'fetching project sharing', err);
+    }
+});
+
+// Share project with organization
+router.post('/projects/:projectId/sharing', checkRole('Admin'), async (req, res) => {
+    try {
+        const projectId = parseInt(req.params.projectId);
+        const { orgId, accessLevel } = req.body;
+        if (!orgId) return res.status(400).json({ error: 'orgId is required' });
+
+        const level = accessLevel === 'write' ? 'write' : 'read';
+        const user = getAuthUser(req);
+        const pool = await getPool();
+
+        await pool.request()
+            .input('projectId', sql.Int, projectId)
+            .input('orgId', sql.Int, parseInt(orgId))
+            .input('accessLevel', sql.NVarChar(20), level)
+            .input('grantedByOid', sql.NVarChar(100), user?.oid || null)
+            .query(`
+                MERGE ProjectOrgAccess AS target
+                USING (SELECT @projectId, @orgId) AS source (projectId, orgId)
+                ON target.projectId = source.projectId AND target.orgId = source.orgId
+                WHEN MATCHED THEN UPDATE SET accessLevel = @accessLevel, grantedAt = GETDATE(), grantedByOid = @grantedByOid
+                WHEN NOT MATCHED THEN INSERT (projectId, orgId, accessLevel, grantedByOid) VALUES (@projectId, @orgId, @accessLevel, @grantedByOid);
+            `);
+
+        logAudit({ action: 'project.share', entityType: 'project', entityId: projectId, entityTitle: 'Share', user, after: { orgId, accessLevel: level }, req });
+        res.json({ success: true });
+    } catch (err) {
+        handleError(res, 'sharing project with organization', err);
+    }
+});
+
+// Remove project sharing
+router.delete('/projects/:projectId/sharing/:orgId', checkRole('Admin'), async (req, res) => {
+    try {
+        const projectId = parseInt(req.params.projectId);
+        const orgId = parseInt(req.params.orgId);
+        const pool = await getPool();
+
+        await pool.request()
+            .input('projectId', sql.Int, projectId)
+            .input('orgId', sql.Int, orgId)
+            .query('DELETE FROM ProjectOrgAccess WHERE projectId = @projectId AND orgId = @orgId');
+
+        logAudit({ action: 'project.unshare', entityType: 'project', entityId: projectId, entityTitle: 'Unshare', user: getAuthUser(req), after: { orgId }, req });
+        res.json({ success: true });
+    } catch (err) {
+        handleError(res, 'removing project sharing', err);
+    }
+});
+
+// ==================== SHARING PICKER DATA (ALL ITEMS, LIGHTWEIGHT) ====================
+
+// Returns all projects and goals for the sharing panel (admin only, no pagination)
+router.get('/sharing-picker-data', checkRole('Admin'), async (req, res) => {
+    try {
+        const pool = await getPool();
+
+        const [projectsResult, tagsResult, goalsResult] = await Promise.all([
+            pool.request().query(`
+                SELECT id, title, orgId FROM Projects ORDER BY title ASC
+            `),
+            pool.request().query(`
+                SELECT pt.projectId, t.id AS tagId, t.name AS tagName
+                FROM ProjectTags pt
+                INNER JOIN Tags t ON pt.tagId = t.id
+            `),
+            pool.request().query(`
+                SELECT id, title, type, parentId, orgId FROM Goals ORDER BY title ASC
+            `)
+        ]);
+
+        // Build tag map
+        const tagMap = {};
+        tagsResult.recordset.forEach(t => {
+            if (!tagMap[t.projectId]) tagMap[t.projectId] = [];
+            tagMap[t.projectId].push({ tagId: t.tagId, tagName: t.tagName });
+        });
+
+        res.json({
+            projects: projectsResult.recordset.map(p => ({
+                id: p.id.toString(),
+                title: p.title,
+                orgId: p.orgId,
+                tags: tagMap[p.id] || []
+            })),
+            goals: goalsResult.recordset.map(g => ({
+                id: g.id.toString(),
+                title: g.title,
+                type: g.type,
+                parentId: g.parentId ? g.parentId.toString() : null,
+                orgId: g.orgId
+            }))
+        });
+    } catch (err) {
+        handleError(res, 'fetching sharing picker data', err);
+    }
+});
+
+// ==================== ORG SHARING SUMMARY ====================
+
+// Get everything shared with a specific org (projects + goals)
+router.get('/organizations/:orgId/sharing-summary', checkRole('Admin'), async (req, res) => {
+    try {
+        const orgId = parseInt(req.params.orgId);
+        const pool = await getPool();
+
+        const projectsResult = await pool.request()
+            .input('orgId', sql.Int, orgId)
+            .query(`
+                SELECT poa.projectId, poa.accessLevel, poa.grantedAt, p.title AS projectTitle
+                FROM ProjectOrgAccess poa
+                INNER JOIN Projects p ON p.id = poa.projectId
+                WHERE poa.orgId = @orgId
+                ORDER BY p.title ASC
+            `);
+
+        // GoalOrgAccess may not exist yet if migration hasn't been run
+        let goalsRecords = [];
+        try {
+            const goalsResult = await pool.request()
+                .input('orgId', sql.Int, orgId)
+                .query(`
+                    SELECT goa.goalId, goa.accessLevel, goa.grantedAt, g.title AS goalTitle, g.type AS goalType, g.parentId
+                    FROM GoalOrgAccess goa
+                    INNER JOIN Goals g ON g.id = goa.goalId
+                    WHERE goa.orgId = @orgId
+                    ORDER BY g.title ASC
+                `);
+            goalsRecords = goalsResult.recordset;
+        } catch (goalErr) {
+            // Table doesn't exist yet — that's OK, just return empty goals
+            console.log('GoalOrgAccess table not found — goal sharing will be empty until migration is run');
+        }
+
+        res.json({
+            projects: projectsResult.recordset.map(r => ({
+                projectId: r.projectId.toString(),
+                projectTitle: r.projectTitle,
+                accessLevel: r.accessLevel,
+                grantedAt: r.grantedAt
+            })),
+            goals: goalsRecords.map(r => ({
+                goalId: r.goalId.toString(),
+                goalTitle: r.goalTitle,
+                goalType: r.goalType,
+                parentId: r.parentId ? r.parentId.toString() : null,
+                accessLevel: r.accessLevel,
+                grantedAt: r.grantedAt
+            }))
+        });
+    } catch (err) {
+        handleError(res, 'fetching org sharing summary', err);
+    }
+});
+
+// ==================== BULK PROJECT SHARING ====================
+
+// Bulk share projects with an org
+router.post('/projects/bulk-share', checkRole('Admin'), async (req, res) => {
+    try {
+        const { projectIds, orgId, accessLevel } = req.body;
+        if (!Array.isArray(projectIds) || !orgId) {
+            return res.status(400).json({ error: 'projectIds (array) and orgId are required' });
+        }
+
+        const level = accessLevel === 'write' ? 'write' : 'read';
+        const user = getAuthUser(req);
+        const pool = await getPool();
+        const transaction = new sql.Transaction(pool);
+        await transaction.begin();
+
+        try {
+            for (const projectId of projectIds) {
+                const request = new sql.Request(transaction);
+                await request
+                    .input('projectId', sql.Int, parseInt(projectId))
+                    .input('orgId', sql.Int, parseInt(orgId))
+                    .input('accessLevel', sql.NVarChar(20), level)
+                    .input('grantedByOid', sql.NVarChar(100), user?.oid || null)
+                    .query(`
+                        MERGE ProjectOrgAccess AS target
+                        USING (SELECT @projectId, @orgId) AS source (projectId, orgId)
+                        ON target.projectId = source.projectId AND target.orgId = source.orgId
+                        WHEN MATCHED THEN UPDATE SET accessLevel = @accessLevel, grantedAt = GETDATE(), grantedByOid = @grantedByOid
+                        WHEN NOT MATCHED THEN INSERT (projectId, orgId, accessLevel, grantedByOid) VALUES (@projectId, @orgId, @accessLevel, @grantedByOid);
+                    `);
+            }
+            await transaction.commit();
+            logAudit({ action: 'project.bulk_share', entityType: 'project', entityId: null, entityTitle: `${projectIds.length} projects shared`, user, after: { orgId, accessLevel: level, count: projectIds.length }, req });
+            res.json({ success: true, count: projectIds.length });
+        } catch (err) {
+            await transaction.rollback();
+            throw err;
+        }
+    } catch (err) {
+        handleError(res, 'bulk sharing projects', err);
+    }
+});
+
+// Bulk unshare projects from an org
+router.post('/projects/bulk-unshare', checkRole('Admin'), async (req, res) => {
+    try {
+        const { projectIds, orgId } = req.body;
+        if (!Array.isArray(projectIds) || !orgId) {
+            return res.status(400).json({ error: 'projectIds (array) and orgId are required' });
+        }
+
+        const pool = await getPool();
+        const transaction = new sql.Transaction(pool);
+        await transaction.begin();
+
+        try {
+            for (const projectId of projectIds) {
+                const request = new sql.Request(transaction);
+                await request
+                    .input('projectId', sql.Int, parseInt(projectId))
+                    .input('orgId', sql.Int, parseInt(orgId))
+                    .query('DELETE FROM ProjectOrgAccess WHERE projectId = @projectId AND orgId = @orgId');
+            }
+            await transaction.commit();
+            logAudit({ action: 'project.bulk_unshare', entityType: 'project', entityId: null, entityTitle: `${projectIds.length} projects unshared`, user: getAuthUser(req), after: { orgId, count: projectIds.length }, req });
+            res.json({ success: true, count: projectIds.length });
+        } catch (err) {
+            await transaction.rollback();
+            throw err;
+        }
+    } catch (err) {
+        handleError(res, 'bulk unsharing projects', err);
+    }
+});
+
+// ==================== GOAL SHARING ====================
+
+// Get organizations a goal is shared with
+router.get('/goals/:goalId/sharing', checkRole('Admin'), async (req, res) => {
+    try {
+        const goalId = parseInt(req.params.goalId);
+        const pool = await getPool();
+        const result = await pool.request()
+            .input('goalId', sql.Int, goalId)
+            .query(`
+                SELECT goa.*, o.name AS orgName, o.slug AS orgSlug
+                FROM GoalOrgAccess goa
+                INNER JOIN Organizations o ON o.id = goa.orgId
+                WHERE goa.goalId = @goalId
+            `);
+        res.json(result.recordset.map(r => ({
+            goalId: r.goalId.toString(),
+            orgId: r.orgId.toString(),
+            orgName: r.orgName,
+            orgSlug: r.orgSlug,
+            accessLevel: r.accessLevel,
+            grantedAt: r.grantedAt
+        })));
+    } catch (err) {
+        handleError(res, 'fetching goal sharing', err);
+    }
+});
+
+// Share goal with organization (includes descendant goals automatically)
+router.post('/goals/:goalId/sharing', checkRole('Admin'), async (req, res) => {
+    try {
+        const goalId = parseInt(req.params.goalId);
+        const { orgId, accessLevel, includeDescendants } = req.body;
+        if (!orgId) return res.status(400).json({ error: 'orgId is required' });
+
+        const level = accessLevel === 'write' ? 'write' : 'read';
+        const user = getAuthUser(req);
+        const pool = await getPool();
+
+        // Collect goal IDs to share (the goal + optionally its descendants)
+        let goalIds = [goalId];
+
+        if (includeDescendants !== false) {
+            // Recursive CTE to find all descendant goals
+            const descendants = await pool.request()
+                .input('rootId', sql.Int, goalId)
+                .query(`
+                    WITH GoalTree AS (
+                        SELECT id FROM Goals WHERE id = @rootId
+                        UNION ALL
+                        SELECT g.id FROM Goals g INNER JOIN GoalTree gt ON g.parentId = gt.id
+                    )
+                    SELECT id FROM GoalTree
+                `);
+            goalIds = descendants.recordset.map(r => r.id);
+        }
+
+        const transaction = new sql.Transaction(pool);
+        await transaction.begin();
+
+        try {
+            for (const gId of goalIds) {
+                const request = new sql.Request(transaction);
+                await request
+                    .input('goalId', sql.Int, gId)
+                    .input('orgId', sql.Int, parseInt(orgId))
+                    .input('accessLevel', sql.NVarChar(20), level)
+                    .input('grantedByOid', sql.NVarChar(100), user?.oid || null)
+                    .query(`
+                        MERGE GoalOrgAccess AS target
+                        USING (SELECT @goalId, @orgId) AS source (goalId, orgId)
+                        ON target.goalId = source.goalId AND target.orgId = source.orgId
+                        WHEN MATCHED THEN UPDATE SET accessLevel = @accessLevel, grantedAt = GETDATE(), grantedByOid = @grantedByOid
+                        WHEN NOT MATCHED THEN INSERT (goalId, orgId, accessLevel, grantedByOid) VALUES (@goalId, @orgId, @accessLevel, @grantedByOid);
+                    `);
+            }
+            await transaction.commit();
+            logAudit({ action: 'goal.share', entityType: 'goal', entityId: goalId, entityTitle: 'Goal Share', user, after: { orgId, accessLevel: level, goalCount: goalIds.length }, req });
+            res.json({ success: true, sharedGoalCount: goalIds.length });
+        } catch (err) {
+            await transaction.rollback();
+            throw err;
+        }
+    } catch (err) {
+        handleError(res, 'sharing goal with organization', err);
+    }
+});
+
+// Remove goal sharing
+router.delete('/goals/:goalId/sharing/:orgId', checkRole('Admin'), async (req, res) => {
+    try {
+        const goalId = parseInt(req.params.goalId);
+        const orgId = parseInt(req.params.orgId);
+        const pool = await getPool();
+
+        await pool.request()
+            .input('goalId', sql.Int, goalId)
+            .input('orgId', sql.Int, orgId)
+            .query('DELETE FROM GoalOrgAccess WHERE goalId = @goalId AND orgId = @orgId');
+
+        logAudit({ action: 'goal.unshare', entityType: 'goal', entityId: goalId, entityTitle: 'Goal Unshare', user: getAuthUser(req), after: { orgId }, req });
+        res.json({ success: true });
+    } catch (err) {
+        handleError(res, 'removing goal sharing', err);
+    }
+});
+
+// Bulk share goals with an org
+router.post('/goals/bulk-share', checkRole('Admin'), async (req, res) => {
+    try {
+        const { goalIds, orgId, accessLevel, includeDescendants } = req.body;
+        if (!Array.isArray(goalIds) || !orgId) {
+            return res.status(400).json({ error: 'goalIds (array) and orgId are required' });
+        }
+
+        const level = accessLevel === 'write' ? 'write' : 'read';
+        const user = getAuthUser(req);
+        const pool = await getPool();
+
+        // Expand to include descendants if requested
+        let allGoalIds = [...goalIds.map(id => parseInt(id))];
+
+        if (includeDescendants !== false && allGoalIds.length > 0) {
+            const placeholders = allGoalIds.map((_, i) => `@gid${i}`).join(',');
+            const request = pool.request();
+            allGoalIds.forEach((id, i) => request.input(`gid${i}`, sql.Int, id));
+            const descendants = await request.query(`
+                WITH GoalTree AS (
+                    SELECT id FROM Goals WHERE id IN (${placeholders})
+                    UNION ALL
+                    SELECT g.id FROM Goals g INNER JOIN GoalTree gt ON g.parentId = gt.id
+                )
+                SELECT DISTINCT id FROM GoalTree
+            `);
+            allGoalIds = descendants.recordset.map(r => r.id);
+        }
+
+        const transaction = new sql.Transaction(pool);
+        await transaction.begin();
+
+        try {
+            for (const gId of allGoalIds) {
+                const request = new sql.Request(transaction);
+                await request
+                    .input('goalId', sql.Int, gId)
+                    .input('orgId', sql.Int, parseInt(orgId))
+                    .input('accessLevel', sql.NVarChar(20), level)
+                    .input('grantedByOid', sql.NVarChar(100), user?.oid || null)
+                    .query(`
+                        MERGE GoalOrgAccess AS target
+                        USING (SELECT @goalId, @orgId) AS source (goalId, orgId)
+                        ON target.goalId = source.goalId AND target.orgId = source.orgId
+                        WHEN MATCHED THEN UPDATE SET accessLevel = @accessLevel, grantedAt = GETDATE(), grantedByOid = @grantedByOid
+                        WHEN NOT MATCHED THEN INSERT (goalId, orgId, accessLevel, grantedByOid) VALUES (@goalId, @orgId, @accessLevel, @grantedByOid);
+                    `);
+            }
+            await transaction.commit();
+            logAudit({ action: 'goal.bulk_share', entityType: 'goal', entityId: null, entityTitle: `${allGoalIds.length} goals shared`, user, after: { orgId, accessLevel: level, count: allGoalIds.length }, req });
+            res.json({ success: true, count: allGoalIds.length });
+        } catch (err) {
+            await transaction.rollback();
+            throw err;
+        }
+    } catch (err) {
+        handleError(res, 'bulk sharing goals', err);
+    }
+});
+
+// Bulk unshare goals from an org
+router.post('/goals/bulk-unshare', checkRole('Admin'), async (req, res) => {
+    try {
+        const { goalIds, orgId } = req.body;
+        if (!Array.isArray(goalIds) || !orgId) {
+            return res.status(400).json({ error: 'goalIds (array) and orgId are required' });
+        }
+
+        const pool = await getPool();
+        const transaction = new sql.Transaction(pool);
+        await transaction.begin();
+
+        try {
+            for (const goalId of goalIds) {
+                const request = new sql.Request(transaction);
+                await request
+                    .input('goalId', sql.Int, parseInt(goalId))
+                    .input('orgId', sql.Int, parseInt(orgId))
+                    .query('DELETE FROM GoalOrgAccess WHERE goalId = @goalId AND orgId = @orgId');
+            }
+            await transaction.commit();
+            logAudit({ action: 'goal.bulk_unshare', entityType: 'goal', entityId: null, entityTitle: `${goalIds.length} goals unshared`, user: getAuthUser(req), after: { orgId, count: goalIds.length }, req });
+            res.json({ success: true, count: goalIds.length });
+        } catch (err) {
+            await transaction.rollback();
+            throw err;
+        }
+    } catch (err) {
+        handleError(res, 'bulk unsharing goals', err);
     }
 });
 

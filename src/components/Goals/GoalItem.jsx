@@ -56,7 +56,8 @@ export function GoalItem({
         const allGoalIds = new Set([String(goal.id), ...getDescendantGoalIds(goals, goal.id).map(String)]);
 
         return sourceProjects.filter(p => {
-            const inGoalTree = allGoalIds.has(String(p.goalId));
+            const pGoalIds = (p.goalIds || (p.goalId ? [p.goalId] : [])).map(String);
+            const inGoalTree = pGoalIds.some(gid => allGoalIds.has(gid));
             if (!inGoalTree) return false;
 
             if (selectedTags.length > 0) {

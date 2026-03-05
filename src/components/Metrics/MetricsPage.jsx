@@ -74,7 +74,8 @@ export function MetricsPage({ initialGoalFilter, onClearFilter }) {
             const goalsWithTaggedProjects = new Set();
             sourceProjects.forEach(p => {
                 if (p.tags && p.tags.some(t => selectedTags.includes(String(t.tagId ?? t.id)))) {
-                    if (p.goalId) goalsWithTaggedProjects.add(String(p.goalId));
+                    const pGoalIds = p.goalIds || (p.goalId ? [p.goalId] : []);
+                    pGoalIds.forEach(gid => goalsWithTaggedProjects.add(String(gid)));
                 }
             });
             // Also include ancestor goals so parent-level KPIs still show

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Eye, Copy, Check, MessageSquare, CheckCircle, XCircle, ArrowRight, Clock, Send, Scale, RefreshCw, Vote } from 'lucide-react';
+import { Eye, Copy, Check, MessageSquare, CheckCircle, XCircle, ArrowRight, Clock, Send, Scale, RefreshCw, Vote, ChevronDown } from 'lucide-react';
 import { useData } from '../../context/DataContext';
 import { useToast } from '../../context/ToastContext';
 import { Modal } from '../UI/Modal';
@@ -66,6 +66,9 @@ export function IntakeRequestsList({ initialFilter = 'all' }) {
     const [voteConflictDeclared, setVoteConflictDeclared] = useState(false);
     const [decision, setDecision] = useState('approved-now');
     const [decisionReason, setDecisionReason] = useState('');
+    const [voteOpen, setVoteOpen] = useState(true);
+    const [historyOpen, setHistoryOpen] = useState(false);
+    const [decisionOpen, setDecisionOpen] = useState(true);
     const conversationEndRef = useRef(null);
 
     const canViewIncomingRequests = hasPermission('can_view_incoming_requests');
@@ -651,42 +654,52 @@ export function IntakeRequestsList({ initialFilter = 'all' }) {
                                     )}
                                 </div>
 
-                                <div style={{ display: 'grid', gap: '0.4rem', fontSize: '0.875rem', marginBottom: '0.75rem' }}>
-                                    <div>
-                                        <strong>Board:</strong> {selectedSubmission.governanceBoardName || governanceDetails?.submission?.governanceBoardName || 'Unassigned'}
+                                {/* Summary Bar */}
+                                <div className="governance-summary-bar">
+                                    <div className="governance-summary-item">
+                                        <strong>Board</strong>
+                                        <span>{selectedSubmission.governanceBoardName || governanceDetails?.submission?.governanceBoardName || 'Unassigned'}</span>
                                     </div>
-                                    <div>
-                                        <strong>Status:</strong> {GOVERNANCE_STATUS_LABELS[selectedSubmission.governanceStatus] || selectedSubmission.governanceStatus || 'not-started'}
+                                    <div className="governance-summary-item">
+                                        <strong>Status</strong>
+                                        <span>{GOVERNANCE_STATUS_LABELS[selectedSubmission.governanceStatus] || selectedSubmission.governanceStatus || 'Not Started'}</span>
                                     </div>
-                                    <div>
-                                        <strong>Decision:</strong> {selectedSubmission.governanceDecision ? (GOVERNANCE_DECISION_LABELS[selectedSubmission.governanceDecision] || selectedSubmission.governanceDecision) : 'Pending'}
+                                    <div className="governance-summary-item">
+                                        <strong>Decision</strong>
+                                        <span>{selectedSubmission.governanceDecision ? (GOVERNANCE_DECISION_LABELS[selectedSubmission.governanceDecision] || selectedSubmission.governanceDecision) : 'Pending'}</span>
                                     </div>
-                                    <div>
-                                        <strong>Reason:</strong> {selectedSubmission.governanceReason || 'n/a'}
-                                    </div>
+                                    {selectedSubmission.priorityScore !== null && selectedSubmission.priorityScore !== undefined && (
+                                        <div className="governance-summary-item">
+                                            <strong>Score</strong>
+                                            <span>{selectedSubmission.priorityScore}</span>
+                                        </div>
+                                    )}
+                                    {selectedSubmission.governanceReason && (
+                                        <div className="governance-summary-item" style={{ gridColumn: '1 / -1' }}>
+                                            <strong>Reason</strong>
+                                            <span>{selectedSubmission.governanceReason}</span>
+                                        </div>
+                                    )}
                                 </div>
 
                                 {governanceError && (
-                                    <div style={{ fontSize: '0.8rem', color: '#b91c1c', marginBottom: '0.75rem' }}>
-                                        {governanceError}
-                                    </div>
+                                    <div className="governance-error">{governanceError}</div>
                                 )}
                                 {loadingGovernanceDetails && (
-                                    <div style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginBottom: '0.75rem' }}>
-                                        Loading governance details...
-                                    </div>
+                                    <div className="governance-loading">Loading governance details...</div>
                                 )}
 
+                                {/* Routing Action Bar */}
                                 {canRouteGovernance && (
-                                    <div className="form-actions" style={{ marginTop: '0.75rem', marginBottom: '0.75rem' }}>
+                                    <div className="governance-action-bar">
                                         {!selectedSubmission.governanceRequired && (
                                             <button className="btn-secondary" onClick={handleApplyGovernance} disabled={governanceActionLoading}>
-                                                <Scale size={16} /> Apply Governance
+                                                <Scale size={14} /> Apply Governance
                                             </button>
                                         )}
                                         {selectedSubmission.governanceRequired && selectedSubmission.governanceStatus === 'not-started' && (
                                             <button className="btn-primary" onClick={handleStartGovernance} disabled={governanceActionLoading}>
-                                                <Vote size={16} /> Start Review
+                                                <Vote size={14} /> Start Review
                                             </button>
                                         )}
                                         {selectedSubmission.governanceRequired && selectedSubmission.governanceStatus !== 'decided' && (
@@ -697,148 +710,183 @@ export function IntakeRequestsList({ initialFilter = 'all' }) {
                                     </div>
                                 )}
 
+                                {/* Governance Review Details */}
                                 {selectedSubmission.governanceRequired && governanceReview && (
-                                    <div style={{ marginTop: '0.75rem' }}>
-                                        <div style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginBottom: '0.75rem' }}>
-                                            Participation: {governanceSummary?.voteCount ?? 0} / {governanceSummary?.eligibleVoterCount ?? 0} voters ({governanceSummary?.participationPct ?? 0}%)
-                                            {governanceSummary?.requiredVotes !== undefined && (
-                                                <span style={{ marginLeft: '0.75rem' }}>
-                                                    Quorum: {governanceSummary.voteCount ?? 0}/{governanceSummary.requiredVotes}
-                                                    {governanceSummary.quorumMet ? ' (met)' : ' (pending)'}
+                                    <>
+                                        {/* Quorum Progress Bar */}
+                                        {governanceSummary && (
+                                            <div className="governance-quorum-bar" style={{ marginTop: '0.75rem' }}>
+                                                <span>
+                                                    {governanceSummary.voteCount ?? 0}/{governanceSummary.eligibleVoterCount ?? 0} voted
                                                 </span>
-                                            )}
-                                            {governanceSummary?.priorityScore !== null && governanceSummary?.priorityScore !== undefined && (
-                                                <span style={{ marginLeft: '0.75rem' }}>
-                                                    Current Score: {governanceSummary.priorityScore}
-                                                </span>
-                                            )}
-                                        </div>
+                                                <div className="governance-quorum-track">
+                                                    <div
+                                                        className={`governance-quorum-fill ${governanceSummary.quorumMet ? 'met' : ''}`}
+                                                        style={{ width: `${Math.min(100, governanceSummary.participationPct ?? 0)}%` }}
+                                                    />
+                                                </div>
+                                                {governanceSummary.requiredVotes !== undefined && (
+                                                    <span>
+                                                        Quorum: {governanceSummary.quorumMet ? '✓ Met' : `${governanceSummary.voteCount ?? 0}/${governanceSummary.requiredVotes} needed`}
+                                                    </span>
+                                                )}
+                                                {governanceSummary.priorityScore !== null && governanceSummary.priorityScore !== undefined && (
+                                                    <span style={{ marginLeft: 'auto' }}>
+                                                        Score: {governanceSummary.priorityScore}
+                                                    </span>
+                                                )}
+                                            </div>
+                                        )}
+
                                         {governanceReview.voteDeadlineAt && (
-                                            <div style={{ fontSize: '0.78rem', marginBottom: '0.75rem', color: governanceReview.deadlinePassed ? '#b91c1c' : 'var(--text-tertiary)' }}>
+                                            <div className={`governance-deadline ${governanceReview.deadlinePassed ? 'passed' : ''}`}>
                                                 Voting deadline: {formatDate(governanceReview.voteDeadlineAt)}
                                                 {governanceReview.deadlinePassed ? ' (closed)' : ''}
                                             </div>
                                         )}
 
+                                        {/* Vote Panel */}
                                         {canVoteGovernance && governanceReview.status === 'in-review' && (
-                                            <div style={{ border: '1px solid var(--border-color)', borderRadius: '8px', padding: '0.75rem', marginBottom: '0.75rem' }}>
-                                                <h5 style={{ margin: '0 0 0.5rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                                                    <Vote size={15} /> Submit Vote
-                                                </h5>
-                                                {(governanceReview.criteria || []).filter(c => c.enabled).map(criterion => (
-                                                    <div key={criterion.id} className="form-group" style={{ marginBottom: '0.75rem' }}>
-                                                        <label style={{ fontSize: '0.8rem' }}>
-                                                            {criterion.name} ({criterion.weight}%)
-                                                        </label>
-                                                        <select
-                                                            value={voteScores[criterion.id] ?? 3}
-                                                            onChange={(e) => setVoteScores(prev => ({ ...prev, [criterion.id]: Number(e.target.value) }))}
-                                                        >
-                                                            <option value={1}>1 - Low</option>
-                                                            <option value={2}>2</option>
-                                                            <option value={3}>3 - Medium</option>
-                                                            <option value={4}>4</option>
-                                                            <option value={5}>5 - High</option>
-                                                        </select>
-                                                    </div>
-                                                ))}
-                                                <div className="form-group" style={{ marginBottom: '0.5rem' }}>
-                                                    <label style={{ fontSize: '0.8rem' }}>Comment (optional)</label>
-                                                    <textarea
-                                                        value={voteComment}
-                                                        onChange={(e) => setVoteComment(e.target.value)}
-                                                        placeholder="Add rationale for your score..."
-                                                    />
-                                                </div>
-                                                <label style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', fontSize: '0.8rem' }}>
-                                                    <input
-                                                        type="checkbox"
-                                                        checked={voteConflictDeclared}
-                                                        onChange={(e) => setVoteConflictDeclared(e.target.checked)}
-                                                    />
-                                                    I have a conflict of interest related to this vote
-                                                </label>
-                                                <div className="form-actions" style={{ marginTop: '0.75rem' }}>
-                                                    <button className="btn-primary" onClick={handleSubmitVote} disabled={governanceActionLoading}>
-                                                        Submit Vote
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        )}
-
-                                        {governanceReview.votes?.length > 0 && (
-                                            <div style={{ border: '1px solid var(--border-color)', borderRadius: '8px', padding: '0.75rem', marginBottom: '0.75rem' }}>
-                                                <h5 style={{ margin: '0 0 0.5rem' }}>Vote History</h5>
-                                                <div style={{ display: 'grid', gap: '0.5rem' }}>
-                                                    {governanceReview.votes.map(vote => (
-                                                        <div key={vote.id} style={{ border: '1px solid var(--border-color)', borderRadius: '6px', padding: '0.5rem' }}>
-                                                            <div style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>
-                                                                {(vote.voterName || vote.voterEmail || vote.voterUserOid)} - {formatMessageTime(vote.submittedAt)}
+                                            <div className="governance-panel">
+                                                <button className="governance-panel-header" onClick={() => setVoteOpen(v => !v)}>
+                                                    <span className="panel-title">
+                                                        <Vote size={15} /> Submit Your Vote
+                                                    </span>
+                                                    <ChevronDown size={14} className={`panel-toggle ${voteOpen ? 'open' : ''}`} />
+                                                </button>
+                                                {voteOpen && (
+                                                    <div className="governance-panel-content">
+                                                        {(governanceReview.criteria || []).filter(c => c.enabled).map(criterion => (
+                                                            <div key={criterion.id} className="form-group" style={{ marginBottom: '0.6rem' }}>
+                                                                <label style={{ fontSize: '0.8rem' }}>
+                                                                    {criterion.name} ({criterion.weight}%)
+                                                                </label>
+                                                                <select
+                                                                    value={voteScores[criterion.id] ?? 3}
+                                                                    onChange={(e) => setVoteScores(prev => ({ ...prev, [criterion.id]: Number(e.target.value) }))}
+                                                                >
+                                                                    <option value={1}>1 - Low</option>
+                                                                    <option value={2}>2</option>
+                                                                    <option value={3}>3 - Medium</option>
+                                                                    <option value={4}>4</option>
+                                                                    <option value={5}>5 - High</option>
+                                                                </select>
                                                             </div>
-                                                            {vote.comment && (
-                                                                <div style={{ marginTop: '0.25rem', fontSize: '0.875rem' }}>{vote.comment}</div>
-                                                            )}
-                                                            {vote.conflictDeclared && (
-                                                                <div style={{ marginTop: '0.25rem', fontSize: '0.75rem', color: '#b45309' }}>
-                                                                    Conflict declared
-                                                                </div>
-                                                            )}
+                                                        ))}
+                                                        <div className="form-group" style={{ marginBottom: '0.5rem' }}>
+                                                            <label style={{ fontSize: '0.8rem' }}>Comment (optional)</label>
+                                                            <textarea
+                                                                value={voteComment}
+                                                                onChange={(e) => setVoteComment(e.target.value)}
+                                                                placeholder="Add rationale for your score..."
+                                                            />
                                                         </div>
-                                                    ))}
-                                                </div>
+                                                        <label style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', fontSize: '0.8rem' }}>
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={voteConflictDeclared}
+                                                                onChange={(e) => setVoteConflictDeclared(e.target.checked)}
+                                                            />
+                                                            I have a conflict of interest related to this vote
+                                                        </label>
+                                                        <div className="form-actions" style={{ marginTop: '0.75rem' }}>
+                                                            <button className="btn-primary" onClick={handleSubmitVote} disabled={governanceActionLoading}>
+                                                                Submit Vote
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                )}
                                             </div>
                                         )}
 
+                                        {/* Vote History Panel */}
+                                        {governanceReview.votes?.length > 0 && (
+                                            <div className="governance-panel">
+                                                <button className="governance-panel-header" onClick={() => setHistoryOpen(v => !v)}>
+                                                    <span className="panel-title">
+                                                        Vote History
+                                                        <span className="governance-tab-badge">{governanceReview.votes.length}</span>
+                                                    </span>
+                                                    <ChevronDown size={14} className={`panel-toggle ${historyOpen ? 'open' : ''}`} />
+                                                </button>
+                                                {historyOpen && (
+                                                    <div className="governance-panel-content">
+                                                        {governanceReview.votes.map(vote => (
+                                                            <div key={vote.id} className="governance-vote-card">
+                                                                <div className="governance-vote-meta">
+                                                                    {(vote.voterName || vote.voterEmail || vote.voterUserOid)} — {formatMessageTime(vote.submittedAt)}
+                                                                </div>
+                                                                {vote.comment && (
+                                                                    <div className="governance-vote-comment">{vote.comment}</div>
+                                                                )}
+                                                                {vote.conflictDeclared && (
+                                                                    <div className="governance-vote-conflict">Conflict declared</div>
+                                                                )}
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
+
+                                        {/* Decision Panel */}
                                         {canRecordGovernanceDecision && governanceReview.status === 'in-review' && (
-                                            <div style={{ border: '1px solid var(--border-color)', borderRadius: '8px', padding: '0.75rem' }}>
-                                                <h5 style={{ margin: '0 0 0.5rem' }}>Record Decision</h5>
-                                                <div className="form-group" style={{ marginBottom: '0.75rem' }}>
-                                                    <label style={{ fontSize: '0.8rem' }}>Decision</label>
-                                                    <select value={decision} onChange={(e) => setDecision(e.target.value)}>
-                                                        <option value="approved-now">Approved Now</option>
-                                                        <option value="approved-backlog">Approved Backlog</option>
-                                                        <option value="needs-info">Needs Info</option>
-                                                        <option value="rejected">Rejected</option>
-                                                    </select>
-                                                </div>
-                                                <div className="form-group">
-                                                    <label style={{ fontSize: '0.8rem' }}>Decision Rationale</label>
-                                                    <textarea
-                                                        value={decisionReason}
-                                                        onChange={(e) => setDecisionReason(e.target.value)}
-                                                        placeholder="Document rationale for the governance decision..."
-                                                    />
-                                                </div>
-                                                <div className="form-actions" style={{ marginTop: '0.75rem' }}>
-                                                    <button
-                                                        className="btn-primary"
-                                                        onClick={handleDecide}
-                                                        disabled={governanceActionLoading || (governanceReview.policy?.decisionRequiresQuorum && governanceSummary?.quorumMet === false)}
-                                                    >
-                                                        Save Decision
-                                                    </button>
-                                                </div>
-                                                {governanceReview.policy?.decisionRequiresQuorum && governanceSummary?.quorumMet === false && (
-                                                    <div style={{ marginTop: '0.5rem', fontSize: '0.78rem', color: '#b45309' }}>
-                                                        Quorum is required before final decision.
+                                            <div className="governance-panel">
+                                                <button className="governance-panel-header" onClick={() => setDecisionOpen(v => !v)}>
+                                                    <span className="panel-title">Record Decision</span>
+                                                    <ChevronDown size={14} className={`panel-toggle ${decisionOpen ? 'open' : ''}`} />
+                                                </button>
+                                                {decisionOpen && (
+                                                    <div className="governance-panel-content">
+                                                        <div className="form-group" style={{ marginBottom: '0.6rem' }}>
+                                                            <label style={{ fontSize: '0.8rem' }}>Decision</label>
+                                                            <select value={decision} onChange={(e) => setDecision(e.target.value)}>
+                                                                <option value="approved-now">Approved Now</option>
+                                                                <option value="approved-backlog">Approved Backlog</option>
+                                                                <option value="needs-info">Needs Info</option>
+                                                                <option value="rejected">Rejected</option>
+                                                            </select>
+                                                        </div>
+                                                        <div className="form-group">
+                                                            <label style={{ fontSize: '0.8rem' }}>Decision Rationale</label>
+                                                            <textarea
+                                                                value={decisionReason}
+                                                                onChange={(e) => setDecisionReason(e.target.value)}
+                                                                placeholder="Document rationale for the governance decision..."
+                                                            />
+                                                        </div>
+                                                        <div className="form-actions" style={{ marginTop: '0.75rem' }}>
+                                                            <button
+                                                                className="btn-primary"
+                                                                onClick={handleDecide}
+                                                                disabled={governanceActionLoading || (governanceReview.policy?.decisionRequiresQuorum && governanceSummary?.quorumMet === false)}
+                                                            >
+                                                                Save Decision
+                                                            </button>
+                                                        </div>
+                                                        {governanceReview.policy?.decisionRequiresQuorum && governanceSummary?.quorumMet === false && (
+                                                            <div className="governance-warning">
+                                                                Quorum is required before final decision.
+                                                            </div>
+                                                        )}
                                                     </div>
                                                 )}
                                             </div>
                                         )}
 
                                         {canDecideGovernance && !isCurrentUserGovernanceChair && governanceReview.status === 'in-review' && (
-                                            <div style={{ marginTop: '0.5rem', fontSize: '0.78rem', color: '#b45309' }}>
+                                            <div className="governance-warning">
                                                 Only the governance chair can record the final decision for this review.
                                             </div>
                                         )}
 
                                         {governanceReview.status === 'decided' && (
-                                            <div style={{ fontSize: '0.85rem', color: 'var(--text-tertiary)' }}>
+                                            <div className="governance-decided-note" style={{ marginTop: '0.5rem' }}>
                                                 Decision recorded as {GOVERNANCE_DECISION_LABELS[governanceReview.decision] || governanceReview.decision || 'n/a'}
                                                 {governanceReview.decidedAt ? ` on ${formatDate(governanceReview.decidedAt)}` : ''}.
                                             </div>
                                         )}
-                                    </div>
+                                    </>
                                 )}
                             </div>
                         )}
@@ -997,3 +1045,4 @@ export function IntakeRequestsList({ initialFilter = 'all' }) {
         </div>
     );
 }
+

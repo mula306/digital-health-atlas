@@ -202,7 +202,11 @@ export function IntakeFormView({ formId, submissionId }) {
 
         // Validate required fields
         const missingFields = form.fields
-            .filter(f => f.required && !formData[f.id])
+            .filter(f => {
+                if (!f.required) return false;
+                const val = formData[f.id];
+                return val === undefined || val === null || String(val).trim() === '';
+            })
             .map(f => f.label);
 
         if (missingFields.length > 0) {

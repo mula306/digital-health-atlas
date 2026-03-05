@@ -1,6 +1,7 @@
 import express from 'express';
 import { getPool, sql } from '../db.js';
 import { checkPermission, getAuthUser } from '../middleware/authMiddleware.js';
+import { withSharedScope } from '../middleware/orgScope.js';
 import { handleError } from '../utils/errorHandler.js';
 import { logAudit } from '../utils/auditLogger.js';
 import { buildInClause, addParams } from '../utils/sqlHelpers.js';
@@ -8,12 +9,24 @@ import { buildInClause, addParams } from '../utils/sqlHelpers.js';
 const router = express.Router();
 
 // Get all goals with KPIs and project stats
-router.get('/', checkPermission(['can_view_goals', 'can_view_exec_dashboard']), async (req, res) => {
+router.get('/', checkPermission(['can_view_goals', 'can_view_exec_dashboard']), withSharedScope, async (req, res) => {
     try {
         console.log('Fetching goals...');
         const pool = await getPool();
         console.log('Pool acquired. Querying Goals...');
-        const goalsResult = await pool.request().query('SELECT * FROM Goals ORDER BY id');
+        let goalsResult;
+        if (req.orgId === null || req.orgId === undefined) {
+            // Admin: see all goals
+            goalsResult = await pool.request()
+                .query('SELECT * FROM Goals ORDER BY id');
+        } else {
+            goalsResult = await pool.request()
+                .input('orgId', sql.Int, req.orgId)
+                .query(`SELECT * FROM Goals 
+                        WHERE orgId = @orgId 
+                           OR id IN (SELECT goalId FROM GoalOrgAccess WHERE orgId = @orgId)
+                        ORDER BY id`);
+        }
         console.log(`Goals fetched: ${goalsResult.recordset.length}`);
 
         console.log('Querying KPIs...');
@@ -35,14 +48,15 @@ router.get('/', checkPermission(['can_view_goals', 'can_view_exec_dashboard']), 
 
         const statsQuery = `
             SELECT 
-                p.goalId,
-                COUNT(p.id) as projectCount,
+                pg.goalId,
+                COUNT(DISTINCT p.id) as projectCount,
                 SUM(
                     CASE WHEN tCounts.total > 0 
                     THEN (CAST(tCounts.done AS DECIMAL(10,2)) / tCounts.total) * 100 
                     ELSE 0 END
                 ) as totalCompletion
-            FROM Projects p
+            FROM ProjectGoals pg
+            INNER JOIN Projects p ON pg.projectId = p.id
             ${tagJoin}
             OUTER APPLY (
                 SELECT 
@@ -51,8 +65,7 @@ router.get('/', checkPermission(['can_view_goals', 'can_view_exec_dashboard']), 
                 FROM Tasks t
                 WHERE t.projectId = p.id
             ) tCounts
-            WHERE p.goalId IS NOT NULL
-            GROUP BY p.goalId
+            GROUP BY pg.goalId
         `;
 
         const request = pool.request();
@@ -98,7 +111,7 @@ router.get('/', checkPermission(['can_view_goals', 'can_view_exec_dashboard']), 
 });
 
 // Create goal
-router.post('/', checkPermission('can_create_goal'), async (req, res) => {
+router.post('/', checkPermission('can_create_goal'), withSharedScope, async (req, res) => {
     try {
         const { title, type, parentId } = req.body;
         if (!title || !type) {
@@ -109,7 +122,8 @@ router.post('/', checkPermission('can_create_goal'), async (req, res) => {
             .input('title', sql.NVarChar, title)
             .input('type', sql.NVarChar, type)
             .input('parentId', sql.Int, parentId ? parseInt(parentId) : null)
-            .query('INSERT INTO Goals (title, type, parentId) OUTPUT INSERTED.id VALUES (@title, @type, @parentId)');
+            .input('orgId', sql.Int, req.orgId)
+            .query('INSERT INTO Goals (title, type, parentId, orgId) OUTPUT INSERTED.id VALUES (@title, @type, @parentId, @orgId)');
 
         const newId = result.recordset[0].id.toString();
         logAudit({ action: 'goal.create', entityType: 'goal', entityId: newId, entityTitle: title, user: getAuthUser(req), after: { title, type, parentId }, req });

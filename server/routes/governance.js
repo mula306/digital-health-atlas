@@ -1,6 +1,7 @@
 import express from 'express';
 import { getPool, sql } from '../db.js';
 import { checkPermission, requireAuth, getAuthUser } from '../middleware/authMiddleware.js';
+import { requireOrg } from '../middleware/orgScope.js';
 import { handleError } from '../utils/errorHandler.js';
 import { logAudit } from '../utils/auditLogger.js';
 

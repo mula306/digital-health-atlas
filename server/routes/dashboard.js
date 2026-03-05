@@ -1,13 +1,14 @@
 import express from 'express';
 import { getPool } from '../db.js';
 import { checkPermission } from '../middleware/authMiddleware.js';
+import { withSharedScope } from '../middleware/orgScope.js';
 import { handleError } from '../utils/errorHandler.js';
 import { buildInClause, addParams } from '../utils/sqlHelpers.js';
 
 const router = express.Router();
 
 // Get dashboard statistics (server-side aggregation)
-router.get('/stats', checkPermission(['can_view_projects']), async (req, res) => {
+router.get('/stats', checkPermission(['can_view_projects']), withSharedScope, async (req, res) => {
     try {
         const pool = await getPool();
         const goalIdsParam = req.query.goalIds || ''; // Comma-separated IDs
@@ -21,6 +22,12 @@ router.get('/stats', checkPermission(['can_view_projects']), async (req, res) =>
 
         let whereConditions = [];
         let queryParams = {};
+
+        // Org scoping
+        if (req.orgId) {
+            whereConditions.push('(p.orgId = @orgId OR p.id IN (SELECT projectId FROM ProjectOrgAccess WHERE orgId = @orgId))');
+            queryParams.orgId = req.orgId;
+        }
 
         // 1. Goal Filtering (Safe IN clause)
         if (goalIds.length > 0) {

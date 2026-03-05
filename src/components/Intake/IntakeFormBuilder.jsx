@@ -106,6 +106,20 @@ export function IntakeFormBuilder({ form, onClose }) {
         setTimeout(() => setCopied(false), 2000);
     };
 
+    const hasMissingLabels = fields.some(f => !f.label || !f.label.trim());
+    const hasTextField = fields.some(f => f.type === 'text');
+    const hasTextareaField = fields.some(f => f.type === 'textarea');
+    const hasGovernanceError = canManageGovernance && governanceMode !== 'off' && !governanceBoardId;
+
+    // Valid forms require:
+    // 1. A Name
+    // 2. At least one field total
+    // 3. No missing field labels
+    // 4. At least one Text field (for Project Name fallback)
+    // 5. At least one Long Text field (for Project Description fallback)
+    // 6. Valid governance settings
+    const isInvalid = !name || fields.length === 0 || hasMissingLabels || !hasTextField || !hasTextareaField || hasGovernanceError;
+
     return (
         <form onSubmit={handleSubmit} className="intake-form-builder">
             <div className="form-group">
@@ -139,7 +153,7 @@ export function IntakeFormBuilder({ form, onClose }) {
                     {goals.map(g => (
                         <option key={g.id} value={g.id}>{g.title}</option>
                     ))}
-                    </select>
+                </select>
             </div>
 
             {canManageGovernance && (
@@ -283,15 +297,30 @@ export function IntakeFormBuilder({ form, onClose }) {
                 </div>
             )}
 
-            <div className="form-actions">
-                <button type="button" onClick={onClose} className="btn-secondary">Cancel</button>
-                <button
-                    type="submit"
-                    className="btn-primary"
-                    disabled={!name || fields.length === 0 || (canManageGovernance && governanceMode !== 'off' && !governanceBoardId)}
-                >
-                    {isEditing ? 'Save Changes' : 'Create Form'}
-                </button>
+            <div className="form-actions" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
+                {isInvalid && (
+                    <div style={{ backgroundColor: 'var(--bg-warning, #fffbeb)', border: '1px solid var(--border-warning, #fef08a)', borderRadius: '6px', padding: '0.75rem', marginBottom: '1rem', fontSize: '0.85rem', color: 'var(--text-warning, #92400e)' }}>
+                        <strong>Cannot save form yet. Please fix the following:</strong>
+                        <ul style={{ margin: '0.5rem 0 0 1.25rem', padding: 0 }}>
+                            {!name && <li>Form Name is required</li>}
+                            {fields.length === 0 && <li>At least one field is required</li>}
+                            {hasMissingLabels && <li>All fields must have a label</li>}
+                            {fields.length > 0 && !hasTextField && <li>At least one Text field is required (used for Project Name fallback)</li>}
+                            {fields.length > 0 && !hasTextareaField && <li>At least one Long Text field is required (used for Project Description fallback)</li>}
+                            {hasGovernanceError && <li>Governance Board must be selected when policy is Optional or Required</li>}
+                        </ul>
+                    </div>
+                )}
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+                    <button type="button" onClick={onClose} className="btn-secondary">Cancel</button>
+                    <button
+                        type="submit"
+                        className="btn-primary"
+                        disabled={isInvalid}
+                    >
+                        {isEditing ? 'Save Changes' : 'Create Form'}
+                    </button>
+                </div>
             </div>
         </form>
     );
