@@ -82,6 +82,9 @@ export function GovernanceConfig() {
     const [selectedVersionId, setSelectedVersionId] = useState('');
     const [criteriaDraft, setCriteriaDraft] = useState(cloneCriteria([]));
     const [configTab, setConfigTab] = useState('settings');
+    const [settingsDirty, setSettingsDirty] = useState(false);
+    const [boardDirty, setBoardDirty] = useState(false);
+    const [criteriaDirty, setCriteriaDirty] = useState(false);
 
     const selectedBoard = useMemo(() => {
         return boards.find(board => String(board.id) === String(selectedBoardId)) || null;
@@ -96,6 +99,20 @@ export function GovernanceConfig() {
             .filter(item => item.enabled)
             .reduce((sum, item) => sum + (Number(item.weight) || 0), 0);
     }, [criteriaDraft]);
+
+    const hasUnsavedChanges = settingsDirty || boardDirty || criteriaDirty;
+    const governanceStepReadiness = useMemo(() => {
+        const settingsReady = !phase3Ready || (
+            Number(quorumPercent) >= 1 &&
+            Number(quorumPercent) <= 100 &&
+            Number(quorumMinCount) >= 1 &&
+            (voteWindowDays === '' || (Number(voteWindowDays) >= 1 && Number(voteWindowDays) <= 90))
+        );
+        const boardsReady = boards.some(board => board.isActive);
+        const membersReady = members.some(member => member.isActive);
+        const criteriaReady = criteriaVersions.some(version => version.status === 'published');
+        return { settingsReady, boardsReady, membersReady, criteriaReady };
+    }, [phase3Ready, quorumPercent, quorumMinCount, voteWindowDays, boards, members, criteriaVersions]);
 
     const memberOptions = useMemo(() => {
         if (!memberUserOid || availableUsers.some(user => user.oid === memberUserOid)) {
@@ -149,6 +166,8 @@ export function GovernanceConfig() {
 
             setSelectedVersionId(versionToUse?.id || '');
             setCriteriaDraft(cloneCriteria(versionToUse?.criteria || []));
+            setBoardDirty(false);
+            setCriteriaDirty(false);
         } catch (err) {
             console.error('Failed to load governance board details:', err);
             toast.error(err.message || 'Failed to load governance board details');
@@ -213,6 +232,7 @@ export function GovernanceConfig() {
                 setSelectedVersionId('');
                 setCriteriaDraft(cloneCriteria([]));
             }
+            setSettingsDirty(false);
         } catch (err) {
             console.error('Failed to load governance configuration:', err);
             toast.error(err.message || 'Failed to load governance configuration');
@@ -262,6 +282,38 @@ export function GovernanceConfig() {
         return () => clearTimeout(timeoutId);
     }, [selectedBoardId, memberUserSearch, loadGovernanceUsers]);
 
+    const resetDirtyFlags = useCallback(() => {
+        setSettingsDirty(false);
+        setBoardDirty(false);
+        setCriteriaDirty(false);
+    }, []);
+
+    const confirmDiscardChanges = useCallback(() => {
+        if (!hasUnsavedChanges) return true;
+        return window.confirm('You have unsaved changes. Discard them and continue?');
+    }, [hasUnsavedChanges]);
+
+    const handleConfigTabChange = (nextTab) => {
+        if (nextTab === configTab) return;
+        if (!confirmDiscardChanges()) return;
+        resetDirtyFlags();
+        setConfigTab(nextTab);
+    };
+
+    const handleBoardSelectionChange = (nextBoardId) => {
+        if (String(nextBoardId) === String(selectedBoardId)) return;
+        if (!confirmDiscardChanges()) return;
+        resetDirtyFlags();
+        setSelectedBoardId(nextBoardId);
+    };
+
+    const handleVersionSelectionChange = (nextVersionId) => {
+        if (String(nextVersionId) === String(selectedVersionId)) return;
+        if (!confirmDiscardChanges()) return;
+        resetDirtyFlags();
+        setSelectedVersionId(nextVersionId);
+    };
+
     const handleSaveSettings = async () => {
         try {
             setSettingsSaving(true);
@@ -273,6 +325,7 @@ export function GovernanceConfig() {
                 decisionRequiresQuorum: !!decisionRequiresQuorum,
                 voteWindowDays: parsedWindow
             });
+            setSettingsDirty(false);
             toast.success('Governance settings updated');
         } catch (err) {
             console.error(err);
@@ -299,6 +352,7 @@ export function GovernanceConfig() {
             setNewBoardName('');
             setNewBoardActive(true);
             await loadBoardDetails(created.id);
+            setBoardDirty(false);
             toast.success('Governance board created');
         } catch (err) {
             console.error(err);
@@ -322,6 +376,7 @@ export function GovernanceConfig() {
             });
             const nextBoards = await fetchGovernanceBoards({ includeInactive: true });
             setBoards(nextBoards);
+            setBoardDirty(false);
             toast.success('Governance board updated');
         } catch (err) {
             console.error(err);
@@ -390,6 +445,7 @@ export function GovernanceConfig() {
                 sortOrder: prev.length + 1
             }
         ]));
+        setCriteriaDirty(true);
     };
 
     const handleUpdateCriterion = (index, patch) => {
@@ -397,6 +453,7 @@ export function GovernanceConfig() {
             if (idx !== index) return criterion;
             return { ...criterion, ...patch };
         }));
+        setCriteriaDirty(true);
     };
 
     const handleRemoveCriterion = (index) => {
@@ -404,6 +461,7 @@ export function GovernanceConfig() {
             ...criterion,
             sortOrder: idx + 1
         })));
+        setCriteriaDirty(true);
     };
 
     const moveCriterion = (index, direction) => {
@@ -419,6 +477,7 @@ export function GovernanceConfig() {
             // Re-assign sort orders sequentially
             return newArr.map((item, i) => ({ ...item, sortOrder: i + 1 }));
         });
+        setCriteriaDirty(true);
     };
 
     const createDraftFromCurrent = async () => {
@@ -464,6 +523,7 @@ export function GovernanceConfig() {
                 await loadBoardDetails(selectedBoardId, created.id);
                 toast.success('New draft criteria version created');
             }
+            setCriteriaDirty(false);
         } catch (err) {
             console.error(err);
             toast.error(err.message || 'Failed to save criteria');
@@ -478,6 +538,7 @@ export function GovernanceConfig() {
             setCriteriaSaving(true);
             await publishGovernanceCriteriaVersion(selectedBoardId, selectedVersionId);
             await loadBoardDetails(selectedBoardId, selectedVersionId);
+            setCriteriaDirty(false);
             toast.success('Criteria version published');
         } catch (err) {
             console.error(err);
@@ -498,42 +559,85 @@ export function GovernanceConfig() {
                     <h3><Settings2 size={18} /> Governance Configuration</h3>
                     <p>Manage board membership, voting policy, and criteria versions.</p>
                 </div>
-                <button className="btn-secondary" onClick={() => loadAll(true)} disabled={refreshing}>
+                <button
+                    className="btn-secondary"
+                    onClick={() => {
+                        if (!confirmDiscardChanges()) return;
+                        resetDirtyFlags();
+                        loadAll(true);
+                    }}
+                    disabled={refreshing}
+                >
                     <RefreshCw size={14} className={refreshing ? 'spin' : ''} /> {refreshing ? 'Refreshing...' : 'Refresh'}
                 </button>
             </div>
+
+            <section className="governance-section">
+                <h4>Setup Checklist</h4>
+                <div className="governance-summary-bar">
+                    <div className="governance-summary-item">
+                        <strong>1. Settings</strong>
+                        <span>{governanceStepReadiness.settingsReady ? 'Ready' : 'Needs setup'}</span>
+                    </div>
+                    <div className="governance-summary-item">
+                        <strong>2. Boards</strong>
+                        <span>{governanceStepReadiness.boardsReady ? 'Ready' : 'Needs setup'}</span>
+                    </div>
+                    <div className="governance-summary-item">
+                        <strong>3. Members</strong>
+                        <span>{governanceStepReadiness.membersReady ? 'Ready' : 'Needs setup'}</span>
+                    </div>
+                    <div className="governance-summary-item">
+                        <strong>4. Criteria</strong>
+                        <span>{governanceStepReadiness.criteriaReady ? 'Ready' : 'Needs setup'}</span>
+                    </div>
+                </div>
+                {hasUnsavedChanges && (
+                    <p className="governance-warning">You have unsaved changes. Save before switching tabs, boards, or versions.</p>
+                )}
+            </section>
 
             {/* Tab Navigation */}
             <nav className="governance-tabs">
                 <button
                     className={`governance-tab ${configTab === 'settings' ? 'active' : ''}`}
-                    onClick={() => setConfigTab('settings')}
+                    onClick={() => handleConfigTabChange('settings')}
                 >
                     <Settings2 size={15} /> Settings
+                    <span className={`governance-tab-badge ${governanceStepReadiness.settingsReady ? 'ready' : 'not-ready'}`}>
+                        {governanceStepReadiness.settingsReady ? 'Ready' : 'Needs setup'}
+                    </span>
                 </button>
                 <button
                     className={`governance-tab ${configTab === 'boards' ? 'active' : ''}`}
-                    onClick={() => setConfigTab('boards')}
+                    onClick={() => handleConfigTabChange('boards')}
                 >
                     <ClipboardList size={15} /> Boards
+                    <span className={`governance-tab-badge ${governanceStepReadiness.boardsReady ? 'ready' : 'not-ready'}`}>
+                        {governanceStepReadiness.boardsReady ? 'Ready' : 'Needs setup'}
+                    </span>
                 </button>
                 <button
                     className={`governance-tab ${configTab === 'members' ? 'active' : ''}`}
-                    onClick={() => selectedBoardId ? setConfigTab('members') : null}
+                    onClick={() => selectedBoardId ? handleConfigTabChange('members') : null}
                     disabled={!selectedBoardId}
                     title={!selectedBoardId ? 'Select a board first' : ''}
                 >
                     <Users size={15} /> Members
-                    {members.length > 0 && <span className="governance-tab-badge">{members.length}</span>}
+                    <span className={`governance-tab-badge ${governanceStepReadiness.membersReady ? 'ready' : 'not-ready'}`}>
+                        {governanceStepReadiness.membersReady ? 'Ready' : 'Needs setup'}
+                    </span>
                 </button>
                 <button
                     className={`governance-tab ${configTab === 'criteria' ? 'active' : ''}`}
-                    onClick={() => selectedBoardId ? setConfigTab('criteria') : null}
+                    onClick={() => selectedBoardId ? handleConfigTabChange('criteria') : null}
                     disabled={!selectedBoardId}
                     title={!selectedBoardId ? 'Select a board first' : ''}
                 >
                     <ClipboardList size={15} /> Criteria
-                    {criteriaVersions.length > 0 && <span className="governance-tab-badge">{criteriaVersions.length}</span>}
+                    <span className={`governance-tab-badge ${governanceStepReadiness.criteriaReady ? 'ready' : 'not-ready'}`}>
+                        {governanceStepReadiness.criteriaReady ? 'Ready' : 'Needs setup'}
+                    </span>
                 </button>
             </nav>
 
@@ -548,7 +652,10 @@ export function GovernanceConfig() {
                                 <input
                                     type="checkbox"
                                     checked={governanceEnabled}
-                                    onChange={(e) => setGovernanceEnabled(e.target.checked)}
+                                    onChange={(e) => {
+                                        setGovernanceEnabled(e.target.checked);
+                                        setSettingsDirty(true);
+                                    }}
                                 />
                                 Governance enabled globally
                             </label>
@@ -560,7 +667,10 @@ export function GovernanceConfig() {
                                 min="1"
                                 max="90"
                                 value={voteWindowDays}
-                                onChange={(e) => setVoteWindowDays(e.target.value)}
+                                onChange={(e) => {
+                                    setVoteWindowDays(e.target.value);
+                                    setSettingsDirty(true);
+                                }}
                                 placeholder="No deadline"
                                 disabled={!phase3Ready}
                             />
@@ -572,7 +682,10 @@ export function GovernanceConfig() {
                                 min="1"
                                 max="100"
                                 value={quorumPercent}
-                                onChange={(e) => setQuorumPercent(Number(e.target.value))}
+                                onChange={(e) => {
+                                    setQuorumPercent(Number(e.target.value));
+                                    setSettingsDirty(true);
+                                }}
                                 disabled={!phase3Ready}
                             />
                         </div>
@@ -582,20 +695,26 @@ export function GovernanceConfig() {
                                 type="number"
                                 min="1"
                                 value={quorumMinCount}
-                                onChange={(e) => setQuorumMinCount(Number(e.target.value))}
+                                onChange={(e) => {
+                                    setQuorumMinCount(Number(e.target.value));
+                                    setSettingsDirty(true);
+                                }}
                                 disabled={!phase3Ready}
                             />
                         </div>
                     </div>
                     <div className="governance-inline-row">
                         <label className="required-checkbox">
-                            <input
-                                type="checkbox"
-                                checked={decisionRequiresQuorum}
-                                onChange={(e) => setDecisionRequiresQuorum(e.target.checked)}
-                                disabled={!phase3Ready}
-                            />
-                            Require quorum before final decision
+                                <input
+                                    type="checkbox"
+                                    checked={decisionRequiresQuorum}
+                                    onChange={(e) => {
+                                        setDecisionRequiresQuorum(e.target.checked);
+                                        setSettingsDirty(true);
+                                    }}
+                                    disabled={!phase3Ready}
+                                />
+                                Require quorum before final decision
                         </label>
                         <button className="btn-primary" onClick={handleSaveSettings} disabled={settingsSaving}>
                             <Save size={14} /> {settingsSaving ? 'Saving...' : 'Save Settings'}
@@ -616,7 +735,7 @@ export function GovernanceConfig() {
                     <div className="governance-grid">
                         <div className="form-group">
                             <label>Select Board</label>
-                            <select value={selectedBoardId} onChange={(e) => setSelectedBoardId(e.target.value)}>
+                            <select value={selectedBoardId} onChange={(e) => handleBoardSelectionChange(e.target.value)}>
                                 <option value="">No boards yet</option>
                                 {boards.map(board => (
                                     <option key={board.id} value={board.id}>
@@ -630,7 +749,10 @@ export function GovernanceConfig() {
                             <input
                                 type="text"
                                 value={newBoardName}
-                                onChange={(e) => setNewBoardName(e.target.value)}
+                                onChange={(e) => {
+                                    setNewBoardName(e.target.value);
+                                    setBoardDirty(true);
+                                }}
                                 placeholder="e.g., Clinical Governance Board"
                             />
                         </div>
@@ -640,7 +762,10 @@ export function GovernanceConfig() {
                             <input
                                 type="checkbox"
                                 checked={newBoardActive}
-                                onChange={(e) => setNewBoardActive(e.target.checked)}
+                                onChange={(e) => {
+                                    setNewBoardActive(e.target.checked);
+                                    setBoardDirty(true);
+                                }}
                             />
                             New board active
                         </label>
@@ -658,7 +783,10 @@ export function GovernanceConfig() {
                                     <input
                                         type="text"
                                         value={selectedBoardName}
-                                        onChange={(e) => setSelectedBoardName(e.target.value)}
+                                        onChange={(e) => {
+                                            setSelectedBoardName(e.target.value);
+                                            setBoardDirty(true);
+                                        }}
                                     />
                                 </div>
                                 <div className="form-group">
@@ -667,7 +795,10 @@ export function GovernanceConfig() {
                                         <input
                                             type="checkbox"
                                             checked={selectedBoardActive}
-                                            onChange={(e) => setSelectedBoardActive(e.target.checked)}
+                                            onChange={(e) => {
+                                                setSelectedBoardActive(e.target.checked);
+                                                setBoardDirty(true);
+                                            }}
                                         />
                                         Board is active
                                     </label>
@@ -811,7 +942,7 @@ export function GovernanceConfig() {
                         <div className="governance-grid">
                             <div className="form-group">
                                 <label>Version</label>
-                                <select value={selectedVersionId} onChange={(e) => setSelectedVersionId(e.target.value)}>
+                                <select value={selectedVersionId} onChange={(e) => handleVersionSelectionChange(e.target.value)}>
                                     <option value="">No versions</option>
                                     {criteriaVersions.map(version => (
                                         <option key={version.id} value={version.id}>

@@ -1,7 +1,6 @@
 import express from 'express';
 import { getPool, sql } from '../db.js';
 import { checkPermission, requireAuth, getAuthUser, hasPermission } from '../middleware/authMiddleware.js';
-import { requireOrg } from '../middleware/orgScope.js';
 import { handleError } from '../utils/errorHandler.js';
 import { logAudit } from '../utils/auditLogger.js';
 
@@ -13,6 +12,12 @@ const isIntakeManager = (user) => {
         user.roles.includes('IntakeManager') ||
         user.permissions?.includes('can_manage_intake')
     ));
+};
+
+const canRouteGovernanceSubmission = async (user) => {
+    if (!user) return false;
+    if (isIntakeManager(user)) return true;
+    return hasPermission(user, ['can_manage_governance', 'can_manage_intake']);
 };
 
 const hasGovernanceSchema = async (pool) => {
@@ -475,13 +480,23 @@ router.get('/governance-queue', checkPermission('can_view_governance_queue'), as
         if (!(await hasGovernanceSchema(pool))) {
             return res.status(503).json({ error: 'Governance schema not installed. Run governance migration first.' });
         }
+        const phase1Ready = await hasGovernancePhase1Schema(pool);
+        const user = getAuthUser(req);
 
         const boardId = parseInt(req.query.boardId, 10);
         const governanceStatus = req.query.governanceStatus;
         const decision = req.query.governanceDecision;
+        const myPendingVotes = String(req.query.myPendingVotes || '').toLowerCase() === 'true';
+        const needsChairDecision = String(req.query.needsChairDecision || '').toLowerCase() === 'true';
         const page = Math.max(1, parseInt(req.query.page, 10) || 1);
         const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 50));
         const offset = (page - 1) * limit;
+
+        if ((myPendingVotes || needsChairDecision) && !phase1Ready) {
+            return res.status(409).json({
+                error: 'Governance review phase is not installed. Run governance phase 1 migration first.'
+            });
+        }
 
         const filters = ['s.governanceRequired = 1'];
         const addFilterParam = [];
@@ -497,6 +512,53 @@ router.get('/governance-queue', checkPermission('can_view_governance_queue'), as
         if (typeof decision === 'string' && decision.trim()) {
             filters.push('s.governanceDecision = @decision');
             addFilterParam.push(['decision', sql.NVarChar(30), decision.trim()]);
+        }
+        if (myPendingVotes) {
+            filters.push(`
+                EXISTS (
+                    SELECT 1
+                    FROM GovernanceReview gr
+                    INNER JOIN GovernanceReviewParticipant grp
+                        ON grp.reviewId = gr.id
+                       AND grp.userOid = @requestUserOid
+                       AND grp.isEligibleVoter = 1
+                    LEFT JOIN GovernanceVote gv
+                        ON gv.reviewId = gr.id
+                       AND gv.voterUserOid = @requestUserOid
+                    WHERE gr.submissionId = s.id
+                      AND gr.reviewRound = (
+                          SELECT MAX(gr2.reviewRound)
+                          FROM GovernanceReview gr2
+                          WHERE gr2.submissionId = s.id
+                      )
+                      AND gr.status = 'in-review'
+                      AND gv.id IS NULL
+                )
+            `);
+            addFilterParam.push(['requestUserOid', sql.NVarChar(100), user?.oid || '']);
+        }
+        if (needsChairDecision) {
+            filters.push(`
+                EXISTS (
+                    SELECT 1
+                    FROM GovernanceReview gr
+                    INNER JOIN GovernanceReviewParticipant grp
+                        ON grp.reviewId = gr.id
+                       AND grp.userOid = @requestUserOid
+                       AND grp.participantRole = 'chair'
+                       AND grp.isEligibleVoter = 1
+                    WHERE gr.submissionId = s.id
+                      AND gr.reviewRound = (
+                          SELECT MAX(gr2.reviewRound)
+                          FROM GovernanceReview gr2
+                          WHERE gr2.submissionId = s.id
+                      )
+                      AND gr.status = 'in-review'
+                )
+            `);
+            if (!myPendingVotes) {
+                addFilterParam.push(['requestUserOid', sql.NVarChar(100), user?.oid || '']);
+            }
         }
 
         const where = `WHERE ${filters.join(' AND ')}`;
@@ -890,7 +952,7 @@ router.post('/submissions/:id/governance/apply', requireAuth, async (req, res) =
     try {
         const user = getAuthUser(req);
         if (!user) return res.status(401).json({ error: 'Unauthorized' });
-        if (!isIntakeManager(user)) return res.status(403).json({ error: 'Forbidden' });
+        if (!(await canRouteGovernanceSubmission(user))) return res.status(403).json({ error: 'Forbidden' });
 
         const id = parseInt(req.params.id, 10);
         if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid submission id' });
@@ -954,7 +1016,7 @@ router.post('/submissions/:id/governance/skip', requireAuth, async (req, res) =>
     try {
         const user = getAuthUser(req);
         if (!user) return res.status(401).json({ error: 'Unauthorized' });
-        if (!isIntakeManager(user)) return res.status(403).json({ error: 'Forbidden' });
+        if (!(await canRouteGovernanceSubmission(user))) return res.status(403).json({ error: 'Forbidden' });
 
         const id = parseInt(req.params.id, 10);
         if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid submission id' });
@@ -1016,8 +1078,7 @@ router.post('/submissions/:id/governance/start', requireAuth, async (req, res) =
         const user = getAuthUser(req);
         if (!user) return res.status(401).json({ error: 'Unauthorized' });
 
-        const canManageGovernance = await hasPermission(user, 'can_manage_governance');
-        if (!canManageGovernance && !isIntakeManager(user)) {
+        if (!(await canRouteGovernanceSubmission(user))) {
             return res.status(403).json({ error: 'Forbidden' });
         }
 
