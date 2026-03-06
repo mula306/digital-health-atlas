@@ -1,7 +1,7 @@
 import express from 'express';
 import { getPool, sql } from '../db.js';
 import { checkPermission, getAuthUser } from '../middleware/authMiddleware.js';
-import { requireOrg, withSharedScope } from '../middleware/orgScope.js';
+import { requireOrg, withSharedScope, checkProjectWriteAccess, requireProjectWriteAccess } from '../middleware/orgScope.js';
 import { handleError } from '../utils/errorHandler.js';
 import { logAudit } from '../utils/auditLogger.js';
 import { cache, CACHE_KEYS, invalidateProjectCache } from '../utils/cache.js';
@@ -395,7 +395,7 @@ router.get('/', checkPermission(['can_view_projects', 'can_view_exec_dashboard']
 });
 
 // Get single project details (Full Data)
-router.get('/:id', checkPermission('can_view_projects'), async (req, res) => {
+router.get('/:id', checkPermission('can_view_projects'), withSharedScope, checkProjectWriteAccess(), async (req, res) => {
     try {
         const id = parseInt(req.params.id);
         const pool = await getPool();
@@ -524,7 +524,7 @@ router.post('/', checkPermission('can_create_project'), requireOrg, async (req, 
 });
 
 // Update project
-router.put('/:id', checkPermission('can_edit_project'), async (req, res) => {
+router.put('/:id', checkPermission('can_edit_project'), withSharedScope, checkProjectWriteAccess(), requireProjectWriteAccess, async (req, res) => {
     try {
         const { title, description, status } = req.body;
         if (!title) {
@@ -577,7 +577,7 @@ router.put('/:id', checkPermission('can_edit_project'), async (req, res) => {
 });
 
 // Delete project
-router.delete('/:id', checkPermission('can_delete_project'), async (req, res) => {
+router.delete('/:id', checkPermission('can_delete_project'), withSharedScope, checkProjectWriteAccess(), requireProjectWriteAccess, async (req, res) => {
     try {
         const id = parseInt(req.params.id);
         const pool = await getPool();
@@ -595,7 +595,7 @@ router.delete('/:id', checkPermission('can_delete_project'), async (req, res) =>
 });
 
 // Set tags for a project
-router.put('/:id/tags', checkPermission('can_edit_project'), async (req, res) => {
+router.put('/:id/tags', checkPermission('can_edit_project'), withSharedScope, checkProjectWriteAccess(), requireProjectWriteAccess, async (req, res) => {
     try {
         const projectId = parseInt(req.params.id);
         const { tags } = req.body; // Array of { tagId, isPrimary }
@@ -666,7 +666,7 @@ router.put('/:id/tags', checkPermission('can_edit_project'), async (req, res) =>
 });
 
 // Add task to project
-router.post('/:projectId/tasks', checkPermission('can_edit_project'), async (req, res) => {
+router.post('/:projectId/tasks', checkPermission('can_edit_project'), withSharedScope, checkProjectWriteAccess((req) => req.params.projectId), requireProjectWriteAccess, async (req, res) => {
     try {
         const { title, status, priority, description, startDate, endDate } = req.body;
         if (!title) {
@@ -693,7 +693,7 @@ router.post('/:projectId/tasks', checkPermission('can_edit_project'), async (req
 });
 
 // Get status reports for a project
-router.get('/:projectId/reports', checkPermission('can_view_projects'), async (req, res) => {
+router.get('/:projectId/reports', checkPermission('can_view_projects'), withSharedScope, checkProjectWriteAccess((req) => req.params.projectId), async (req, res) => {
     try {
         const projectId = parseInt(req.params.projectId);
         const pool = await getPool();
@@ -717,9 +717,11 @@ router.get('/:projectId/reports', checkPermission('can_view_projects'), async (r
 });
 
 // Add status report to project
-router.post('/:projectId/reports', checkPermission('can_create_reports'), async (req, res) => {
+router.post('/:projectId/reports', checkPermission('can_create_reports'), withSharedScope, checkProjectWriteAccess((req) => req.params.projectId), requireProjectWriteAccess, async (req, res) => {
     try {
-        const { reportData, createdBy, restoredFrom } = req.body;
+        const { reportData, restoredFrom } = req.body;
+        const authUser = getAuthUser(req);
+        const createdBy = authUser?.name || authUser?.email || authUser?.oid || 'Unknown User';
 
         if (!req.params.projectId || !reportData) {
             return res.status(400).json({ error: 'Missing required fields: projectId, reportData' });
@@ -759,7 +761,7 @@ router.post('/:projectId/reports', checkPermission('can_create_reports'), async 
 });
 
 // Get project-scoped activity feed
-router.get('/:id/activity', checkPermission('can_view_projects'), async (req, res) => {
+router.get('/:id/activity', checkPermission('can_view_projects'), withSharedScope, checkProjectWriteAccess(), async (req, res) => {
     try {
         const projectId = req.params.id;
         const page = parseInt(req.query.page) || 1;

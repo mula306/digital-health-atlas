@@ -1,7 +1,7 @@
 import express from 'express';
 import { getPool, sql } from '../db.js';
 import { checkPermission, getAuthUser } from '../middleware/authMiddleware.js';
-import { withSharedScope } from '../middleware/orgScope.js';
+import { withSharedScope, checkGoalAccess, requireGoalWriteAccess } from '../middleware/orgScope.js';
 import { handleError } from '../utils/errorHandler.js';
 import { logAudit } from '../utils/auditLogger.js';
 import { buildInClause, addParams } from '../utils/sqlHelpers.js';
@@ -134,7 +134,7 @@ router.post('/', checkPermission('can_create_goal'), withSharedScope, async (req
 });
 
 // Update goal
-router.put('/:id', checkPermission('can_edit_goal'), async (req, res) => {
+router.put('/:id', checkPermission('can_edit_goal'), withSharedScope, checkGoalAccess(), requireGoalWriteAccess, async (req, res) => {
     try {
         const { title, type } = req.body;
         const id = parseInt(req.params.id);
@@ -155,7 +155,7 @@ router.put('/:id', checkPermission('can_edit_goal'), async (req, res) => {
 });
 
 // Delete goal
-router.delete('/:id', checkPermission('can_delete_goal'), async (req, res) => {
+router.delete('/:id', checkPermission('can_delete_goal'), withSharedScope, checkGoalAccess(), requireGoalWriteAccess, async (req, res) => {
     try {
         const id = parseInt(req.params.id);
         const pool = await getPool();
@@ -172,7 +172,7 @@ router.delete('/:id', checkPermission('can_delete_goal'), async (req, res) => {
 });
 
 // Add KPI to goal
-router.post('/:goalId/kpis', checkPermission('can_manage_kpis'), async (req, res) => {
+router.post('/:goalId/kpis', checkPermission('can_manage_kpis'), withSharedScope, checkGoalAccess((req) => req.params.goalId), requireGoalWriteAccess, async (req, res) => {
     try {
         const { name, target, current, unit } = req.body;
         const pool = await getPool();

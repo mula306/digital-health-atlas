@@ -52,11 +52,36 @@
     color: var(--text-secondary);
     font-weight: 600;
     border-bottom: 2px solid var(--border-color);
+    vertical-align: bottom;
 }
 
 .permissions-table th:not(:first-child) {
     text-align: center;
     width: 120px;
+}
+
+.role-header-cell {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.25rem;
+    min-height: 62px;
+}
+
+.role-header-label {
+    min-height: 2.3em;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    text-align: center;
+    line-height: 1.15;
+}
+
+.role-toggle-btn {
+    font-size: 0.7rem;
+    padding: 0.1rem 0.4rem;
+    color: var(--text-tertiary);
 }
 
 .permissions-table td {

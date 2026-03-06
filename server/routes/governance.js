@@ -1,6 +1,7 @@
 import express from 'express';
 import { getPool, sql } from '../db.js';
 import { checkPermission, requireAuth, getAuthUser } from '../middleware/authMiddleware.js';
+import { governanceConfigWriteLimiter } from '../middleware/rateLimiters.js';
 import { handleError } from '../utils/errorHandler.js';
 import { logAudit } from '../utils/auditLogger.js';
 
@@ -341,7 +342,7 @@ router.get('/settings', requireAuth, async (req, res) => {
     }
 });
 
-router.put('/settings', checkPermission('can_manage_governance'), async (req, res) => {
+router.put('/settings', checkPermission('can_manage_governance'), governanceConfigWriteLimiter, async (req, res) => {
     try {
         const { governanceEnabled } = req.body;
         if (typeof governanceEnabled !== 'boolean') {
@@ -626,7 +627,7 @@ router.get('/boards', checkPermission(['can_view_governance_queue', 'can_manage_
     }
 });
 
-router.post('/boards', checkPermission('can_manage_governance'), async (req, res) => {
+router.post('/boards', checkPermission('can_manage_governance'), governanceConfigWriteLimiter, async (req, res) => {
     try {
         const { name, isActive } = req.body;
         const trimmedName = typeof name === 'string' ? name.trim() : '';
@@ -744,7 +745,7 @@ router.post('/boards', checkPermission('can_manage_governance'), async (req, res
     }
 });
 
-router.put('/boards/:id', checkPermission('can_manage_governance'), async (req, res) => {
+router.put('/boards/:id', checkPermission('can_manage_governance'), governanceConfigWriteLimiter, async (req, res) => {
     try {
         const boardId = parseInt(req.params.id, 10);
         if (Number.isNaN(boardId)) return res.status(400).json({ error: 'Invalid board id' });
@@ -869,7 +870,7 @@ router.get('/boards/:id/members', checkPermission(['can_view_governance_queue', 
     }
 });
 
-router.post('/boards/:id/members', checkPermission('can_manage_governance'), async (req, res) => {
+router.post('/boards/:id/members', checkPermission('can_manage_governance'), governanceConfigWriteLimiter, async (req, res) => {
     try {
         const boardId = parseInt(req.params.id, 10);
         if (Number.isNaN(boardId)) return res.status(400).json({ error: 'Invalid board id' });
@@ -1000,7 +1001,7 @@ router.get('/boards/:id/criteria/versions', checkPermission(['can_view_governanc
     }
 });
 
-router.post('/boards/:id/criteria/versions', checkPermission('can_manage_governance'), async (req, res) => {
+router.post('/boards/:id/criteria/versions', checkPermission('can_manage_governance'), governanceConfigWriteLimiter, async (req, res) => {
     try {
         const boardId = parseInt(req.params.id, 10);
         if (Number.isNaN(boardId)) return res.status(400).json({ error: 'Invalid board id' });
@@ -1058,7 +1059,7 @@ router.post('/boards/:id/criteria/versions', checkPermission('can_manage_governa
     }
 });
 
-router.put('/boards/:id/criteria/versions/:versionId', checkPermission('can_manage_governance'), async (req, res) => {
+router.put('/boards/:id/criteria/versions/:versionId', checkPermission('can_manage_governance'), governanceConfigWriteLimiter, async (req, res) => {
     try {
         const boardId = parseInt(req.params.id, 10);
         const versionId = parseInt(req.params.versionId, 10);
@@ -1107,7 +1108,7 @@ router.put('/boards/:id/criteria/versions/:versionId', checkPermission('can_mana
     }
 });
 
-router.post('/boards/:id/criteria/versions/:versionId/publish', checkPermission('can_manage_governance'), async (req, res) => {
+router.post('/boards/:id/criteria/versions/:versionId/publish', checkPermission('can_manage_governance'), governanceConfigWriteLimiter, async (req, res) => {
     try {
         const boardId = parseInt(req.params.id, 10);
         const versionId = parseInt(req.params.versionId, 10);

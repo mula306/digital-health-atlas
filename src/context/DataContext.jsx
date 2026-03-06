@@ -102,39 +102,50 @@ export function DataProvider({ children }) {
                 console.log("DataContext: Starting data fetch...");
                 setLoading(true);
 
-                // 1. Fetch Permissions FIRST to determine what else to fetch
+                // 1. Fetch permissions + user profile first
                 let currentPermissions = [];
+                let userProfile = null;
+                const account = instance.getActiveAccount();
+
+                const [permsResult, userResult] = await Promise.allSettled([
+                    authFetch(`${API_BASE}/admin/permissions`),
+                    authFetch(`${API_BASE}/users/me`)
+                ]);
+
                 try {
-                    const permsRes = await authFetch(`${API_BASE}/admin/permissions`);
-                    currentPermissions = await permsRes.json();
-                    setPermissions(currentPermissions);
+                    if (permsResult.status === 'fulfilled') {
+                        currentPermissions = await permsResult.value.json();
+                        setPermissions(currentPermissions);
+                    } else {
+                        console.warn("DataContext: Failed to load permissions", permsResult.reason);
+                    }
+                    if (userResult.status === 'fulfilled') {
+                        userProfile = await userResult.value.json();
+                        setCurrentUser(userProfile);
+                    } else {
+                        console.warn("DataContext: Failed to load user profile", userResult.reason);
+                    }
                 } catch (err) {
-                    console.warn("DataContext: Failed to load permissions", err);
-                    // If 403/401, permissions remain empty
+                    console.warn("DataContext: Failed to parse permissions or user payload", err);
                 }
 
                 // Helper to check permission against the JUST loaded permissions
                 // (State update hasn't propagated yet)
-                const account = instance.getActiveAccount();
-                const roles = account?.idTokenClaims?.roles || [];
+                const tokenRoles = Array.isArray(account?.idTokenClaims?.roles) ? account.idTokenClaims.roles : [];
+                const roles = Array.isArray(userProfile?.roles) && userProfile.roles.length > 0
+                    ? userProfile.roles
+                    : tokenRoles;
                 const checkPerm = (permKey) => {
                     if (roles.includes('Admin')) return true;
                     // Check if any user role has the permission allowed
                     return currentPermissions.some(p => roles.includes(p.role) && p.permission === permKey && p.isAllowed);
                 };
 
-                // 2. Fetch Core Data (Goals, Projects) + User
-                const [goalsResult, projectsResult, userResult] = await Promise.allSettled([
+                // 2. Fetch core data
+                const [goalsResult, projectsResult] = await Promise.allSettled([
                     checkPerm('can_view_goals') ? authFetch(`${API_BASE}/goals`) : Promise.reject('skipped'),
-                    checkPerm('can_view_projects') ? authFetch(`${API_BASE}/projects?page=1&limit=50`) : Promise.reject('skipped'),
-                    authFetch(`${API_BASE}/users/me`)
+                    checkPerm('can_view_projects') ? authFetch(`${API_BASE}/projects?page=1&limit=50`) : Promise.reject('skipped')
                 ]);
-
-                if (userResult.status === 'fulfilled') {
-                    setCurrentUser(await userResult.value.json());
-                } else {
-                    console.warn("DataContext: Failed to load user profile", userResult.reason);
-                }
 
                 if (goalsResult.status === 'fulfilled') {
                     setGoals(await goalsResult.value.json());
@@ -310,9 +321,11 @@ export function DataProvider({ children }) {
     // Optimization: Pre-calculate user permissions into a Set for O(1) lookup
     const userPermissions = useMemo(() => {
         const account = instance.getActiveAccount();
-        if (!account || !account.idTokenClaims || !account.idTokenClaims.roles) return new Set();
-
-        const roles = account.idTokenClaims.roles;
+        const tokenRoles = Array.isArray(account?.idTokenClaims?.roles) ? account.idTokenClaims.roles : [];
+        const roles = Array.isArray(currentUser?.roles) && currentUser.roles.length > 0
+            ? currentUser.roles
+            : tokenRoles;
+        if (roles.length === 0) return new Set();
 
         // Admin bypass - Efficiently handle admins
         if (roles.includes('Admin')) return 'ALL';
@@ -326,7 +339,7 @@ export function DataProvider({ children }) {
             }
         });
         return allowed;
-    }, [instance, permissions]);
+    }, [instance, permissions, currentUser]);
 
     // Optimized O(1) permission check
     const hasPermission = useCallback((permissionKey) => {

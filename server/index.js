@@ -24,10 +24,47 @@ import adminRouter from './routes/admin.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+const IS_DEVELOPMENT = process.env.NODE_ENV !== 'production';
+
+const AZURE_TENANT_ID = process.env.AZURE_TENANT_ID;
+const AZURE_CLIENT_ID = process.env.AZURE_CLIENT_ID;
+const AUTH_FALLBACK_ROLES = (process.env.AUTH_FALLBACK_ROLES || '')
+    .split(',')
+    .map((role) => role.trim())
+    .filter(Boolean);
+const configuredCorsOrigins = (process.env.CORS_ALLOWED_ORIGINS || '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+const defaultDevCorsOrigins = [
+    'http://localhost:5173',
+    'https://localhost:5173',
+    'http://127.0.0.1:5173',
+    'https://127.0.0.1:5173'
+];
+const allowedCorsOrigins = configuredCorsOrigins.length > 0
+    ? configuredCorsOrigins
+    : (IS_DEVELOPMENT ? defaultDevCorsOrigins : []);
+
+if (!AZURE_TENANT_ID || AZURE_TENANT_ID === 'common') {
+    throw new Error("AZURE_TENANT_ID must be set to a specific tenant id and cannot be 'common'.");
+}
+if (!AZURE_CLIENT_ID) {
+    throw new Error('AZURE_CLIENT_ID must be set.');
+}
 
 // ==================== MIDDLEWARE ====================
 
-app.use(cors());
+app.use(cors({
+    origin: (origin, callback) => {
+        if (!origin) return callback(null, true); // non-browser clients
+        if (allowedCorsOrigins.includes(origin)) return callback(null, true);
+        return callback(new Error('CORS origin denied'));
+    },
+    credentials: true,
+    methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Authorization', 'Content-Type']
+}));
 app.use(helmet());
 app.use(compression());
 app.use(express.json({ limit: '50mb' }));
@@ -56,13 +93,13 @@ const jwtOptions = {
         cache: true,
         rateLimit: true,
         jwksRequestsPerMinute: 5,
-        jwksUri: `https://login.microsoftonline.com/${process.env.AZURE_TENANT_ID}/discovery/v2.0/keys`
+        jwksUri: `https://login.microsoftonline.com/${AZURE_TENANT_ID}/discovery/v2.0/keys`
     }),
     issuer: [
-        `https://login.microsoftonline.com/${process.env.AZURE_TENANT_ID}/v2.0`, // v2.0 endpoint
-        `https://sts.windows.net/${process.env.AZURE_TENANT_ID}/`              // v1.0 endpoint
+        `https://login.microsoftonline.com/${AZURE_TENANT_ID}/v2.0`, // v2.0 endpoint
+        `https://sts.windows.net/${AZURE_TENANT_ID}/`              // v1.0 endpoint
     ],
-    audience: [process.env.AZURE_CLIENT_ID, `api://${process.env.AZURE_CLIENT_ID}`],
+    audience: [AZURE_CLIENT_ID, `api://${AZURE_CLIENT_ID}`],
     algorithms: ['RS256']
 };
 
@@ -75,14 +112,6 @@ passport.use(new JwtStrategy(jwtOptions, async (jwt_payload, done) => {
             .query('SELECT * FROM Users WHERE oid = @oid');
 
 
-        // DEBUG: Log sanitized payload
-        const sanitizedPayload = {
-            oid: jwt_payload.oid,
-            name: jwt_payload.name || 'Unknown',
-            roles: jwt_payload.roles || []
-        };
-        console.log(`[AuthDebug] JWT Payload for ${sanitizedPayload.name}:`, JSON.stringify(sanitizedPayload, null, 2));
-
         let user = result.recordset[0];
 
         if (!user) {
@@ -90,17 +119,18 @@ passport.use(new JwtStrategy(jwtOptions, async (jwt_payload, done) => {
             // Extract info from token claims
             const name = jwt_payload.name || jwt_payload.preferred_username || 'Unknown User';
             const email = jwt_payload.preferred_username || jwt_payload.email || 'unknown@example.com';
-            const tid = jwt_payload.tid || process.env.AZURE_TENANT_ID;
+            const tid = jwt_payload.tid || AZURE_TENANT_ID;
 
             const insertResult = await pool.request()
                 .input('oid', sql.NVarChar, jwt_payload.oid)
                 .input('tid', sql.NVarChar, tid)
                 .input('name', sql.NVarChar, name)
                 .input('email', sql.NVarChar, email)
+                .input('roles', sql.NVarChar, JSON.stringify(AUTH_FALLBACK_ROLES))
                 .query(`
                     INSERT INTO Users (oid, tid, name, email, roles) 
                     OUTPUT INSERTED.* 
-                    VALUES (@oid, @tid, @name, @email, '["User"]')
+                    VALUES (@oid, @tid, @name, @email, @roles)
                 `);
             user = insertResult.recordset[0];
         }
@@ -110,31 +140,30 @@ passport.use(new JwtStrategy(jwtOptions, async (jwt_payload, done) => {
         try {
             dbRoles = JSON.parse(user.roles || '[]');
         } catch {
-            dbRoles = ['User'];
+            dbRoles = [];
         }
 
-        // Sync roles from Token (Source of Truth) if present
-        const tokenRoles = jwt_payload.roles;
-        if (tokenRoles && Array.isArray(tokenRoles) && tokenRoles.length > 0) {
-            // Check if we need to update DB
-            const dbRolesSorted = [...dbRoles].sort().join(',');
-            const tokenRolesSorted = [...tokenRoles].sort().join(',');
+        const tokenRolesClaim = jwt_payload.roles;
+        const normalizedTokenRoles = Array.isArray(tokenRolesClaim)
+            ? tokenRolesClaim.filter((role) => typeof role === 'string' && role.trim()).map((role) => role.trim())
+            : null;
+        // If token role claims are missing/empty, use explicit env fallback roles (default: none).
+        const effectiveTokenRoles = normalizedTokenRoles === null
+            ? AUTH_FALLBACK_ROLES
+            : (normalizedTokenRoles.length > 0 ? normalizedTokenRoles : AUTH_FALLBACK_ROLES);
 
-            if (dbRolesSorted !== tokenRolesSorted) {
+        const dbRolesSorted = [...dbRoles].sort().join(',');
+        const tokenRolesSorted = [...effectiveTokenRoles].sort().join(',');
+        if (dbRolesSorted !== tokenRolesSorted) {
+            if (IS_DEVELOPMENT) {
                 console.log(`Syncing roles for ${user.email}: ${dbRolesSorted} -> ${tokenRolesSorted}`);
-                await pool.request()
-                    .input('oid', sql.NVarChar, jwt_payload.oid)
-                    .input('roles', sql.NVarChar, JSON.stringify(tokenRoles))
-                    .query('UPDATE Users SET roles = @roles WHERE oid = @oid');
-
-                user.roles = tokenRoles;
-            } else {
-                user.roles = dbRoles;
             }
-        } else {
-            // No roles in token, use DB roles
-            user.roles = dbRoles;
+            await pool.request()
+                .input('oid', sql.NVarChar, jwt_payload.oid)
+                .input('roles', sql.NVarChar, JSON.stringify(effectiveTokenRoles))
+                .query('UPDATE Users SET roles = @roles WHERE oid = @oid');
         }
+        user.roles = effectiveTokenRoles;
 
         // Attach orgId for multi-org scoping
         user.orgId = user.orgId || null;

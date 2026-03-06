@@ -268,11 +268,12 @@ export function AdminPanel() {
                                         <th>Permission</th>
                                         {targetRoles.map(role => (
                                             <th key={role}>
-                                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.25rem' }}>
-                                                    <span>{role === 'ExecView' ? 'Exec View' : role === 'IntakeSubmit' ? 'Intake Submit' : role === 'IntakeManager' ? 'Intake Manager' : role}</span>
+                                                <div className="role-header-cell">
+                                                    <span className="role-header-label">
+                                                        {role === 'ExecView' ? 'Exec View' : role === 'IntakeSubmit' ? 'Intake Submit' : role === 'IntakeManager' ? 'Intake Manager' : role}
+                                                    </span>
                                                     <button
-                                                        className="btn-ghost"
-                                                        style={{ fontSize: '0.7rem', padding: '0.1rem 0.4rem', color: 'var(--text-tertiary)' }}
+                                                        className="btn-ghost role-toggle-btn"
                                                         onClick={() => toggleAllForRole(role)}
                                                         title={`Toggle all for ${role}`}
                                                     >

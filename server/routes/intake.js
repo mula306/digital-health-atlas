@@ -1,6 +1,13 @@
 import express from 'express';
 import { getPool, sql } from '../db.js';
 import { checkPermission, requireAuth, getAuthUser, hasPermission } from '../middleware/authMiddleware.js';
+import {
+    intakeSubmissionCreateLimiter,
+    governanceRoutingLimiter,
+    governanceVoteLimiter,
+    governanceDecisionLimiter,
+    intakeConversationLimiter
+} from '../middleware/rateLimiters.js';
 import { handleError } from '../utils/errorHandler.js';
 import { logAudit } from '../utils/auditLogger.js';
 
@@ -699,8 +706,18 @@ router.get('/governance-queue', checkPermission('can_view_governance_queue'), as
 });
 
 // Get all submissions (Admin/Manager only)
-router.get('/submissions', checkPermission('can_view_incoming_requests'), async (req, res) => {
+router.get('/submissions', requireAuth, async (req, res) => {
     try {
+        const user = getAuthUser(req);
+        if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+        const canViewAllSubmissions =
+            isIntakeManager(user) ||
+            await hasPermission(user, ['can_manage_intake', 'can_manage_governance']);
+        if (!canViewAllSubmissions) {
+            return res.status(403).json({ error: 'Forbidden' });
+        }
+
         const pool = await getPool();
         const result = await pool.request().query('SELECT * FROM IntakeSubmissions ORDER BY submittedAt DESC');
 
@@ -770,10 +787,10 @@ router.get('/my-submissions', requireAuth, async (req, res) => {
 });
 
 // Create submission (Authenticated)
-router.post('/submissions', async (req, res) => {
+router.post('/submissions', requireAuth, intakeSubmissionCreateLimiter, async (req, res) => {
     try {
-        const user = getAuthUser(req) || { oid: 'test-user-id', name: 'Test User', email: 'test@example.com' };
-        // if (!user) return res.status(401).json({ error: 'Unauthorized' });
+        const user = getAuthUser(req);
+        if (!user) return res.status(401).json({ error: 'Unauthorized' });
 
         const { formId, formData } = req.body;
         const parsedFormId = parseInt(formId, 10);
@@ -1011,7 +1028,7 @@ router.put('/submissions/:id', requireAuth, async (req, res) => {
 });
 
 // Intake manager can explicitly apply governance for optional/off submissions
-router.post('/submissions/:id/governance/apply', requireAuth, async (req, res) => {
+router.post('/submissions/:id/governance/apply', requireAuth, governanceRoutingLimiter, async (req, res) => {
     try {
         const user = getAuthUser(req);
         if (!user) return res.status(401).json({ error: 'Unauthorized' });
@@ -1075,7 +1092,7 @@ router.post('/submissions/:id/governance/apply', requireAuth, async (req, res) =
 });
 
 // Intake manager can skip governance for submissions not requiring governance
-router.post('/submissions/:id/governance/skip', requireAuth, async (req, res) => {
+router.post('/submissions/:id/governance/skip', requireAuth, governanceRoutingLimiter, async (req, res) => {
     try {
         const user = getAuthUser(req);
         if (!user) return res.status(401).json({ error: 'Unauthorized' });
@@ -1136,7 +1153,7 @@ router.post('/submissions/:id/governance/skip', requireAuth, async (req, res) =>
 });
 
 // Start governance review round for a submission
-router.post('/submissions/:id/governance/start', requireAuth, async (req, res) => {
+router.post('/submissions/:id/governance/start', requireAuth, governanceRoutingLimiter, async (req, res) => {
     try {
         const user = getAuthUser(req);
         if (!user) return res.status(401).json({ error: 'Unauthorized' });
@@ -1598,7 +1615,7 @@ router.get('/submissions/:id/governance', requireAuth, async (req, res) => {
 });
 
 // Submit or update a governance vote
-router.post('/submissions/:id/governance/votes', requireAuth, async (req, res) => {
+router.post('/submissions/:id/governance/votes', requireAuth, governanceVoteLimiter, async (req, res) => {
     try {
         const user = getAuthUser(req);
         if (!user) return res.status(401).json({ error: 'Unauthorized' });
@@ -1756,7 +1773,7 @@ router.post('/submissions/:id/governance/votes', requireAuth, async (req, res) =
 });
 
 // Finalize governance decision for the active review
-router.post('/submissions/:id/governance/decide', requireAuth, async (req, res) => {
+router.post('/submissions/:id/governance/decide', requireAuth, governanceDecisionLimiter, async (req, res) => {
     try {
         const user = getAuthUser(req);
         if (!user) return res.status(401).json({ error: 'Unauthorized' });
@@ -1934,7 +1951,7 @@ router.post('/submissions/:id/governance/decide', requireAuth, async (req, res) 
 });
 
 // Add Message to Conversation (User or Admin)
-router.post('/submissions/:id/message', requireAuth, async (req, res) => {
+router.post('/submissions/:id/message', requireAuth, intakeConversationLimiter, async (req, res) => {
     try {
         const user = getAuthUser(req);
         if (!user) return res.status(401).json({ error: 'Unauthorized' });

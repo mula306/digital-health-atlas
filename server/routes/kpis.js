@@ -1,13 +1,14 @@
 import express from 'express';
 import { getPool, sql } from '../db.js';
 import { checkPermission, getAuthUser } from '../middleware/authMiddleware.js';
+import { withSharedScope, checkKpiWriteAccess, requireGoalWriteAccess } from '../middleware/orgScope.js';
 import { handleError } from '../utils/errorHandler.js';
 import { logAudit } from '../utils/auditLogger.js';
 
 const router = express.Router();
 
 // Update KPI
-router.put('/:id', checkPermission('can_manage_kpis'), async (req, res) => {
+router.put('/:id', checkPermission('can_manage_kpis'), withSharedScope, checkKpiWriteAccess(), requireGoalWriteAccess, async (req, res) => {
     try {
         const { name, target, current, unit } = req.body;
         const id = parseInt(req.params.id);
@@ -51,7 +52,7 @@ router.put('/:id', checkPermission('can_manage_kpis'), async (req, res) => {
 });
 
 // Delete KPI
-router.delete('/:id', checkPermission('can_manage_kpis'), async (req, res) => {
+router.delete('/:id', checkPermission('can_manage_kpis'), withSharedScope, checkKpiWriteAccess(), requireGoalWriteAccess, async (req, res) => {
     try {
         const id = parseInt(req.params.id);
         const pool = await getPool();

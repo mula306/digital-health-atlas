@@ -1,6 +1,7 @@
 import express from 'express';
 import { getPool, sql } from '../db.js';
 import { checkPermission, getAuthUser } from '../middleware/authMiddleware.js';
+import { withSharedScope, checkTaskWriteAccess, requireProjectWriteAccess } from '../middleware/orgScope.js';
 import { handleError } from '../utils/errorHandler.js';
 import { logAudit } from '../utils/auditLogger.js';
 import { invalidateProjectCache } from '../utils/cache.js';
@@ -8,7 +9,7 @@ import { invalidateProjectCache } from '../utils/cache.js';
 const router = express.Router();
 
 // Update task
-router.put('/:id', checkPermission('can_edit_project'), async (req, res) => {
+router.put('/:id', checkPermission('can_edit_project'), withSharedScope, checkTaskWriteAccess(), requireProjectWriteAccess, async (req, res) => {
     try {
         const { title, status, priority, description, startDate, endDate } = req.body;
         const id = parseInt(req.params.id);
@@ -62,7 +63,7 @@ router.put('/:id', checkPermission('can_edit_project'), async (req, res) => {
 });
 
 // Delete task
-router.delete('/:id', checkPermission('can_edit_project'), async (req, res) => {
+router.delete('/:id', checkPermission('can_edit_project'), withSharedScope, checkTaskWriteAccess(), requireProjectWriteAccess, async (req, res) => {
     try {
         const id = parseInt(req.params.id);
         const pool = await getPool();
