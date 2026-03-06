@@ -11,6 +11,7 @@
         "migrate:governance:phase0": "node scripts/run_migration.js migrate_governance_phase0.sql",
         "migrate:governance:phase1": "node scripts/run_migration.js migrate_governance_phase1.sql",
         "migrate:governance:phase2": "node scripts/run_migration.js migrate_governance_phase2.sql",
+        "migrate:governance:phase3": "node scripts/run_migration.js migrate_governance_phase3.sql",
         "migrate:multi-org": "node scripts/run_migration.js migrate_multi_org.sql"
     },
     "dependencies": {

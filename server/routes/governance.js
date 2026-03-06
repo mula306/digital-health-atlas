@@ -42,6 +42,37 @@ const toFiniteIntOrNull = (value) => {
     return Math.trunc(n);
 };
 
+const DEFAULT_GOVERNANCE_POLICY = Object.freeze({
+    quorumPercent: 60,
+    quorumMinCount: 1,
+    decisionRequiresQuorum: true,
+    voteWindowDays: null
+});
+
+const normalizeGovernancePolicy = (policy = {}) => {
+    const rawPercent = Number(policy.quorumPercent);
+    const rawMinCount = Number(policy.quorumMinCount);
+    const rawWindowDays = policy.voteWindowDays === null || policy.voteWindowDays === undefined || policy.voteWindowDays === ''
+        ? null
+        : Number(policy.voteWindowDays);
+    const percent = Number.isFinite(rawPercent) ? Math.min(100, Math.max(1, Math.trunc(rawPercent))) : DEFAULT_GOVERNANCE_POLICY.quorumPercent;
+    const minCount = Number.isFinite(rawMinCount) ? Math.max(1, Math.trunc(rawMinCount)) : DEFAULT_GOVERNANCE_POLICY.quorumMinCount;
+    let voteWindowDays = null;
+    if (rawWindowDays !== null && Number.isFinite(rawWindowDays)) {
+        voteWindowDays = Math.min(90, Math.max(1, Math.trunc(rawWindowDays)));
+    }
+    const decisionRequiresQuorum = policy.decisionRequiresQuorum === undefined
+        ? DEFAULT_GOVERNANCE_POLICY.decisionRequiresQuorum
+        : !!policy.decisionRequiresQuorum;
+
+    return {
+        quorumPercent: percent,
+        quorumMinCount: minCount,
+        decisionRequiresQuorum,
+        voteWindowDays
+    };
+};
+
 const hasGovernancePhase3Schema = async (pool) => {
     const result = await pool.request().query(`
         SELECT
@@ -61,6 +92,159 @@ const hasGovernancePhase3Schema = async (pool) => {
         row.hasPolicySnapshot &&
         row.hasVoteDeadline
     );
+};
+
+const hasGovernanceBoardPolicySchema = async (pool) => {
+    const result = await pool.request().query(`
+        SELECT
+            CASE WHEN COL_LENGTH('GovernanceBoard', 'quorumPercentOverride') IS NOT NULL THEN 1 ELSE 0 END AS hasQuorumPercentOverride,
+            CASE WHEN COL_LENGTH('GovernanceBoard', 'quorumMinCountOverride') IS NOT NULL THEN 1 ELSE 0 END AS hasQuorumMinCountOverride,
+            CASE WHEN COL_LENGTH('GovernanceBoard', 'decisionRequiresQuorumOverride') IS NOT NULL THEN 1 ELSE 0 END AS hasDecisionRequiresQuorumOverride,
+            CASE WHEN COL_LENGTH('GovernanceBoard', 'voteWindowDaysOverride') IS NOT NULL THEN 1 ELSE 0 END AS hasVoteWindowDaysOverride
+    `);
+    const row = result.recordset[0] || {};
+    return !!(
+        row.hasQuorumPercentOverride &&
+        row.hasQuorumMinCountOverride &&
+        row.hasDecisionRequiresQuorumOverride &&
+        row.hasVoteWindowDaysOverride
+    );
+};
+
+const getDefaultGovernancePolicy = (settings, phase3Ready) => {
+    if (!phase3Ready) return { ...DEFAULT_GOVERNANCE_POLICY };
+    return normalizeGovernancePolicy({
+        quorumPercent: settings?.quorumPercent,
+        quorumMinCount: settings?.quorumMinCount,
+        decisionRequiresQuorum: settings?.decisionRequiresQuorum,
+        voteWindowDays: settings?.voteWindowDays
+    });
+};
+
+const buildBoardPolicy = (boardRow, defaultPolicy, boardPolicyReady) => {
+    const safeDefaults = normalizeGovernancePolicy(defaultPolicy);
+    if (!boardPolicyReady) {
+        return {
+            useGlobalDefaults: true,
+            source: 'global',
+            overrides: {
+                quorumPercent: null,
+                quorumMinCount: null,
+                decisionRequiresQuorum: null,
+                voteWindowDays: null
+            },
+            effective: safeDefaults,
+            sources: {
+                quorumPercent: 'global',
+                quorumMinCount: 'global',
+                decisionRequiresQuorum: 'global',
+                voteWindowDays: 'global'
+            }
+        };
+    }
+
+    const overrides = {
+        quorumPercent: boardRow.quorumPercentOverride === null || boardRow.quorumPercentOverride === undefined
+            ? null
+            : Number(boardRow.quorumPercentOverride),
+        quorumMinCount: boardRow.quorumMinCountOverride === null || boardRow.quorumMinCountOverride === undefined
+            ? null
+            : Number(boardRow.quorumMinCountOverride),
+        decisionRequiresQuorum: boardRow.decisionRequiresQuorumOverride === null || boardRow.decisionRequiresQuorumOverride === undefined
+            ? null
+            : !!boardRow.decisionRequiresQuorumOverride,
+        voteWindowDays: boardRow.voteWindowDaysOverride === null || boardRow.voteWindowDaysOverride === undefined
+            ? null
+            : Number(boardRow.voteWindowDaysOverride)
+    };
+    const effective = normalizeGovernancePolicy({
+        quorumPercent: overrides.quorumPercent ?? safeDefaults.quorumPercent,
+        quorumMinCount: overrides.quorumMinCount ?? safeDefaults.quorumMinCount,
+        decisionRequiresQuorum: overrides.decisionRequiresQuorum ?? safeDefaults.decisionRequiresQuorum,
+        voteWindowDays: overrides.voteWindowDays === null ? safeDefaults.voteWindowDays : overrides.voteWindowDays
+    });
+    const useGlobalDefaults = (
+        overrides.quorumPercent === null &&
+        overrides.quorumMinCount === null &&
+        overrides.decisionRequiresQuorum === null &&
+        overrides.voteWindowDays === null
+    );
+
+    return {
+        useGlobalDefaults,
+        source: useGlobalDefaults ? 'global' : 'board',
+        overrides,
+        effective,
+        sources: {
+            quorumPercent: overrides.quorumPercent === null ? 'global' : 'board',
+            quorumMinCount: overrides.quorumMinCount === null ? 'global' : 'board',
+            decisionRequiresQuorum: overrides.decisionRequiresQuorum === null ? 'global' : 'board',
+            voteWindowDays: overrides.voteWindowDays === null ? 'global' : 'board'
+        }
+    };
+};
+
+const parseBoardPolicyPayload = (rawPolicy) => {
+    if (rawPolicy === undefined) return null;
+    if (!rawPolicy || typeof rawPolicy !== 'object' || Array.isArray(rawPolicy)) {
+        throw new Error('boardPolicy must be an object');
+    }
+
+    const useGlobalDefaults = rawPolicy.useGlobalDefaults !== false;
+    if (useGlobalDefaults) {
+        return {
+            useGlobalDefaults: true,
+            overrides: {
+                quorumPercent: null,
+                quorumMinCount: null,
+                decisionRequiresQuorum: null,
+                voteWindowDays: null
+            }
+        };
+    }
+
+    if (
+        rawPolicy.quorumPercent === undefined ||
+        rawPolicy.quorumMinCount === undefined ||
+        rawPolicy.decisionRequiresQuorum === undefined ||
+        !Object.prototype.hasOwnProperty.call(rawPolicy, 'voteWindowDays')
+    ) {
+        throw new Error('boardPolicy custom mode requires quorumPercent, quorumMinCount, decisionRequiresQuorum, and voteWindowDays');
+    }
+
+    const quorumPercent = toFiniteIntOrNull(rawPolicy.quorumPercent);
+    if (quorumPercent === null || quorumPercent < 1 || quorumPercent > 100) {
+        throw new Error('boardPolicy.quorumPercent must be an integer between 1 and 100');
+    }
+
+    const quorumMinCount = toFiniteIntOrNull(rawPolicy.quorumMinCount);
+    if (quorumMinCount === null || quorumMinCount < 1) {
+        throw new Error('boardPolicy.quorumMinCount must be an integer >= 1');
+    }
+
+    const decisionRequiresQuorum = parseBooleanOrNull(rawPolicy.decisionRequiresQuorum);
+    if (decisionRequiresQuorum === null) {
+        throw new Error('boardPolicy.decisionRequiresQuorum must be boolean');
+    }
+
+    let voteWindowDays = null;
+    if (rawPolicy.voteWindowDays !== null && rawPolicy.voteWindowDays !== '') {
+        const parsedWindow = toFiniteIntOrNull(rawPolicy.voteWindowDays);
+        if (parsedWindow === null || parsedWindow < 1 || parsedWindow > 90) {
+            throw new Error('boardPolicy.voteWindowDays must be null or an integer between 1 and 90');
+        }
+        voteWindowDays = parsedWindow;
+    }
+
+    return {
+        useGlobalDefaults: false,
+        overrides: {
+            quorumPercent,
+            quorumMinCount,
+            decisionRequiresQuorum,
+            voteWindowDays
+        }
+    };
 };
 
 const normalizeCriteria = (criteria) => {
@@ -136,13 +320,20 @@ router.get('/settings', requireAuth, async (req, res) => {
         const pool = await getPool();
         const settings = await getOrCreateGovernanceSettings(pool);
         const phase3Ready = await hasGovernancePhase3Schema(pool);
+        const boardPolicyReady = phase3Ready ? await hasGovernanceBoardPolicySchema(pool) : false;
+        const defaults = getDefaultGovernancePolicy(settings, phase3Ready);
         res.json({
             governanceEnabled: !!settings.governanceEnabled,
-            quorumPercent: phase3Ready ? Number(settings.quorumPercent || 60) : 60,
-            quorumMinCount: phase3Ready ? Number(settings.quorumMinCount || 1) : 1,
-            decisionRequiresQuorum: phase3Ready ? !!settings.decisionRequiresQuorum : true,
-            voteWindowDays: phase3Ready && settings.voteWindowDays !== null ? Number(settings.voteWindowDays) : null,
+            quorumPercent: defaults.quorumPercent,
+            quorumMinCount: defaults.quorumMinCount,
+            decisionRequiresQuorum: defaults.decisionRequiresQuorum,
+            voteWindowDays: defaults.voteWindowDays,
+            defaultQuorumPercent: defaults.quorumPercent,
+            defaultQuorumMinCount: defaults.quorumMinCount,
+            defaultDecisionRequiresQuorum: defaults.decisionRequiresQuorum,
+            defaultVoteWindowDays: defaults.voteWindowDays,
             phase3Ready,
+            boardPolicyReady,
             updatedAt: settings.updatedAt,
             updatedByOid: settings.updatedByOid || null
         });
@@ -174,33 +365,46 @@ router.put('/settings', checkPermission('can_manage_governance'), async (req, re
         let voteWindowDays = currentVoteWindowDays;
 
         if (phase3Ready) {
-            if (req.body.quorumPercent !== undefined) {
-                const parsed = toFiniteIntOrNull(req.body.quorumPercent);
+            const quorumPercentInput = req.body.defaultQuorumPercent !== undefined
+                ? req.body.defaultQuorumPercent
+                : req.body.quorumPercent;
+            const quorumMinInput = req.body.defaultQuorumMinCount !== undefined
+                ? req.body.defaultQuorumMinCount
+                : req.body.quorumMinCount;
+            const decisionRequiresQuorumInput = req.body.defaultDecisionRequiresQuorum !== undefined
+                ? req.body.defaultDecisionRequiresQuorum
+                : req.body.decisionRequiresQuorum;
+            const voteWindowInput = req.body.defaultVoteWindowDays !== undefined
+                ? req.body.defaultVoteWindowDays
+                : req.body.voteWindowDays;
+
+            if (quorumPercentInput !== undefined) {
+                const parsed = toFiniteIntOrNull(quorumPercentInput);
                 if (parsed === null || parsed < 1 || parsed > 100) {
-                    return res.status(400).json({ error: 'quorumPercent must be an integer between 1 and 100' });
+                    return res.status(400).json({ error: 'defaultQuorumPercent must be an integer between 1 and 100' });
                 }
                 quorumPercent = parsed;
             }
-            if (req.body.quorumMinCount !== undefined) {
-                const parsed = toFiniteIntOrNull(req.body.quorumMinCount);
+            if (quorumMinInput !== undefined) {
+                const parsed = toFiniteIntOrNull(quorumMinInput);
                 if (parsed === null || parsed < 1) {
-                    return res.status(400).json({ error: 'quorumMinCount must be an integer >= 1' });
+                    return res.status(400).json({ error: 'defaultQuorumMinCount must be an integer >= 1' });
                 }
                 quorumMinCount = parsed;
             }
-            if (req.body.decisionRequiresQuorum !== undefined) {
-                if (typeof req.body.decisionRequiresQuorum !== 'boolean') {
-                    return res.status(400).json({ error: 'decisionRequiresQuorum must be boolean' });
+            if (decisionRequiresQuorumInput !== undefined) {
+                if (typeof decisionRequiresQuorumInput !== 'boolean') {
+                    return res.status(400).json({ error: 'defaultDecisionRequiresQuorum must be boolean' });
                 }
-                decisionRequiresQuorum = req.body.decisionRequiresQuorum;
+                decisionRequiresQuorum = decisionRequiresQuorumInput;
             }
-            if (req.body.voteWindowDays !== undefined) {
-                if (req.body.voteWindowDays === null || req.body.voteWindowDays === '') {
+            if (voteWindowInput !== undefined) {
+                if (voteWindowInput === null || voteWindowInput === '') {
                     voteWindowDays = null;
                 } else {
-                    const parsed = toFiniteIntOrNull(req.body.voteWindowDays);
+                    const parsed = toFiniteIntOrNull(voteWindowInput);
                     if (parsed === null || parsed < 1 || parsed > 90) {
-                        return res.status(400).json({ error: 'voteWindowDays must be null or an integer between 1 and 90' });
+                        return res.status(400).json({ error: 'defaultVoteWindowDays must be null or an integer between 1 and 90' });
                     }
                     voteWindowDays = parsed;
                 }
@@ -262,6 +466,7 @@ router.put('/settings', checkPermission('can_manage_governance'), async (req, re
             req
         });
 
+        const boardPolicyReady = phase3Ready ? await hasGovernanceBoardPolicySchema(pool) : false;
         res.json({
             success: true,
             governanceEnabled,
@@ -269,7 +474,12 @@ router.put('/settings', checkPermission('can_manage_governance'), async (req, re
             quorumMinCount: phase3Ready ? quorumMinCount : currentQuorumMinCount,
             decisionRequiresQuorum: phase3Ready ? decisionRequiresQuorum : currentDecisionRequiresQuorum,
             voteWindowDays: phase3Ready ? voteWindowDays : currentVoteWindowDays,
-            phase3Ready
+            defaultQuorumPercent: phase3Ready ? quorumPercent : currentQuorumPercent,
+            defaultQuorumMinCount: phase3Ready ? quorumMinCount : currentQuorumMinCount,
+            defaultDecisionRequiresQuorum: phase3Ready ? decisionRequiresQuorum : currentDecisionRequiresQuorum,
+            defaultVoteWindowDays: phase3Ready ? voteWindowDays : currentVoteWindowDays,
+            phase3Ready,
+            boardPolicyReady
         });
     } catch (err) {
         handleError(res, 'updating governance settings', err);
@@ -350,16 +560,38 @@ router.get('/boards', checkPermission(['can_view_governance_queue', 'can_manage_
     try {
         const includeInactive = parseBooleanOrNull(req.query.includeInactive);
         const pool = await getPool();
+        const phase3Ready = await hasGovernancePhase3Schema(pool);
+        const boardPolicyReady = phase3Ready ? await hasGovernanceBoardPolicySchema(pool) : false;
+        const settings = await getOrCreateGovernanceSettings(pool);
+        const defaultPolicy = getDefaultGovernancePolicy(settings, phase3Ready);
 
         const request = pool.request();
         let where = '';
         if (includeInactive !== true) {
             where = 'WHERE b.isActive = 1';
         }
+        const boardPolicySelect = boardPolicyReady
+            ? `
+                b.quorumPercentOverride,
+                b.quorumMinCountOverride,
+                b.decisionRequiresQuorumOverride,
+                b.voteWindowDaysOverride,
+            `
+            : `
+                NULL AS quorumPercentOverride,
+                NULL AS quorumMinCountOverride,
+                NULL AS decisionRequiresQuorumOverride,
+                NULL AS voteWindowDaysOverride,
+            `;
 
         const result = await request.query(`
             SELECT
-                b.*,
+                b.id,
+                b.name,
+                b.isActive,
+                b.createdAt,
+                b.createdByOid,
+                ${boardPolicySelect}
                 (
                     SELECT COUNT(*)
                     FROM GovernanceMembership gm
@@ -372,14 +604,24 @@ router.get('/boards', checkPermission(['can_view_governance_queue', 'can_manage_
             ORDER BY b.name ASC
         `);
 
-        res.json(result.recordset.map(row => ({
-            id: row.id.toString(),
-            name: row.name,
-            isActive: !!row.isActive,
-            createdAt: row.createdAt,
-            createdByOid: row.createdByOid || null,
-            activeMemberCount: Number(row.activeMemberCount || 0)
-        })));
+        res.json(result.recordset.map(row => {
+            const policy = buildBoardPolicy(row, defaultPolicy, boardPolicyReady);
+            return {
+                id: row.id.toString(),
+                name: row.name,
+                isActive: !!row.isActive,
+                createdAt: row.createdAt,
+                createdByOid: row.createdByOid || null,
+                activeMemberCount: Number(row.activeMemberCount || 0),
+                policy,
+                policySource: policy.source,
+                useGlobalPolicyDefaults: policy.useGlobalDefaults,
+                policyOverrides: policy.overrides,
+                effectivePolicy: policy.effective,
+                policySources: policy.sources,
+                boardPolicyReady
+            };
+        }));
     } catch (err) {
         handleError(res, 'fetching governance boards', err);
     }
@@ -393,24 +635,92 @@ router.post('/boards', checkPermission('can_manage_governance'), async (req, res
 
         const user = getAuthUser(req);
         const pool = await getPool();
-        const result = await pool.request()
+        const phase3Ready = await hasGovernancePhase3Schema(pool);
+        const boardPolicyReady = phase3Ready ? await hasGovernanceBoardPolicySchema(pool) : false;
+        const parsedBoardPolicy = parseBoardPolicyPayload(req.body?.boardPolicy);
+        if (parsedBoardPolicy && !boardPolicyReady) {
+            return res.status(409).json({
+                error: 'Board policy overrides are not available yet. Run `npm run migrate:governance:phase3` in `server`.'
+            });
+        }
+
+        const policyOverrides = parsedBoardPolicy?.overrides || {
+            quorumPercent: null,
+            quorumMinCount: null,
+            decisionRequiresQuorum: null,
+            voteWindowDays: null
+        };
+
+        const insertRequest = pool.request()
             .input('name', sql.NVarChar(255), trimmedName)
             .input('isActive', sql.Bit, isActive === false ? 0 : 1)
-            .input('createdByOid', sql.NVarChar(100), user?.oid || null)
-            .query(`
+            .input('createdByOid', sql.NVarChar(100), user?.oid || null);
+
+        let result;
+        if (boardPolicyReady) {
+            result = await insertRequest
+                .input('quorumPercentOverride', sql.Int, policyOverrides.quorumPercent)
+                .input('quorumMinCountOverride', sql.Int, policyOverrides.quorumMinCount)
+                .input('decisionRequiresQuorumOverride', sql.Bit, policyOverrides.decisionRequiresQuorum === null ? null : (policyOverrides.decisionRequiresQuorum ? 1 : 0))
+                .input('voteWindowDaysOverride', sql.Int, policyOverrides.voteWindowDays)
+                .query(`
+                    INSERT INTO GovernanceBoard (
+                        name,
+                        isActive,
+                        createdByOid,
+                        quorumPercentOverride,
+                        quorumMinCountOverride,
+                        decisionRequiresQuorumOverride,
+                        voteWindowDaysOverride
+                    )
+                    OUTPUT INSERTED.id, INSERTED.createdAt
+                    VALUES (
+                        @name,
+                        @isActive,
+                        @createdByOid,
+                        @quorumPercentOverride,
+                        @quorumMinCountOverride,
+                        @decisionRequiresQuorumOverride,
+                        @voteWindowDaysOverride
+                    )
+                `);
+        } else {
+            result = await insertRequest.query(`
                 INSERT INTO GovernanceBoard (name, isActive, createdByOid)
                 OUTPUT INSERTED.id, INSERTED.createdAt
                 VALUES (@name, @isActive, @createdByOid)
             `);
+        }
 
         const boardId = result.recordset[0].id.toString();
+        const settings = await getOrCreateGovernanceSettings(pool);
+        const defaultPolicy = getDefaultGovernancePolicy(settings, phase3Ready);
+        const policy = parsedBoardPolicy
+            ? {
+                useGlobalDefaults: parsedBoardPolicy.useGlobalDefaults,
+                source: parsedBoardPolicy.useGlobalDefaults ? 'global' : 'board',
+                overrides: policyOverrides,
+                effective: parsedBoardPolicy.useGlobalDefaults ? defaultPolicy : normalizeGovernancePolicy(policyOverrides),
+                sources: {
+                    quorumPercent: parsedBoardPolicy.useGlobalDefaults ? 'global' : 'board',
+                    quorumMinCount: parsedBoardPolicy.useGlobalDefaults ? 'global' : 'board',
+                    decisionRequiresQuorum: parsedBoardPolicy.useGlobalDefaults ? 'global' : 'board',
+                    voteWindowDays: parsedBoardPolicy.useGlobalDefaults ? 'global' : 'board'
+                }
+            }
+            : buildBoardPolicy({}, defaultPolicy, boardPolicyReady);
+
         logAudit({
             action: 'governance.board_create',
             entityType: 'governance_board',
             entityId: boardId,
             entityTitle: trimmedName,
             user,
-            after: { name: trimmedName, isActive: isActive !== false },
+            after: {
+                name: trimmedName,
+                isActive: isActive !== false,
+                boardPolicy: parsedBoardPolicy ? policy : { useGlobalDefaults: true, source: 'global' }
+            },
             req
         });
 
@@ -418,9 +728,19 @@ router.post('/boards', checkPermission('can_manage_governance'), async (req, res
             id: boardId,
             name: trimmedName,
             isActive: isActive !== false,
-            createdAt: result.recordset[0].createdAt
+            createdAt: result.recordset[0].createdAt,
+            policy,
+            policySource: policy.source,
+            useGlobalPolicyDefaults: policy.useGlobalDefaults,
+            policyOverrides: policy.overrides,
+            effectivePolicy: policy.effective,
+            policySources: policy.sources,
+            boardPolicyReady
         });
     } catch (err) {
+        if (err?.message?.startsWith('boardPolicy')) {
+            return res.status(400).json({ error: err.message });
+        }
         handleError(res, 'creating governance board', err);
     }
 });
@@ -432,9 +752,21 @@ router.put('/boards/:id', checkPermission('can_manage_governance'), async (req, 
 
         const { name, isActive } = req.body;
         const pool = await getPool();
+        const phase3Ready = await hasGovernancePhase3Schema(pool);
+        const boardPolicyReady = phase3Ready ? await hasGovernanceBoardPolicySchema(pool) : false;
+        const parsedBoardPolicy = parseBoardPolicyPayload(req.body?.boardPolicy);
+        if (parsedBoardPolicy && !boardPolicyReady) {
+            return res.status(409).json({
+                error: 'Board policy overrides are not available yet. Run `npm run migrate:governance:phase3` in `server`.'
+            });
+        }
+
+        const selectPolicyColumns = boardPolicyReady
+            ? ', quorumPercentOverride, quorumMinCountOverride, decisionRequiresQuorumOverride, voteWindowDaysOverride'
+            : '';
         const prev = await pool.request()
             .input('id', sql.Int, boardId)
-            .query('SELECT id, name, isActive FROM GovernanceBoard WHERE id = @id');
+            .query(`SELECT id, name, isActive${selectPolicyColumns} FROM GovernanceBoard WHERE id = @id`);
 
         if (prev.recordset.length === 0) return res.status(404).json({ error: 'Board not found' });
 
@@ -452,6 +784,19 @@ router.put('/boards/:id', checkPermission('can_manage_governance'), async (req, 
             request.input('isActive', sql.Bit, parsed ? 1 : 0);
             updates.push('isActive = @isActive');
         }
+        if (parsedBoardPolicy) {
+            request.input('quorumPercentOverride', sql.Int, parsedBoardPolicy.overrides.quorumPercent);
+            request.input('quorumMinCountOverride', sql.Int, parsedBoardPolicy.overrides.quorumMinCount);
+            request.input('decisionRequiresQuorumOverride', sql.Bit, parsedBoardPolicy.overrides.decisionRequiresQuorum === null
+                ? null
+                : (parsedBoardPolicy.overrides.decisionRequiresQuorum ? 1 : 0));
+            request.input('voteWindowDaysOverride', sql.Int, parsedBoardPolicy.overrides.voteWindowDays);
+
+            updates.push('quorumPercentOverride = @quorumPercentOverride');
+            updates.push('quorumMinCountOverride = @quorumMinCountOverride');
+            updates.push('decisionRequiresQuorumOverride = @decisionRequiresQuorumOverride');
+            updates.push('voteWindowDaysOverride = @voteWindowDaysOverride');
+        }
 
         if (updates.length === 0) {
             return res.status(400).json({ error: 'No valid fields to update' });
@@ -466,12 +811,15 @@ router.put('/boards/:id', checkPermission('can_manage_governance'), async (req, 
             entityTitle: name || prev.recordset[0].name,
             user,
             before: prev.recordset[0],
-            after: { name, isActive },
+            after: { name, isActive, boardPolicy: parsedBoardPolicy || undefined },
             req
         });
 
-        res.json({ success: true });
+        res.json({ success: true, boardPolicyReady });
     } catch (err) {
+        if (err?.message?.startsWith('boardPolicy')) {
+            return res.status(400).json({ error: err.message });
+        }
         handleError(res, 'updating governance board', err);
     }
 });

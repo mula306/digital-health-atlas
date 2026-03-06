@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+﻿import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ClipboardList, Plus, RefreshCw, Save, Search, Settings2, Users, ArrowUp, ArrowDown } from 'lucide-react';
 import { useData } from '../../context/DataContext';
 import { useToast } from '../../context/ToastContext';
@@ -64,12 +64,20 @@ export function GovernanceConfig() {
     const [decisionRequiresQuorum, setDecisionRequiresQuorum] = useState(true);
     const [voteWindowDays, setVoteWindowDays] = useState('');
     const [phase3Ready, setPhase3Ready] = useState(false);
+    const [boardPolicyReady, setBoardPolicyReady] = useState(false);
     const [boards, setBoards] = useState([]);
     const [selectedBoardId, setSelectedBoardId] = useState('');
     const [selectedBoardName, setSelectedBoardName] = useState('');
     const [selectedBoardActive, setSelectedBoardActive] = useState(true);
+    const [selectedBoardUseGlobalPolicyDefaults, setSelectedBoardUseGlobalPolicyDefaults] = useState(true);
+    const [selectedBoardQuorumPercent, setSelectedBoardQuorumPercent] = useState(60);
+    const [selectedBoardQuorumMinCount, setSelectedBoardQuorumMinCount] = useState(1);
+    const [selectedBoardDecisionRequiresQuorum, setSelectedBoardDecisionRequiresQuorum] = useState(true);
+    const [selectedBoardVoteWindowDays, setSelectedBoardVoteWindowDays] = useState('');
     const [newBoardName, setNewBoardName] = useState('');
     const [newBoardActive, setNewBoardActive] = useState(true);
+    const [boardSearch, setBoardSearch] = useState('');
+    const [boardCriteriaMeta, setBoardCriteriaMeta] = useState({});
 
     const [members, setMembers] = useState([]);
     const [availableUsers, setAvailableUsers] = useState([]);
@@ -94,11 +102,111 @@ export function GovernanceConfig() {
         return criteriaVersions.find(version => String(version.id) === String(selectedVersionId)) || null;
     }, [criteriaVersions, selectedVersionId]);
 
+    const filteredBoards = useMemo(() => {
+        const query = boardSearch.trim().toLowerCase();
+        if (!query) return boards;
+        return boards.filter(board => String(board.name || '').toLowerCase().includes(query));
+    }, [boards, boardSearch]);
+
+    const boardProgressMeta = useMemo(() => {
+        return boards.reduce((acc, board) => {
+            const criteriaMeta = boardCriteriaMeta[board.id] || { publishedCount: 0, draftCount: 0, totalCount: 0 };
+            const checks = [
+                !!board.isActive,
+                Number(board.activeMemberCount || 0) > 0,
+                Number(criteriaMeta.publishedCount || 0) > 0
+            ];
+            const completed = checks.filter(Boolean).length;
+            acc[board.id] = {
+                completed,
+                total: checks.length,
+                ready: completed === checks.length,
+                criteriaMeta
+            };
+            return acc;
+        }, {});
+    }, [boards, boardCriteriaMeta]);
+
+    const selectedBoardProgress = selectedBoard ? boardProgressMeta[selectedBoard.id] : null;
+    const selectedBoardBlockers = useMemo(() => {
+        if (!selectedBoard) return [];
+        const criteriaMeta = selectedBoardProgress?.criteriaMeta || { publishedCount: 0 };
+        const blockers = [];
+
+        if (!selectedBoard.isActive) {
+            blockers.push('Board is inactive. Activate it before using governance for submissions.');
+        }
+        if (Number(selectedBoard.activeMemberCount || 0) === 0) {
+            blockers.push('No active members assigned. Add at least one member in Step 3.');
+        }
+        if (Number(criteriaMeta.publishedCount || 0) === 0) {
+            blockers.push('No published criteria. Publish at least one criteria version in Step 4.');
+        }
+        return blockers;
+    }, [selectedBoard, selectedBoardProgress]);
+    const selectedBoardEffectivePolicy = useMemo(() => {
+        const fromBoard = selectedBoard?.effectivePolicy || selectedBoard?.policy?.effective || null;
+        return {
+            quorumPercent: Number(fromBoard?.quorumPercent ?? quorumPercent ?? 60),
+            quorumMinCount: Number(fromBoard?.quorumMinCount ?? quorumMinCount ?? 1),
+            decisionRequiresQuorum: fromBoard?.decisionRequiresQuorum === undefined
+                ? (decisionRequiresQuorum !== false)
+                : !!fromBoard.decisionRequiresQuorum,
+            voteWindowDays: fromBoard?.voteWindowDays === null || fromBoard?.voteWindowDays === undefined
+                ? null
+                : Number(fromBoard.voteWindowDays)
+        };
+    }, [selectedBoard, quorumPercent, quorumMinCount, decisionRequiresQuorum]);
+    const activeMembersCount = useMemo(() => {
+        return members.filter(member => member.isActive).length;
+    }, [members]);
+    const chairMembersCount = useMemo(() => {
+        return members.filter(member => member.isActive && member.role === 'chair').length;
+    }, [members]);
+    const selectedBoardCriteriaMeta = selectedBoardProgress?.criteriaMeta || { publishedCount: 0, draftCount: 0, totalCount: 0 };
+    const membersStepBlockers = useMemo(() => {
+        if (!selectedBoard) return [];
+        const blockers = [];
+        if (!selectedBoard.isActive) {
+            blockers.push('Selected board is inactive. Activate the board in Step 2 first.');
+        }
+        if (activeMembersCount === 0) {
+            blockers.push('Add at least one active member before governance can run.');
+        }
+        return blockers;
+    }, [selectedBoard, activeMembersCount]);
     const activeWeightTotal = useMemo(() => {
         return criteriaDraft
             .filter(item => item.enabled)
             .reduce((sum, item) => sum + (Number(item.weight) || 0), 0);
     }, [criteriaDraft]);
+
+    const criteriaStepBlockers = useMemo(() => {
+        if (!selectedBoard) return [];
+        const blockers = [];
+        if (!selectedBoard.isActive) {
+            blockers.push('Selected board is inactive. Activate the board in Step 2 first.');
+        }
+        if (activeMembersCount === 0) {
+            blockers.push('No active members found. Complete Step 3 before publishing criteria.');
+        }
+        if (criteriaDraft.length === 0) {
+            blockers.push('Add at least one criterion to create a valid configuration.');
+        }
+        if (activeWeightTotal <= 0) {
+            blockers.push('Active criteria weight total must be greater than 0.');
+        }
+        if ((selectedBoardCriteriaMeta.publishedCount || 0) === 0) {
+            blockers.push('No published version yet. Publish a draft to complete Step 4.');
+        }
+        return blockers;
+    }, [
+        selectedBoard,
+        activeMembersCount,
+        criteriaDraft.length,
+        activeWeightTotal,
+        selectedBoardCriteriaMeta.publishedCount
+    ]);
 
     const hasUnsavedChanges = settingsDirty || boardDirty || criteriaDirty;
     const governanceStepReadiness = useMemo(() => {
@@ -138,6 +246,27 @@ export function GovernanceConfig() {
         return memberOptions.find(user => user.oid === memberUserOid) || null;
     }, [memberOptions, memberUserOid]);
 
+    const loadBoardReadiness = useCallback(async (boardList) => {
+        if (!Array.isArray(boardList) || boardList.length === 0) {
+            setBoardCriteriaMeta({});
+            return;
+        }
+
+        const entries = await Promise.all(boardList.map(async (board) => {
+            try {
+                const versions = await fetchGovernanceCriteriaVersions(board.id);
+                const versionList = Array.isArray(versions) ? versions : [];
+                const publishedCount = versionList.filter(v => v.status === 'published').length;
+                const draftCount = versionList.filter(v => v.status === 'draft').length;
+                return [board.id, { publishedCount, draftCount, totalCount: versionList.length }];
+            } catch {
+                return [board.id, { publishedCount: 0, draftCount: 0, totalCount: 0 }];
+            }
+        }));
+
+        setBoardCriteriaMeta(Object.fromEntries(entries));
+    }, [fetchGovernanceCriteriaVersions]);
+
     const loadBoardDetails = useCallback(async (boardId, preferredVersionId = null) => {
         if (!boardId) {
             setMembers([]);
@@ -152,9 +281,24 @@ export function GovernanceConfig() {
                 fetchGovernanceBoardMembers(boardId, { includeInactive: true }),
                 fetchGovernanceCriteriaVersions(boardId)
             ]);
-            setMembers(Array.isArray(memberResults) ? memberResults : []);
+            const memberList = Array.isArray(memberResults) ? memberResults : [];
+            setMembers(memberList);
+            const activeMemberCount = memberList.filter(member => member.isActive).length;
+            setBoards(prev => prev.map(board =>
+                String(board.id) === String(boardId)
+                    ? { ...board, activeMemberCount }
+                    : board
+            ));
             const versions = Array.isArray(versionResults) ? versionResults : [];
             setCriteriaVersions(versions);
+            setBoardCriteriaMeta(prev => ({
+                ...prev,
+                [boardId]: {
+                    publishedCount: versions.filter(v => v.status === 'published').length,
+                    draftCount: versions.filter(v => v.status === 'draft').length,
+                    totalCount: versions.length
+                }
+            }));
 
             let versionToUse = null;
             if (preferredVersionId) {
@@ -196,7 +340,7 @@ export function GovernanceConfig() {
         }
     }, [fetchGovernanceUsers, selectedBoardId, toast]);
 
-    const loadAll = useCallback(async (isRefresh = false) => {
+    const loadAll = useCallback(async (isRefresh = false, preferredBoardId = null) => {
         try {
             if (isRefresh) setRefreshing(true);
             else setLoading(true);
@@ -207,26 +351,32 @@ export function GovernanceConfig() {
             ]);
 
             setGovernanceEnabled(!!settingsResult?.governanceEnabled);
-            setQuorumPercent(Number(settingsResult?.quorumPercent ?? 60));
-            setQuorumMinCount(Number(settingsResult?.quorumMinCount ?? 1));
-            setDecisionRequiresQuorum(settingsResult?.decisionRequiresQuorum !== false);
+            setQuorumPercent(Number(settingsResult?.defaultQuorumPercent ?? settingsResult?.quorumPercent ?? 60));
+            setQuorumMinCount(Number(settingsResult?.defaultQuorumMinCount ?? settingsResult?.quorumMinCount ?? 1));
+            setDecisionRequiresQuorum(
+                settingsResult?.defaultDecisionRequiresQuorum !== undefined
+                    ? settingsResult.defaultDecisionRequiresQuorum !== false
+                    : settingsResult?.decisionRequiresQuorum !== false
+            );
             setVoteWindowDays(
-                settingsResult?.voteWindowDays === null || settingsResult?.voteWindowDays === undefined
+                (settingsResult?.defaultVoteWindowDays ?? settingsResult?.voteWindowDays) === null ||
+                (settingsResult?.defaultVoteWindowDays ?? settingsResult?.voteWindowDays) === undefined
                     ? ''
-                    : String(settingsResult.voteWindowDays)
+                    : String(settingsResult?.defaultVoteWindowDays ?? settingsResult?.voteWindowDays)
             );
             setPhase3Ready(!!settingsResult?.phase3Ready);
+            setBoardPolicyReady(!!settingsResult?.boardPolicyReady);
             const nextBoards = Array.isArray(boardResults) ? boardResults : [];
             setBoards(nextBoards);
+            await loadBoardReadiness(nextBoards);
 
-            const selectedId = nextBoards.some(b => String(b.id) === String(selectedBoardId))
-                ? selectedBoardId
+            const candidateBoardId = preferredBoardId ?? '';
+            const selectedId = nextBoards.some(b => String(b.id) === String(candidateBoardId))
+                ? candidateBoardId
                 : (nextBoards[0]?.id || '');
             setSelectedBoardId(selectedId);
 
-            if (selectedId) {
-                await loadBoardDetails(selectedId);
-            } else {
+            if (!selectedId) {
                 setMembers([]);
                 setCriteriaVersions([]);
                 setSelectedVersionId('');
@@ -243,8 +393,7 @@ export function GovernanceConfig() {
     }, [
         getGovernanceSettings,
         fetchGovernanceBoards,
-        selectedBoardId,
-        loadBoardDetails,
+        loadBoardReadiness,
         toast
     ]);
 
@@ -253,14 +402,50 @@ export function GovernanceConfig() {
     }, [loadAll]);
 
     useEffect(() => {
+        if (!selectedBoardId) {
+            setMembers([]);
+            setCriteriaVersions([]);
+            setSelectedVersionId('');
+            setCriteriaDraft(cloneCriteria([]));
+            return;
+        }
+
+        loadBoardDetails(selectedBoardId);
+    }, [selectedBoardId, loadBoardDetails]);
+
+    useEffect(() => {
         if (selectedBoard) {
             setSelectedBoardName(selectedBoard.name || '');
             setSelectedBoardActive(!!selectedBoard.isActive);
+            const policy = selectedBoard.effectivePolicy || selectedBoard.policy?.effective || null;
+            const useGlobalDefaults = selectedBoard.useGlobalPolicyDefaults ?? selectedBoard.policy?.useGlobalDefaults ?? true;
+            setSelectedBoardUseGlobalPolicyDefaults(useGlobalDefaults);
+            setSelectedBoardQuorumPercent(Number(policy?.quorumPercent ?? quorumPercent ?? 60));
+            setSelectedBoardQuorumMinCount(Number(policy?.quorumMinCount ?? quorumMinCount ?? 1));
+            setSelectedBoardDecisionRequiresQuorum(
+                policy?.decisionRequiresQuorum === undefined
+                    ? (decisionRequiresQuorum !== false)
+                    : !!policy.decisionRequiresQuorum
+            );
+            setSelectedBoardVoteWindowDays(
+                policy?.voteWindowDays === null || policy?.voteWindowDays === undefined
+                    ? ''
+                    : String(policy.voteWindowDays)
+            );
         } else {
             setSelectedBoardName('');
             setSelectedBoardActive(true);
+            setSelectedBoardUseGlobalPolicyDefaults(true);
+            setSelectedBoardQuorumPercent(Number(quorumPercent || 60));
+            setSelectedBoardQuorumMinCount(Number(quorumMinCount || 1));
+            setSelectedBoardDecisionRequiresQuorum(decisionRequiresQuorum !== false);
+            setSelectedBoardVoteWindowDays(
+                voteWindowDays === null || voteWindowDays === undefined
+                    ? ''
+                    : String(voteWindowDays)
+            );
         }
-    }, [selectedBoard]);
+    }, [selectedBoard, quorumPercent, quorumMinCount, decisionRequiresQuorum, voteWindowDays]);
 
     useEffect(() => {
         if (!selectedVersion) return;
@@ -320,10 +505,10 @@ export function GovernanceConfig() {
             const parsedWindow = voteWindowDays === '' ? null : Number(voteWindowDays);
             await updateGovernanceSettings({
                 governanceEnabled: !!governanceEnabled,
-                quorumPercent: Number(quorumPercent),
-                quorumMinCount: Number(quorumMinCount),
-                decisionRequiresQuorum: !!decisionRequiresQuorum,
-                voteWindowDays: parsedWindow
+                defaultQuorumPercent: Number(quorumPercent),
+                defaultQuorumMinCount: Number(quorumMinCount),
+                defaultDecisionRequiresQuorum: !!decisionRequiresQuorum,
+                defaultVoteWindowDays: parsedWindow
             });
             setSettingsDirty(false);
             toast.success('Governance settings updated');
@@ -348,10 +533,10 @@ export function GovernanceConfig() {
             });
             const nextBoards = await fetchGovernanceBoards({ includeInactive: true });
             setBoards(nextBoards);
+            await loadBoardReadiness(nextBoards);
             setSelectedBoardId(created.id);
             setNewBoardName('');
             setNewBoardActive(true);
-            await loadBoardDetails(created.id);
             setBoardDirty(false);
             toast.success('Governance board created');
         } catch (err) {
@@ -368,14 +553,47 @@ export function GovernanceConfig() {
             toast.error('Board name is required');
             return;
         }
+        const canEditBoardPolicy = phase3Ready && boardPolicyReady;
+        const parsedBoardVoteWindow = selectedBoardVoteWindowDays === '' ? null : Number(selectedBoardVoteWindowDays);
+        if (canEditBoardPolicy && !selectedBoardUseGlobalPolicyDefaults) {
+            const percent = Number(selectedBoardQuorumPercent);
+            const minCount = Number(selectedBoardQuorumMinCount);
+            if (!Number.isFinite(percent) || percent < 1 || percent > 100) {
+                toast.error('Board quorum percent must be between 1 and 100');
+                return;
+            }
+            if (!Number.isFinite(minCount) || minCount < 1) {
+                toast.error('Board quorum minimum votes must be at least 1');
+                return;
+            }
+            if (
+                parsedBoardVoteWindow !== null &&
+                (!Number.isFinite(parsedBoardVoteWindow) || parsedBoardVoteWindow < 1 || parsedBoardVoteWindow > 90)
+            ) {
+                toast.error('Board voting window must be empty or between 1 and 90 days');
+                return;
+            }
+        }
         try {
             setBoardSaving(true);
-            await updateGovernanceBoard(selectedBoardId, {
+            const boardUpdatePayload = {
                 name: selectedBoardName.trim(),
                 isActive: selectedBoardActive
-            });
+            };
+            if (canEditBoardPolicy) {
+                boardUpdatePayload.boardPolicy = {
+                    useGlobalDefaults: selectedBoardUseGlobalPolicyDefaults,
+                    quorumPercent: Number(selectedBoardQuorumPercent),
+                    quorumMinCount: Number(selectedBoardQuorumMinCount),
+                    decisionRequiresQuorum: !!selectedBoardDecisionRequiresQuorum,
+                    voteWindowDays: parsedBoardVoteWindow
+                };
+            }
+
+            await updateGovernanceBoard(selectedBoardId, boardUpdatePayload);
             const nextBoards = await fetchGovernanceBoards({ includeInactive: true });
             setBoards(nextBoards);
+            await loadBoardReadiness(nextBoards);
             setBoardDirty(false);
             toast.success('Governance board updated');
         } catch (err) {
@@ -401,6 +619,11 @@ export function GovernanceConfig() {
             });
             const nextMembers = await fetchGovernanceBoardMembers(selectedBoardId, { includeInactive: true });
             setMembers(nextMembers);
+            setBoards(prev => prev.map(board =>
+                String(board.id) === String(selectedBoardId)
+                    ? { ...board, activeMemberCount: nextMembers.filter(member => member.isActive).length }
+                    : board
+            ));
             setMemberUserOid('');
             setMemberUserSearch('');
             setMemberRole('member');
@@ -425,6 +648,11 @@ export function GovernanceConfig() {
             });
             const nextMembers = await fetchGovernanceBoardMembers(selectedBoardId, { includeInactive: true });
             setMembers(nextMembers);
+            setBoards(prev => prev.map(board =>
+                String(board.id) === String(selectedBoardId)
+                    ? { ...board, activeMemberCount: nextMembers.filter(item => item.isActive).length }
+                    : board
+            ));
             toast.success('Governance member updated');
         } catch (err) {
             console.error(err);
@@ -561,10 +789,13 @@ export function GovernanceConfig() {
                 </div>
                 <button
                     className="btn-secondary"
-                    onClick={() => {
+                    onClick={async () => {
                         if (!confirmDiscardChanges()) return;
                         resetDirtyFlags();
-                        loadAll(true);
+                        await loadAll(true, selectedBoardId);
+                        if (selectedBoardId) {
+                            await loadBoardDetails(selectedBoardId);
+                        }
                     }}
                     disabled={refreshing}
                 >
@@ -641,10 +872,13 @@ export function GovernanceConfig() {
                 </button>
             </nav>
 
-            {/* ─── Settings Tab ─── */}
+            {/* â”€â”€â”€ Settings Tab â”€â”€â”€ */}
             {configTab === 'settings' && (
                 <section className="governance-section">
-                    <h4>Global Settings</h4>
+                    <h4>Global Defaults</h4>
+                    <p className="governance-muted">
+                        These defaults apply to boards that use global policy values.
+                    </p>
                     <div className="governance-grid">
                         <div className="form-group">
                             <label>Governance</label>
@@ -661,7 +895,7 @@ export function GovernanceConfig() {
                             </label>
                         </div>
                         <div className="form-group">
-                            <label>Voting Window (days, optional)</label>
+                            <label>Default Voting Window (days, optional)</label>
                             <input
                                 type="number"
                                 min="1"
@@ -676,7 +910,7 @@ export function GovernanceConfig() {
                             />
                         </div>
                         <div className="form-group">
-                            <label>Quorum Percent (1-100)</label>
+                            <label>Default Quorum Percent (1-100)</label>
                             <input
                                 type="number"
                                 min="1"
@@ -690,7 +924,7 @@ export function GovernanceConfig() {
                             />
                         </div>
                         <div className="form-group">
-                            <label>Quorum Minimum Votes</label>
+                            <label>Default Quorum Minimum Votes</label>
                             <input
                                 type="number"
                                 min="1"
@@ -714,7 +948,7 @@ export function GovernanceConfig() {
                                     }}
                                     disabled={!phase3Ready}
                                 />
-                                Require quorum before final decision
+                                Default: require quorum before final decision
                         </label>
                         <button className="btn-primary" onClick={handleSaveSettings} disabled={settingsSaving}>
                             <Save size={14} /> {settingsSaving ? 'Saving...' : 'Save Settings'}
@@ -725,205 +959,531 @@ export function GovernanceConfig() {
                             Phase 3 schema is not installed yet. Run `npm run migrate:governance:phase2` in `server`.
                         </p>
                     )}
-                </section>
-            )}
-
-            {/* ─── Boards Tab ─── */}
-            {configTab === 'boards' && (
-                <section className="governance-section">
-                    <h4>Governance Boards</h4>
-                    <div className="governance-grid">
-                        <div className="form-group">
-                            <label>Select Board</label>
-                            <select value={selectedBoardId} onChange={(e) => handleBoardSelectionChange(e.target.value)}>
-                                <option value="">No boards yet</option>
-                                {boards.map(board => (
-                                    <option key={board.id} value={board.id}>
-                                        {board.name} {board.isActive ? '' : '(Inactive)'}
-                                    </option>
-                                ))}
-                            </select>
-                        </div>
-                        <div className="form-group">
-                            <label>New Board Name</label>
-                            <input
-                                type="text"
-                                value={newBoardName}
-                                onChange={(e) => {
-                                    setNewBoardName(e.target.value);
-                                    setBoardDirty(true);
-                                }}
-                                placeholder="e.g., Clinical Governance Board"
-                            />
-                        </div>
-                    </div>
-                    <div className="governance-inline-row">
-                        <label className="required-checkbox">
-                            <input
-                                type="checkbox"
-                                checked={newBoardActive}
-                                onChange={(e) => {
-                                    setNewBoardActive(e.target.checked);
-                                    setBoardDirty(true);
-                                }}
-                            />
-                            New board active
-                        </label>
-                        <button className="btn-secondary" onClick={handleCreateBoard} disabled={boardSaving}>
-                            <Plus size={14} /> Create Board
-                        </button>
-                    </div>
-
-                    {selectedBoard && (
-                        <div className="governance-subcard">
-                            <h5>Edit Selected Board</h5>
-                            <div className="governance-grid">
-                                <div className="form-group">
-                                    <label>Board Name</label>
-                                    <input
-                                        type="text"
-                                        value={selectedBoardName}
-                                        onChange={(e) => {
-                                            setSelectedBoardName(e.target.value);
-                                            setBoardDirty(true);
-                                        }}
-                                    />
-                                </div>
-                                <div className="form-group">
-                                    <label>Status</label>
-                                    <label className="required-checkbox">
-                                        <input
-                                            type="checkbox"
-                                            checked={selectedBoardActive}
-                                            onChange={(e) => {
-                                                setSelectedBoardActive(e.target.checked);
-                                                setBoardDirty(true);
-                                            }}
-                                        />
-                                        Board is active
-                                    </label>
-                                </div>
-                            </div>
-                            <div className="form-actions">
-                                <button className="btn-primary" onClick={handleUpdateBoard} disabled={boardSaving}>
-                                    <Save size={14} /> Save Board
-                                </button>
-                            </div>
-                        </div>
+                    {phase3Ready && !boardPolicyReady && (
+                        <p className="governance-alert">
+                            Board-level policy overrides are not installed yet. Run `npm run migrate:governance:phase3` in `server`.
+                        </p>
                     )}
                 </section>
             )}
 
-            {/* ─── Members Tab ─── */}
-            {configTab === 'members' && (
-                selectedBoardId ? (
-                    <section className="governance-section">
-                        <h4><Users size={16} /> Board Members — {selectedBoard?.name || 'Board'}</h4>
-                        <div className="governance-grid">
-                            <div className="form-group governance-user-field">
-                                <label>User (from Users table)</label>
-                                <div className="governance-user-search">
+            {/* â”€â”€â”€ Boards Tab â”€â”€â”€ */}
+            {configTab === 'boards' && (
+                <section className="governance-section">
+                    <h4><ClipboardList size={16} /> Board Setup Workspace</h4>
+                    <div className="governance-board-workspace">
+                        <aside className="governance-board-list-panel">
+                            <div className="governance-board-list-toolbar">
+                                <label>Find Board</label>
+                                <div className="governance-user-search governance-board-search">
                                     <Search size={14} />
                                     <input
                                         type="text"
-                                        value={memberUserSearch}
-                                        onChange={(e) => setMemberUserSearch(e.target.value)}
-                                        placeholder="Search by name or email"
+                                        value={boardSearch}
+                                        onChange={(e) => setBoardSearch(e.target.value)}
+                                        placeholder="Search by board name"
                                     />
                                 </div>
-                                <select
-                                    value={memberUserOid}
-                                    onChange={(e) => setMemberUserOid(e.target.value)}
-                                    disabled={usersLoading && memberOptions.length === 0}
-                                >
-                                    <option value="">
-                                        {usersLoading ? 'Loading users...' : 'Select user'}
-                                    </option>
-                                    {memberOptions.map(user => (
-                                        <option key={user.oid} value={user.oid}>
-                                            {user.name}{user.email ? ` (${user.email})` : ''}
-                                        </option>
-                                    ))}
-                                </select>
-                                <p className="governance-muted">
-                                    {memberOptions.length > 0
-                                        ? `${memberOptions.length} user${memberOptions.length === 1 ? '' : 's'} available`
-                                        : 'No matching users found in Users table'}
-                                </p>
-                                {selectedMemberOption && (
-                                    <div className="governance-selected-user">
-                                        <span className="governance-selected-user-name">{selectedMemberOption.name}</span>
-                                        {selectedMemberOption.email && (
-                                            <span className="governance-selected-user-email">{selectedMemberOption.email}</span>
-                                        )}
+                            </div>
+
+                            <div className="governance-subcard governance-board-create-card">
+                                <h5>Create Board</h5>
+                                <div className="form-group">
+                                    <label>Board Name</label>
+                                    <input
+                                        type="text"
+                                        value={newBoardName}
+                                        onChange={(e) => {
+                                            setNewBoardName(e.target.value);
+                                            setBoardDirty(true);
+                                        }}
+                                        placeholder="e.g., Clinical Governance Board"
+                                    />
+                                </div>
+                                <div className="governance-inline-row">
+                                    <label className="required-checkbox">
+                                        <input
+                                            type="checkbox"
+                                            checked={newBoardActive}
+                                            onChange={(e) => {
+                                                setNewBoardActive(e.target.checked);
+                                                setBoardDirty(true);
+                                            }}
+                                        />
+                                        New board active
+                                    </label>
+                                    <button className="btn-secondary" onClick={handleCreateBoard} disabled={boardSaving}>
+                                        <Plus size={14} /> Create Board
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div className="governance-board-list">
+                                {filteredBoards.length === 0 ? (
+                                    <div className="governance-board-empty">
+                                        <p className="governance-muted">
+                                            {boards.length === 0 ? 'No boards yet. Create one to continue Step 2.' : 'No boards match your search.'}
+                                        </p>
                                     </div>
+                                ) : (
+                                    filteredBoards.map(board => {
+                                        const progress = boardProgressMeta[board.id] || {
+                                            completed: 0,
+                                            total: 3,
+                                            ready: false,
+                                            criteriaMeta: { publishedCount: 0, draftCount: 0, totalCount: 0 }
+                                        };
+                                        const criteriaMeta = progress.criteriaMeta || { publishedCount: 0, draftCount: 0 };
+                                        const activeMembers = Number(board.activeMemberCount || 0);
+                                        const isSelected = String(board.id) === String(selectedBoardId);
+                                        const policy = board.effectivePolicy || board.policy?.effective || null;
+                                        const usesGlobalPolicy = board.useGlobalPolicyDefaults ?? board.policy?.useGlobalDefaults ?? true;
+
+                                        return (
+                                            <button
+                                                key={board.id}
+                                                className={`governance-board-item ${isSelected ? 'active' : ''}`}
+                                                onClick={() => handleBoardSelectionChange(board.id)}
+                                            >
+                                                <div className="governance-board-item-header">
+                                                    <span className="governance-board-item-name">{board.name || 'Unnamed board'}</span>
+                                                    <span className={`governance-pill ${board.isActive ? 'active' : 'inactive'}`}>
+                                                        {board.isActive ? 'Active' : 'Inactive'}
+                                                    </span>
+                                                </div>
+                                                <div className="governance-board-item-meta">
+                                                    <span>{activeMembers} active {activeMembers === 1 ? 'member' : 'members'}</span>
+                                                    <span>{criteriaMeta.publishedCount || 0} published criteria</span>
+                                                    <span>
+                                                        Q{Number(policy?.quorumPercent ?? quorumPercent)}% / min {Number(policy?.quorumMinCount ?? quorumMinCount)}
+                                                    </span>
+                                                    <span>{usesGlobalPolicy ? 'Global policy' : 'Board policy'}</span>
+                                                </div>
+                                                <div className="governance-board-item-footer">
+                                                    <span className="governance-board-item-progress">
+                                                        {progress.completed}/{progress.total} checks complete
+                                                    </span>
+                                                    <span className={`governance-tab-badge ${progress.ready ? 'ready' : 'not-ready'}`}>
+                                                        {progress.ready ? 'Ready' : 'Not ready'}
+                                                    </span>
+                                                </div>
+                                            </button>
+                                        );
+                                    })
                                 )}
                             </div>
-                            <div className="form-group">
-                                <label>Role</label>
-                                <select value={memberRole} onChange={(e) => setMemberRole(e.target.value)}>
-                                    <option value="member">Member</option>
-                                    <option value="chair">Chair</option>
-                                </select>
-                            </div>
-                        </div>
-                        <div className="form-actions">
-                            <button className="btn-secondary" onClick={handleAddOrUpdateMember} disabled={memberSaving}>
-                                <Plus size={14} /> Add / Update Member
-                            </button>
-                        </div>
-                        <div className="governance-table-wrap">
-                            <table className="permissions-table">
-                                <thead>
-                                    <tr>
-                                        <th>User</th>
-                                        <th>Role</th>
-                                        <th>Status</th>
-                                        <th>Actions</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {members.length === 0 ? (
-                                        <tr>
-                                            <td colSpan={4}>No members configured for this board.</td>
-                                        </tr>
-                                    ) : (
-                                        members.map(member => (
-                                            <tr key={member.id}>
-                                                <td>
-                                                    <div className="governance-user-name">
-                                                        {member.userName || member.userEmail || 'Unknown user'}
-                                                    </div>
-                                                    <div className="governance-muted">
-                                                        {member.userEmail
-                                                            ? member.userEmail
-                                                            : (member.userName ? 'No email on profile' : 'User profile missing from Users table')}
-                                                    </div>
-                                                </td>
-                                                <td>
-                                                    <span className={`governance-pill ${member.role === 'chair' ? 'chair' : 'member'}`}>
-                                                        {member.role === 'chair' ? 'Chair' : 'Member'}
-                                                    </span>
-                                                </td>
-                                                <td>
-                                                    <span className={`governance-pill ${member.isActive ? 'active' : 'inactive'}`}>
-                                                        {member.isActive ? 'Active' : 'Inactive'}
-                                                    </span>
-                                                </td>
-                                                <td>
-                                                    <button
-                                                        className="btn-secondary"
-                                                        onClick={() => handleToggleMemberActive(member)}
-                                                        disabled={memberSaving}
-                                                    >
-                                                        {member.isActive ? 'Deactivate' : 'Activate'}
-                                                    </button>
-                                                </td>
-                                            </tr>
-                                        ))
+                        </aside>
+
+                        <div className="governance-board-detail-panel">
+                            {selectedBoard ? (
+                                <>
+                                    <div className="governance-board-detail-header">
+                                        <h5>{selectedBoard.name || 'Selected board'}</h5>
+                                        <p>Step 2 of 4: finalize this board, then continue to members and criteria.</p>
+                                    </div>
+
+                                    <div className="governance-summary-bar governance-board-detail-summary">
+                                        <div className="governance-summary-item">
+                                            <strong>Board status</strong>
+                                            <span>{selectedBoard.isActive ? 'Active' : 'Inactive'}</span>
+                                        </div>
+                                        <div className="governance-summary-item">
+                                            <strong>Active Members</strong>
+                                            <span>{Number(selectedBoard.activeMemberCount || 0)}</span>
+                                        </div>
+                                        <div className="governance-summary-item">
+                                            <strong>Published Criteria</strong>
+                                            <span>{selectedBoardProgress?.criteriaMeta?.publishedCount || 0}</span>
+                                        </div>
+                                        <div className="governance-summary-item">
+                                            <strong>Effective Policy</strong>
+                                            <span>
+                                                Q{selectedBoardEffectivePolicy.quorumPercent}% / min {selectedBoardEffectivePolicy.quorumMinCount}
+                                            </span>
+                                        </div>
+                                        <div className="governance-summary-item">
+                                            <strong>Readiness</strong>
+                                            <span>
+                                                {selectedBoardProgress?.completed || 0}/{selectedBoardProgress?.total || 3} checks complete
+                                            </span>
+                                        </div>
+                                    </div>
+
+                                    <div className="governance-checklist">
+                                        <div className={`governance-check-item ${selectedBoard.isActive ? 'ready' : 'blocked'}`}>
+                                            <div>
+                                                <strong>Board is active</strong>
+                                                <p className="governance-muted">Inactive boards cannot receive governance assignment.</p>
+                                            </div>
+                                            <span className={`governance-tab-badge ${selectedBoard.isActive ? 'ready' : 'not-ready'}`}>
+                                                {selectedBoard.isActive ? 'Ready' : 'Blocked'}
+                                            </span>
+                                        </div>
+                                        <div className={`governance-check-item ${Number(selectedBoard.activeMemberCount || 0) > 0 ? 'ready' : 'blocked'}`}>
+                                            <div>
+                                                <strong>At least one active member</strong>
+                                                <p className="governance-muted">Add or activate members in Step 3.</p>
+                                            </div>
+                                            <span className={`governance-tab-badge ${Number(selectedBoard.activeMemberCount || 0) > 0 ? 'ready' : 'not-ready'}`}>
+                                                {Number(selectedBoard.activeMemberCount || 0) > 0 ? 'Ready' : 'Blocked'}
+                                            </span>
+                                        </div>
+                                        <div className={`governance-check-item ${(selectedBoardProgress?.criteriaMeta?.publishedCount || 0) > 0 ? 'ready' : 'blocked'}`}>
+                                            <div>
+                                                <strong>Published criteria exists</strong>
+                                                <p className="governance-muted">Publish criteria in Step 4 before governance goes live.</p>
+                                            </div>
+                                            <span className={`governance-tab-badge ${(selectedBoardProgress?.criteriaMeta?.publishedCount || 0) > 0 ? 'ready' : 'not-ready'}`}>
+                                                {(selectedBoardProgress?.criteriaMeta?.publishedCount || 0) > 0 ? 'Ready' : 'Blocked'}
+                                            </span>
+                                        </div>
+                                    </div>
+
+                                    {selectedBoardBlockers.length > 0 && (
+                                        <p className="governance-warning">
+                                            Blockers: {selectedBoardBlockers.join(' ')}
+                                        </p>
                                     )}
-                                </tbody>
-                            </table>
+
+                                    <div className="governance-subcard">
+                                        <h5>Edit Selected Board</h5>
+                                        <div className="governance-grid">
+                                            <div className="form-group">
+                                                <label>Board Name</label>
+                                                <input
+                                                    type="text"
+                                                    value={selectedBoardName}
+                                                    onChange={(e) => {
+                                                        setSelectedBoardName(e.target.value);
+                                                        setBoardDirty(true);
+                                                    }}
+                                                />
+                                            </div>
+                                            <div className="form-group">
+                                                <label>Status</label>
+                                                <label className="required-checkbox">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={selectedBoardActive}
+                                                        onChange={(e) => {
+                                                            setSelectedBoardActive(e.target.checked);
+                                                            setBoardDirty(true);
+                                                        }}
+                                                    />
+                                                    Board is active
+                                                </label>
+                                            </div>
+                                        </div>
+                                        <div className="governance-subcard governance-board-policy-card">
+                                            <h5>Voting Policy</h5>
+                                            <label className="required-checkbox">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={selectedBoardUseGlobalPolicyDefaults}
+                                                    onChange={(e) => {
+                                                        setSelectedBoardUseGlobalPolicyDefaults(e.target.checked);
+                                                        setBoardDirty(true);
+                                                    }}
+                                                    disabled={!phase3Ready || !boardPolicyReady}
+                                                />
+                                                Use global defaults for this board
+                                            </label>
+                                            <p className="governance-muted">
+                                                Source: {selectedBoardUseGlobalPolicyDefaults ? 'Global defaults' : 'Board-specific overrides'}
+                                            </p>
+
+                                            {!selectedBoardUseGlobalPolicyDefaults && (
+                                                <div className="governance-grid">
+                                                    <div className="form-group">
+                                                        <label>Board Quorum Percent (1-100)</label>
+                                                        <input
+                                                            type="number"
+                                                            min="1"
+                                                            max="100"
+                                                            value={selectedBoardQuorumPercent}
+                                                            onChange={(e) => {
+                                                                setSelectedBoardQuorumPercent(Number(e.target.value));
+                                                                setBoardDirty(true);
+                                                            }}
+                                                            disabled={!phase3Ready || !boardPolicyReady}
+                                                        />
+                                                    </div>
+                                                    <div className="form-group">
+                                                        <label>Board Quorum Minimum Votes</label>
+                                                        <input
+                                                            type="number"
+                                                            min="1"
+                                                            value={selectedBoardQuorumMinCount}
+                                                            onChange={(e) => {
+                                                                setSelectedBoardQuorumMinCount(Number(e.target.value));
+                                                                setBoardDirty(true);
+                                                            }}
+                                                            disabled={!phase3Ready || !boardPolicyReady}
+                                                        />
+                                                    </div>
+                                                    <div className="form-group">
+                                                        <label>Board Voting Window (days, optional)</label>
+                                                        <input
+                                                            type="number"
+                                                            min="1"
+                                                            max="90"
+                                                            value={selectedBoardVoteWindowDays}
+                                                            onChange={(e) => {
+                                                                setSelectedBoardVoteWindowDays(e.target.value);
+                                                                setBoardDirty(true);
+                                                            }}
+                                                            placeholder="No deadline"
+                                                            disabled={!phase3Ready || !boardPolicyReady}
+                                                        />
+                                                    </div>
+                                                    <div className="form-group">
+                                                        <label>Decision Rule</label>
+                                                        <label className="required-checkbox">
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={selectedBoardDecisionRequiresQuorum}
+                                                                onChange={(e) => {
+                                                                    setSelectedBoardDecisionRequiresQuorum(e.target.checked);
+                                                                    setBoardDirty(true);
+                                                                }}
+                                                                disabled={!phase3Ready || !boardPolicyReady}
+                                                            />
+                                                            Require quorum before final decision
+                                                        </label>
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            <p className="governance-muted">
+                                                Effective policy: Q{selectedBoardUseGlobalPolicyDefaults ? selectedBoardEffectivePolicy.quorumPercent : selectedBoardQuorumPercent}% /
+                                                min {selectedBoardUseGlobalPolicyDefaults ? selectedBoardEffectivePolicy.quorumMinCount : selectedBoardQuorumMinCount},
+                                                window {selectedBoardUseGlobalPolicyDefaults
+                                                    ? (selectedBoardEffectivePolicy.voteWindowDays ?? 'none')
+                                                    : (selectedBoardVoteWindowDays || 'none')} day(s),
+                                                quorum required: {selectedBoardUseGlobalPolicyDefaults
+                                                    ? (selectedBoardEffectivePolicy.decisionRequiresQuorum ? 'yes' : 'no')
+                                                    : (selectedBoardDecisionRequiresQuorum ? 'yes' : 'no')}.
+                                            </p>
+
+                                            {!boardPolicyReady && phase3Ready && (
+                                                <p className="governance-alert">
+                                                    Board override fields are unavailable until `npm run migrate:governance:phase3` is applied in `server`.
+                                                </p>
+                                            )}
+                                        </div>
+                                        <div className="governance-inline-row">
+                                            <button className="btn-primary" onClick={handleUpdateBoard} disabled={boardSaving}>
+                                                <Save size={14} /> Save Board
+                                            </button>
+                                            <button
+                                                className="btn-secondary"
+                                                onClick={() => handleConfigTabChange('members')}
+                                            >
+                                                Continue to Step 3: Members
+                                            </button>
+                                        </div>
+                                    </div>
+                                </>
+                            ) : (
+                                <div className="governance-empty-tab">
+                                    <ClipboardList size={32} />
+                                    <p>Select a board from the list to continue Step 2 setup.</p>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </section>
+            )}
+
+            {/* Members Tab */}
+            {configTab === 'members' && (
+                selectedBoardId ? (
+                    <section className="governance-section governance-step-section">
+                        <h4><Users size={16} /> Step 3 of 4: Members — {selectedBoard?.name || 'Board'}</h4>
+                        <div className="governance-step-layout">
+                            <aside className="governance-step-sidebar">
+                                <div className="governance-summary-bar governance-step-summary">
+                                    <div className="governance-summary-item">
+                                        <strong>Board Status</strong>
+                                        <span>{selectedBoard?.isActive ? 'Active' : 'Inactive'}</span>
+                                    </div>
+                                    <div className="governance-summary-item">
+                                        <strong>Active Members</strong>
+                                        <span>{activeMembersCount}</span>
+                                    </div>
+                                    <div className="governance-summary-item">
+                                        <strong>Active Chairs</strong>
+                                        <span>{chairMembersCount}</span>
+                                    </div>
+                                    <div className="governance-summary-item">
+                                        <strong>Readiness</strong>
+                                        <span>{activeMembersCount > 0 ? 'Ready' : 'Needs setup'}</span>
+                                    </div>
+                                </div>
+
+                                <div className="governance-checklist">
+                                    <div className={`governance-check-item ${selectedBoard?.isActive ? 'ready' : 'blocked'}`}>
+                                        <div>
+                                            <strong>Board is active</strong>
+                                            <p className="governance-muted">Board activation is managed in Step 2.</p>
+                                        </div>
+                                        <span className={`governance-tab-badge ${selectedBoard?.isActive ? 'ready' : 'not-ready'}`}>
+                                            {selectedBoard?.isActive ? 'Ready' : 'Blocked'}
+                                        </span>
+                                    </div>
+                                    <div className={`governance-check-item ${activeMembersCount > 0 ? 'ready' : 'blocked'}`}>
+                                        <div>
+                                            <strong>At least one active member</strong>
+                                            <p className="governance-muted">Submissions cannot be voted without active participants.</p>
+                                        </div>
+                                        <span className={`governance-tab-badge ${activeMembersCount > 0 ? 'ready' : 'not-ready'}`}>
+                                            {activeMembersCount > 0 ? 'Ready' : 'Blocked'}
+                                        </span>
+                                    </div>
+                                    <div className={`governance-check-item ${chairMembersCount > 0 ? 'ready' : 'blocked'}`}>
+                                        <div>
+                                            <strong>Chair assigned (recommended)</strong>
+                                            <p className="governance-muted">A chair improves escalation handling and final decisions.</p>
+                                        </div>
+                                        <span className={`governance-tab-badge ${chairMembersCount > 0 ? 'ready' : 'not-ready'}`}>
+                                            {chairMembersCount > 0 ? 'Ready' : 'Missing'}
+                                        </span>
+                                    </div>
+                                </div>
+
+                                {membersStepBlockers.length > 0 && (
+                                    <p className="governance-warning">Blockers: {membersStepBlockers.join(' ')}</p>
+                                )}
+
+                                <div className="governance-inline-actions governance-step-nav">
+                                    <button className="btn-secondary" onClick={() => handleConfigTabChange('boards')}>
+                                        Back to Step 2: Boards
+                                    </button>
+                                    <button
+                                        className="btn-secondary"
+                                        onClick={() => handleConfigTabChange('criteria')}
+                                        disabled={activeMembersCount === 0}
+                                    >
+                                        Continue to Step 4: Criteria
+                                    </button>
+                                </div>
+                            </aside>
+
+                            <div className="governance-step-main">
+                                <div className="governance-subcard">
+                                    <h5>Add or Update Member</h5>
+                                    <div className="governance-grid">
+                                        <div className="form-group governance-user-field">
+                                            <label>User (from Users table)</label>
+                                            <div className="governance-user-search">
+                                                <Search size={14} />
+                                                <input
+                                                    type="text"
+                                                    value={memberUserSearch}
+                                                    onChange={(e) => setMemberUserSearch(e.target.value)}
+                                                    placeholder="Search by name or email"
+                                                />
+                                            </div>
+                                            <select
+                                                value={memberUserOid}
+                                                onChange={(e) => setMemberUserOid(e.target.value)}
+                                                disabled={usersLoading && memberOptions.length === 0}
+                                            >
+                                                <option value="">
+                                                    {usersLoading ? 'Loading users...' : 'Select user'}
+                                                </option>
+                                                {memberOptions.map(user => (
+                                                    <option key={user.oid} value={user.oid}>
+                                                        {user.name}{user.email ? ` (${user.email})` : ''}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                            <p className="governance-muted">
+                                                {memberOptions.length > 0
+                                                    ? `${memberOptions.length} user${memberOptions.length === 1 ? '' : 's'} available`
+                                                    : 'No matching users found in Users table'}
+                                            </p>
+                                            {selectedMemberOption && (
+                                                <div className="governance-selected-user">
+                                                    <span className="governance-selected-user-name">{selectedMemberOption.name}</span>
+                                                    {selectedMemberOption.email && (
+                                                        <span className="governance-selected-user-email">{selectedMemberOption.email}</span>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+                                        <div className="form-group">
+                                            <label>Role</label>
+                                            <select value={memberRole} onChange={(e) => setMemberRole(e.target.value)}>
+                                                <option value="member">Member</option>
+                                                <option value="chair">Chair</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                    <div className="form-actions">
+                                        <button className="btn-secondary" onClick={handleAddOrUpdateMember} disabled={memberSaving}>
+                                            <Plus size={14} /> Add / Update Member
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div className="governance-subcard">
+                                    <h5>Current Members</h5>
+                                    <div className="governance-table-wrap">
+                                        <table className="permissions-table">
+                                            <thead>
+                                                <tr>
+                                                    <th>User</th>
+                                                    <th>Role</th>
+                                                    <th>Status</th>
+                                                    <th>Actions</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {members.length === 0 ? (
+                                                    <tr>
+                                                        <td colSpan={4}>No members configured for this board.</td>
+                                                    </tr>
+                                                ) : (
+                                                    members.map(member => (
+                                                        <tr key={member.id}>
+                                                            <td>
+                                                                <div className="governance-user-name">
+                                                                    {member.userName || member.userEmail || 'Unknown user'}
+                                                                </div>
+                                                                <div className="governance-muted">
+                                                                    {member.userEmail
+                                                                        ? member.userEmail
+                                                                        : (member.userName ? 'No email on profile' : 'User profile missing from Users table')}
+                                                                </div>
+                                                            </td>
+                                                            <td>
+                                                                <span className={`governance-pill ${member.role === 'chair' ? 'chair' : 'member'}`}>
+                                                                    {member.role === 'chair' ? 'Chair' : 'Member'}
+                                                                </span>
+                                                            </td>
+                                                            <td>
+                                                                <span className={`governance-pill ${member.isActive ? 'active' : 'inactive'}`}>
+                                                                    {member.isActive ? 'Active' : 'Inactive'}
+                                                                </span>
+                                                            </td>
+                                                            <td>
+                                                                <button
+                                                                    className="btn-secondary"
+                                                                    onClick={() => handleToggleMemberActive(member)}
+                                                                    disabled={memberSaving}
+                                                                >
+                                                                    {member.isActive ? 'Deactivate' : 'Activate'}
+                                                                </button>
+                                                            </td>
+                                                        </tr>
+                                                    ))
+                                                )}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </section>
                 ) : (
@@ -934,124 +1494,192 @@ export function GovernanceConfig() {
                 )
             )}
 
-            {/* ─── Criteria Tab ─── */}
+            {/* Criteria Tab */}
             {configTab === 'criteria' && (
                 selectedBoardId ? (
-                    <section className="governance-section governance-criteria-section">
-                        <h4><ClipboardList size={16} /> Criteria Versions — {selectedBoard?.name || 'Board'}</h4>
-                        <div className="governance-grid">
-                            <div className="form-group">
-                                <label>Version</label>
-                                <select value={selectedVersionId} onChange={(e) => handleVersionSelectionChange(e.target.value)}>
-                                    <option value="">No versions</option>
-                                    {criteriaVersions.map(version => (
-                                        <option key={version.id} value={version.id}>
-                                            v{version.versionNo} ({version.status})
-                                        </option>
-                                    ))}
-                                </select>
-                            </div>
-                            <div className="form-group">
-                                <label>Active Weight Total</label>
-                                <input type="text" value={`${activeWeightTotal}`} readOnly />
-                            </div>
-                        </div>
+                    <section className="governance-section governance-criteria-section governance-step-section">
+                        <h4><ClipboardList size={16} /> Step 4 of 4: Criteria — {selectedBoard?.name || 'Board'}</h4>
+                        <div className="governance-step-layout">
+                            <aside className="governance-step-sidebar">
+                                <div className="governance-summary-bar governance-step-summary">
+                                    <div className="governance-summary-item">
+                                        <strong>Versions</strong>
+                                        <span>{criteriaVersions.length}</span>
+                                    </div>
+                                    <div className="governance-summary-item">
+                                        <strong>Published</strong>
+                                        <span>{selectedBoardCriteriaMeta.publishedCount || 0}</span>
+                                    </div>
+                                    <div className="governance-summary-item">
+                                        <strong>Selected Version</strong>
+                                        <span>{selectedVersion ? `v${selectedVersion.versionNo} (${selectedVersion.status})` : 'None'}</span>
+                                    </div>
+                                    <div className="governance-summary-item">
+                                        <strong>Active Weight</strong>
+                                        <span>{activeWeightTotal}</span>
+                                    </div>
+                                </div>
 
-                        <div className="governance-inline-row governance-criteria-toolbar">
-                            <span className="governance-muted">
-                                {selectedVersion
-                                    ? `Editing v${selectedVersion.versionNo} (${selectedVersion.status})`
-                                    : 'No criteria version yet. Save to create draft.'}
-                            </span>
-                            <div className="governance-inline-actions">
-                                <button className="btn-secondary" onClick={createDraftFromCurrent} disabled={criteriaSaving}>
-                                    <Plus size={14} /> New Draft
-                                </button>
-                                <button className="btn-primary" onClick={handleSaveCriteria} disabled={criteriaSaving}>
-                                    <Save size={14} /> Save Draft
-                                </button>
-                                {selectedVersion?.status === 'draft' && (
-                                    <button className="btn-secondary" onClick={handlePublishCriteria} disabled={criteriaSaving}>
-                                        Publish
-                                    </button>
+                                <div className="governance-checklist">
+                                    <div className={`governance-check-item ${criteriaDraft.length > 0 ? 'ready' : 'blocked'}`}>
+                                        <div>
+                                            <strong>At least one criterion</strong>
+                                            <p className="governance-muted">Configure criteria rows that define voting evaluation.</p>
+                                        </div>
+                                        <span className={`governance-tab-badge ${criteriaDraft.length > 0 ? 'ready' : 'not-ready'}`}>
+                                            {criteriaDraft.length > 0 ? 'Ready' : 'Blocked'}
+                                        </span>
+                                    </div>
+                                    <div className={`governance-check-item ${activeWeightTotal > 0 ? 'ready' : 'blocked'}`}>
+                                        <div>
+                                            <strong>Active weight total {'>'} 0</strong>
+                                            <p className="governance-muted">Enabled criteria should contribute non-zero weight.</p>
+                                        </div>
+                                        <span className={`governance-tab-badge ${activeWeightTotal > 0 ? 'ready' : 'not-ready'}`}>
+                                            {activeWeightTotal > 0 ? 'Ready' : 'Blocked'}
+                                        </span>
+                                    </div>
+                                    <div className={`governance-check-item ${(selectedBoardCriteriaMeta.publishedCount || 0) > 0 ? 'ready' : 'blocked'}`}>
+                                        <div>
+                                            <strong>Published criteria exists</strong>
+                                            <p className="governance-muted">Publish a version to complete governance setup.</p>
+                                        </div>
+                                        <span className={`governance-tab-badge ${(selectedBoardCriteriaMeta.publishedCount || 0) > 0 ? 'ready' : 'not-ready'}`}>
+                                            {(selectedBoardCriteriaMeta.publishedCount || 0) > 0 ? 'Ready' : 'Blocked'}
+                                        </span>
+                                    </div>
+                                </div>
+
+                                {criteriaStepBlockers.length > 0 && (
+                                    <p className="governance-warning">Blockers: {criteriaStepBlockers.join(' ')}</p>
                                 )}
-                            </div>
-                        </div>
 
-                        <div className="governance-table-wrap governance-criteria-table-wrap">
-                            <table className="permissions-table governance-criteria-table">
-                                <thead>
-                                    <tr>
-                                        <th>Name</th>
-                                        <th>Weight</th>
-                                        <th>Enabled</th>
-                                        <th>Sort</th>
-                                        <th>Actions</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {criteriaDraft.map((criterion, index) => (
-                                        <tr key={criterion.id || index}>
-                                            <td>
-                                                <input
-                                                    type="text"
-                                                    value={criterion.name}
-                                                    onChange={(e) => handleUpdateCriterion(index, { name: e.target.value })}
-                                                />
-                                            </td>
-                                            <td>
-                                                <input
-                                                    type="number"
-                                                    min="0"
-                                                    max="100"
-                                                    value={criterion.weight}
-                                                    onChange={(e) => handleUpdateCriterion(index, { weight: Number(e.target.value) })}
-                                                />
-                                            </td>
-                                            <td>
-                                                <label className="required-checkbox">
-                                                    <input
-                                                        type="checkbox"
-                                                        checked={criterion.enabled}
-                                                        onChange={(e) => handleUpdateCriterion(index, { enabled: e.target.checked })}
-                                                    />
-                                                    Enabled
-                                                </label>
-                                            </td>
-                                            <td>
-                                                <div style={{ display: 'flex', gap: '0.25rem' }}>
-                                                    <button
-                                                        className="btn-icon"
-                                                        onClick={() => moveCriterion(index, -1)}
-                                                        disabled={index === 0}
-                                                        title="Move Up"
-                                                    >
-                                                        <ArrowUp size={14} />
-                                                    </button>
-                                                    <button
-                                                        className="btn-icon"
-                                                        onClick={() => moveCriterion(index, 1)}
-                                                        disabled={index === criteriaDraft.length - 1}
-                                                        title="Move Down"
-                                                    >
-                                                        <ArrowDown size={14} />
-                                                    </button>
-                                                </div>
-                                            </td>
-                                            <td>
-                                                <button className="btn-icon danger" onClick={() => handleRemoveCriterion(index)}>
-                                                    Remove
-                                                </button>
-                                            </td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
-                        <div className="form-actions">
-                            <button className="btn-secondary" onClick={handleAddCriterion}>
-                                <Plus size={14} /> Add Criterion
-                            </button>
+                                <div className="governance-inline-actions governance-step-nav">
+                                    <button className="btn-secondary" onClick={() => handleConfigTabChange('members')}>
+                                        Back to Step 3: Members
+                                    </button>
+                                    <button className="btn-secondary" onClick={() => handleConfigTabChange('settings')}>
+                                        Review Step 1: Settings
+                                    </button>
+                                </div>
+                            </aside>
+
+                            <div className="governance-step-main">
+                                <div className="governance-grid">
+                                    <div className="form-group">
+                                        <label>Version</label>
+                                        <select value={selectedVersionId} onChange={(e) => handleVersionSelectionChange(e.target.value)}>
+                                            <option value="">No versions</option>
+                                            {criteriaVersions.map(version => (
+                                                <option key={version.id} value={version.id}>
+                                                    v{version.versionNo} ({version.status})
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                    <div className="form-group">
+                                        <label>Active Weight Total</label>
+                                        <input type="text" value={`${activeWeightTotal}`} readOnly />
+                                    </div>
+                                </div>
+
+                                <div className="governance-inline-row governance-criteria-toolbar">
+                                    <span className="governance-muted">
+                                        {selectedVersion
+                                            ? `Editing v${selectedVersion.versionNo} (${selectedVersion.status})`
+                                            : 'No criteria version yet. Save to create draft.'}
+                                    </span>
+                                    <div className="governance-inline-actions">
+                                        <button className="btn-secondary" onClick={createDraftFromCurrent} disabled={criteriaSaving}>
+                                            <Plus size={14} /> New Draft
+                                        </button>
+                                        <button className="btn-primary" onClick={handleSaveCriteria} disabled={criteriaSaving}>
+                                            <Save size={14} /> Save Draft
+                                        </button>
+                                        {selectedVersion?.status === 'draft' && (
+                                            <button className="btn-secondary" onClick={handlePublishCriteria} disabled={criteriaSaving}>
+                                                Publish
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
+
+                                <div className="governance-table-wrap governance-criteria-table-wrap">
+                                    <table className="permissions-table governance-criteria-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Name</th>
+                                                <th>Weight</th>
+                                                <th>Enabled</th>
+                                                <th>Sort</th>
+                                                <th>Actions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {criteriaDraft.map((criterion, index) => (
+                                                <tr key={criterion.id || index}>
+                                                    <td>
+                                                        <input
+                                                            type="text"
+                                                            value={criterion.name}
+                                                            onChange={(e) => handleUpdateCriterion(index, { name: e.target.value })}
+                                                        />
+                                                    </td>
+                                                    <td>
+                                                        <input
+                                                            type="number"
+                                                            min="0"
+                                                            max="100"
+                                                            value={criterion.weight}
+                                                            onChange={(e) => handleUpdateCriterion(index, { weight: Number(e.target.value) })}
+                                                        />
+                                                    </td>
+                                                    <td>
+                                                        <label className="required-checkbox">
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={criterion.enabled}
+                                                                onChange={(e) => handleUpdateCriterion(index, { enabled: e.target.checked })}
+                                                            />
+                                                            Enabled
+                                                        </label>
+                                                    </td>
+                                                    <td>
+                                                        <div className="governance-criteria-sort-controls">
+                                                            <button
+                                                                className="btn-icon"
+                                                                onClick={() => moveCriterion(index, -1)}
+                                                                disabled={index === 0}
+                                                                title="Move Up"
+                                                            >
+                                                                <ArrowUp size={14} />
+                                                            </button>
+                                                            <button
+                                                                className="btn-icon"
+                                                                onClick={() => moveCriterion(index, 1)}
+                                                                disabled={index === criteriaDraft.length - 1}
+                                                                title="Move Down"
+                                                            >
+                                                                <ArrowDown size={14} />
+                                                            </button>
+                                                        </div>
+                                                    </td>
+                                                    <td>
+                                                        <button className="btn-icon danger" onClick={() => handleRemoveCriterion(index)}>
+                                                            Remove
+                                                        </button>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <div className="form-actions">
+                                    <button className="btn-secondary" onClick={handleAddCriterion}>
+                                        <Plus size={14} /> Add Criterion
+                                    </button>
+                                </div>
+                            </div>
                         </div>
                     </section>
                 ) : (
@@ -1064,3 +1692,4 @@ export function GovernanceConfig() {
         </div>
     );
 }
+
