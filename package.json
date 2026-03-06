@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "db:up": "docker compose -f docker-compose.sqlserver.yml up -d",
+    "db:down": "docker compose -f docker-compose.sqlserver.yml down"
   },
   "dependencies": {
     "@azure/msal-browser": "^5.4.0",

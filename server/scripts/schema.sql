@@ -598,6 +598,118 @@ BEGIN
 END
 GO
 
+-- Organizations
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'Organizations')
+CREATE TABLE Organizations (
+    id          INT IDENTITY(1,1) PRIMARY KEY,
+    name        NVARCHAR(255) NOT NULL,
+    slug        NVARCHAR(100) NOT NULL,
+    isActive    BIT NOT NULL DEFAULT 1,
+    createdAt   DATETIME2 DEFAULT GETDATE(),
+    CONSTRAINT UQ_Organizations_Name UNIQUE(name),
+    CONSTRAINT UQ_Organizations_Slug UNIQUE(slug)
+);
+GO
+
+-- Multi-org columns and relationships
+IF COL_LENGTH('Users', 'orgId') IS NULL
+BEGIN
+    ALTER TABLE Users ADD orgId INT NULL;
+END
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_Users_Organization')
+BEGIN
+    ALTER TABLE Users
+    ADD CONSTRAINT FK_Users_Organization
+    FOREIGN KEY (orgId) REFERENCES Organizations(id) ON DELETE SET NULL;
+END
+GO
+
+IF COL_LENGTH('Goals', 'orgId') IS NULL
+BEGIN
+    ALTER TABLE Goals ADD orgId INT NULL;
+END
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_Goals_Organization')
+BEGIN
+    ALTER TABLE Goals
+    ADD CONSTRAINT FK_Goals_Organization
+    FOREIGN KEY (orgId) REFERENCES Organizations(id) ON DELETE NO ACTION;
+END
+GO
+
+IF COL_LENGTH('Projects', 'orgId') IS NULL
+BEGIN
+    ALTER TABLE Projects ADD orgId INT NULL;
+END
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_Projects_Organization')
+BEGIN
+    ALTER TABLE Projects
+    ADD CONSTRAINT FK_Projects_Organization
+    FOREIGN KEY (orgId) REFERENCES Organizations(id) ON DELETE NO ACTION;
+END
+GO
+
+IF COL_LENGTH('IntakeForms', 'orgId') IS NULL
+BEGIN
+    ALTER TABLE IntakeForms ADD orgId INT NULL;
+END
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_IntakeForms_Organization')
+BEGIN
+    ALTER TABLE IntakeForms
+    ADD CONSTRAINT FK_IntakeForms_Organization
+    FOREIGN KEY (orgId) REFERENCES Organizations(id) ON DELETE NO ACTION;
+END
+GO
+
+IF COL_LENGTH('IntakeSubmissions', 'orgId') IS NULL
+BEGIN
+    ALTER TABLE IntakeSubmissions ADD orgId INT NULL;
+END
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_IntakeSubmissions_Organization')
+BEGIN
+    ALTER TABLE IntakeSubmissions
+    ADD CONSTRAINT FK_IntakeSubmissions_Organization
+    FOREIGN KEY (orgId) REFERENCES Organizations(id) ON DELETE NO ACTION;
+END
+GO
+
+IF COL_LENGTH('GovernanceBoard', 'orgId') IS NULL
+BEGIN
+    ALTER TABLE GovernanceBoard ADD orgId INT NULL;
+END
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_GovernanceBoard_Organization')
+BEGIN
+    ALTER TABLE GovernanceBoard
+    ADD CONSTRAINT FK_GovernanceBoard_Organization
+    FOREIGN KEY (orgId) REFERENCES Organizations(id) ON DELETE NO ACTION;
+END
+GO
+
+IF COL_LENGTH('TagGroups', 'orgId') IS NULL
+BEGIN
+    ALTER TABLE TagGroups ADD orgId INT NULL;
+END
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_TagGroups_Organization')
+BEGIN
+    ALTER TABLE TagGroups
+    ADD CONSTRAINT FK_TagGroups_Organization
+    FOREIGN KEY (orgId) REFERENCES Organizations(id) ON DELETE NO ACTION;
+END
+GO
+
 -- Tags
 IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'Tags')
 BEGIN
@@ -638,6 +750,61 @@ BEGIN
 END
 GO
 
+-- Cross-org sharing for projects
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'ProjectOrgAccess')
+CREATE TABLE ProjectOrgAccess (
+    projectId   INT NOT NULL,
+    orgId       INT NOT NULL,
+    accessLevel NVARCHAR(20) NOT NULL DEFAULT 'read',
+    grantedAt   DATETIME2 DEFAULT GETDATE(),
+    grantedByOid NVARCHAR(100) NULL,
+    CONSTRAINT PK_ProjectOrgAccess PRIMARY KEY (projectId, orgId),
+    CONSTRAINT FK_ProjectOrgAccess_Project FOREIGN KEY (projectId) REFERENCES Projects(id) ON DELETE CASCADE,
+    CONSTRAINT FK_ProjectOrgAccess_Org FOREIGN KEY (orgId) REFERENCES Organizations(id) ON DELETE CASCADE,
+    CONSTRAINT CK_ProjectOrgAccess_Level CHECK (accessLevel IN ('read', 'write'))
+);
+GO
+
+-- Cross-org sharing for goals
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'GoalOrgAccess')
+CREATE TABLE GoalOrgAccess (
+    goalId       INT NOT NULL,
+    orgId        INT NOT NULL,
+    accessLevel  NVARCHAR(20) NOT NULL DEFAULT 'read',
+    grantedAt    DATETIME2 DEFAULT GETDATE(),
+    grantedByOid NVARCHAR(100) NULL,
+    CONSTRAINT PK_GoalOrgAccess PRIMARY KEY (goalId, orgId),
+    CONSTRAINT FK_GoalOrgAccess_Goal FOREIGN KEY (goalId) REFERENCES Goals(id) ON DELETE CASCADE,
+    CONSTRAINT FK_GoalOrgAccess_Org FOREIGN KEY (orgId) REFERENCES Organizations(id) ON DELETE CASCADE,
+    CONSTRAINT CK_GoalOrgAccess_Level CHECK (accessLevel IN ('read', 'write'))
+);
+GO
+
+-- Multi-goal associations
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'ProjectGoals')
+BEGIN
+    CREATE TABLE ProjectGoals (
+        projectId INT NOT NULL,
+        goalId    INT NOT NULL,
+        createdAt DATETIME2 DEFAULT GETDATE(),
+        CONSTRAINT PK_ProjectGoals PRIMARY KEY (projectId, goalId),
+        CONSTRAINT FK_ProjectGoals_Project FOREIGN KEY (projectId) REFERENCES Projects(id) ON DELETE CASCADE,
+        CONSTRAINT FK_ProjectGoals_Goal FOREIGN KEY (goalId) REFERENCES Goals(id) ON DELETE CASCADE
+    );
+END
+GO
+
+INSERT INTO ProjectGoals (projectId, goalId)
+SELECT p.id, p.goalId
+FROM Projects p
+WHERE p.goalId IS NOT NULL
+  AND NOT EXISTS (
+      SELECT 1
+      FROM ProjectGoals pg
+      WHERE pg.projectId = p.id AND pg.goalId = p.goalId
+  );
+GO
+
 -- Tag Indexes
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Tags_GroupId')
     CREATE INDEX IX_Tags_GroupId ON Tags(groupId);
@@ -650,6 +817,39 @@ IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_ProjectTags_TagId')
 
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_TagAliases_TagId')
     CREATE INDEX IX_TagAliases_TagId ON TagAliases(tagId);
+
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Users_OrgId')
+    CREATE INDEX IX_Users_OrgId ON Users(orgId);
+
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Goals_OrgId')
+    CREATE INDEX IX_Goals_OrgId ON Goals(orgId);
+
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Projects_OrgId')
+    CREATE INDEX IX_Projects_OrgId ON Projects(orgId);
+
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_IntakeForms_OrgId')
+    CREATE INDEX IX_IntakeForms_OrgId ON IntakeForms(orgId);
+
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_IntakeSubmissions_OrgId')
+    CREATE INDEX IX_IntakeSubmissions_OrgId ON IntakeSubmissions(orgId);
+
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_GovernanceBoard_OrgId')
+    CREATE INDEX IX_GovernanceBoard_OrgId ON GovernanceBoard(orgId);
+
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_TagGroups_OrgId')
+    CREATE INDEX IX_TagGroups_OrgId ON TagGroups(orgId);
+
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_ProjectOrgAccess_OrgId')
+    CREATE INDEX IX_ProjectOrgAccess_OrgId ON ProjectOrgAccess(orgId);
+
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_GoalOrgAccess_OrgId')
+    CREATE INDEX IX_GoalOrgAccess_OrgId ON GoalOrgAccess(orgId);
+
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_GoalOrgAccess_GoalId')
+    CREATE INDEX IX_GoalOrgAccess_GoalId ON GoalOrgAccess(goalId);
+
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_ProjectGoals_GoalId')
+    CREATE INDEX IX_ProjectGoals_GoalId ON ProjectGoals(goalId);
 GO
 
 -- AuditLog Table

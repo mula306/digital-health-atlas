@@ -1,107 +1,216 @@
 # Digital Health Atlas
 
-A project portfolio management and governance platform built with React + Vite (frontend) and Express + SQL Server (backend), authenticated via Azure AD / Entra ID.
+Digital Health Atlas is a portfolio and governance platform for digital health initiatives.
 
-## Prerequisites
+## Business Functions
 
-- **Node.js** 18+
-- **Docker Desktop** (for SQL Server) — or a remote SQL Server instance
-- **Azure AD App Registration** with an exposed API scope
+### Portfolio planning and delivery tracking
 
-## Quick Start
+- Manage strategic goals in a hierarchy.
+- Link projects to goals and track status over time.
+- Track project execution with tasks, priorities, timelines, and progress.
+- Capture and version status reports for leadership review.
 
-### 1. Clone & install
+### Intake and governance workflow
+
+- Collect new requests through configurable intake forms.
+- Route submissions through governance boards and review stages.
+- Capture voting, decisions, decision rationale, and review outcomes.
+- Support board policies such as quorum and voting windows.
+
+### Organization and access management
+
+- Support multi-organization ownership and cross-organization sharing.
+- Assign users to organizations and role-based permissions.
+- Manage governance membership, board participation, and admin controls.
+
+### Reporting and auditability
+
+- Provide dashboards and operational views across delivery and governance.
+- Preserve history for key changes and governance decisions.
+- Track audit events for administrative and workflow actions.
+
+## Technology Overview
+
+### Frontend
+
+- React 19 + Vite
+- MSAL (`@azure/msal-browser`, `@azure/msal-react`) for Azure AD / Entra sign-in
+- CSS-based component styling with route-level feature pages
+
+### Backend
+
+- Node.js + Express API (`server/`)
+- SQL Server via `mssql`
+- JWT validation with Azure AD / Entra keys (`passport-jwt`, `jwks-rsa`)
+- Security middleware (`helmet`, `cors`, `express-rate-limit`, `compression`)
+
+### Data and schema
+
+- SQL Server database bootstrapped from `server/scripts/schema.sql`
+- Upgrade path for older databases via migration scripts
+- Optional faker-based sample data seeding for local/dev environments
+
+### Repo structure
+
+- `src/`: frontend app
+- `server/`: backend API
+- `server/scripts/`: schema, migrations, setup and seed scripts
+- `docker-compose.sqlserver.yml`: local SQL Server container definition
+
+## Setup and Run
+
+### Prerequisites
+
+- Node.js 18+
+- Docker Desktop (with `docker compose`)
+- Azure AD / Entra app registration for API + SPA
+
+### New Machine Setup (Recommended)
+
+### 1. Clone and install dependencies
 
 ```bash
-git clone <repo-url> && cd digital-health-atlas
-
-# Frontend
+git clone <repo-url>
+cd digital-health-atlas
 npm install
-
-# Backend
 cd server && npm install && cd ..
 ```
 
-### 2. Configure environment variables
+### 2. Create environment files
 
-Copy the example files and fill in your values:
+PowerShell:
+
+```powershell
+Copy-Item .env.example .env
+Copy-Item server/.env.example server/.env
+```
+
+Bash:
 
 ```bash
-# Frontend (project root)
 cp .env.example .env
-
-# Backend
 cp server/.env.example server/.env
 ```
 
-| File | Variable | Description |
-|---|---|---|
-| `server/.env` | `DB_USER` | SQL Server login (e.g. `sa`) |
-| `server/.env` | `DB_PASSWORD` | SQL Server password |
-| `server/.env` | `DB_SERVER` | Host (default `127.0.0.1`) |
-| `server/.env` | `DB_NAME` | Database name (default `DHAtlas`) |
-| `server/.env` | `AZURE_TENANT_ID` | Azure AD tenant ID |
-| `server/.env` | `AZURE_CLIENT_ID` | Azure AD app client ID |
-| `.env` | `VITE_AZURE_CLIENT_ID` | Same client ID (for frontend) |
-| `.env` | `VITE_AZURE_TENANT_ID` | Same tenant ID (for frontend) |
-| `.env` | `VITE_AZURE_API_SCOPE` | API scope, e.g. `api://<client-id>/access_as_user` |
+Minimum required values:
 
-### 3. Start SQL Server
+- `server/.env`: `DB_USER`, `DB_PASSWORD`, `DB_SERVER`, `DB_PORT`, `DB_NAME`, `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`
+- `.env`: `VITE_AZURE_CLIENT_ID`, `VITE_AZURE_TENANT_ID`, `VITE_AZURE_API_SCOPE`
 
-```bash
-docker run -e "ACCEPT_EULA=Y" \
-           -e "SA_PASSWORD=YourStrongPassword123!" \
-           -p 1433:1433 \
-           -d mcr.microsoft.com/mssql/server:2022-latest
+### 3. Start SQL Server in Docker
+
+Set a strong SA password (must satisfy SQL Server complexity rules), then start the container.
+
+PowerShell:
+
+```powershell
+$env:MSSQL_SA_PASSWORD='YourStrongPassword123!'
+docker compose -f docker-compose.sqlserver.yml up -d
 ```
 
-### 4. Create the database
+Bash:
+
+```bash
+export MSSQL_SA_PASSWORD='YourStrongPassword123!'
+docker compose -f docker-compose.sqlserver.yml up -d
+```
+
+Update `server/.env` so `DB_PASSWORD` matches `MSSQL_SA_PASSWORD`.
+
+### 4. Create the database (fresh install)
 
 ```bash
 cd server
 npm run setup-db
 ```
 
-This runs `schema.sql` which creates the `DHAtlas` database, all tables, indexes, constraints, and seed data. It is idempotent — safe to run multiple times.
+`setup-db` does all of the following:
 
-### 5. Run the app
+- Waits for SQL Server readiness with retries
+- Creates the database if missing
+- Applies canonical `schema.sql`
 
-```bash
-# Terminal 1 — API (port 3001)
-cd server && npm run dev
+This command is idempotent and safe to re-run.
 
-# Terminal 2 — Frontend (https://localhost:5173)
-npm run dev
-```
+### 5. Upgrade an older existing database (if needed)
 
-The frontend proxy forwards `/api` requests to the backend automatically.
-
-## Project Structure
-
-```
-├── src/                    # React frontend
-│   ├── authConfig.js       # MSAL / Azure AD config
-│   ├── components/         # UI components
-│   └── context/            # React context providers
-├── server/                 # Express API backend
-│   ├── db.js               # SQL Server connection pool
-│   ├── auth.js             # Passport JWT + Azure AD
-│   ├── routes/             # API route handlers
-│   ├── scripts/            # DB schema & migrations
-│   └── utils/              # Shared utilities
-├── .env.example            # Frontend env template
-└── server/.env.example     # Backend env template
-```
-
-## Database Migrations
-
-Governance features were added in phases. If upgrading an older database:
+Use this only when upgrading an existing database created from older versions:
 
 ```bash
 cd server
-npm run migrate:governance:phase0
-npm run migrate:governance:phase1
-npm run migrate:governance:phase2
+npm run upgrade-db
 ```
 
-> **Note:** `schema.sql` already includes all governance tables, so on a fresh install these migrations are not needed.
+### 6. Seed fake data (optional)
+
+After database setup, populate sample data with Faker:
+
+```bash
+cd server
+npm run seed:faker
+```
+
+Optional volume controls:
+
+- `FAKER_PROJECTS` (default `40`)
+- `FAKER_TASKS_MIN` / `FAKER_TASKS_MAX`
+- `FAKER_REPORTS_MIN` / `FAKER_REPORTS_MAX`
+- `FAKER_TAGS_MIN` / `FAKER_TAGS_MAX`
+
+For stress testing only:
+
+```bash
+npm run seed:performance
+```
+
+### 7. Run the app
+
+Terminal 1:
+
+```bash
+cd server
+npm run dev
+```
+
+Terminal 2:
+
+```bash
+npm run dev
+```
+
+Frontend runs on `https://localhost:5173` and proxies `/api` to backend `http://localhost:3001`.
+
+## SQL Server Container Management
+
+Start:
+
+```bash
+docker compose -f docker-compose.sqlserver.yml up -d
+```
+
+Stop:
+
+```bash
+docker compose -f docker-compose.sqlserver.yml down
+```
+
+Stop and remove DB volume (destructive):
+
+```bash
+docker compose -f docker-compose.sqlserver.yml down -v
+```
+
+## Helpful Backend Commands
+
+```bash
+cd server
+npm run setup-db
+npm run upgrade-db
+npm run setup-db:with-faker
+npm run seed:faker
+npm run migrate:governance:phase3
+npm run migrate:multi-org
+npm run migrate:org-sharing-v2
+npm run migrate:project-goals
+```

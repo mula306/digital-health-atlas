@@ -8,11 +8,17 @@
         "start": "node index.js",
         "dev": "node --watch index.js",
         "setup-db": "node scripts/setup_db.js",
+        "upgrade-db": "node scripts/upgrade_db.js",
+        "seed:faker": "node scripts/seed_faker.js",
+        "seed:performance": "node scripts/seed_performance.js",
+        "setup-db:with-faker": "npm run setup-db && npm run seed:faker",
         "migrate:governance:phase0": "node scripts/run_migration.js migrate_governance_phase0.sql",
         "migrate:governance:phase1": "node scripts/run_migration.js migrate_governance_phase1.sql",
         "migrate:governance:phase2": "node scripts/run_migration.js migrate_governance_phase2.sql",
         "migrate:governance:phase3": "node scripts/run_migration.js migrate_governance_phase3.sql",
-        "migrate:multi-org": "node scripts/run_migration.js migrate_multi_org.sql"
+        "migrate:multi-org": "node scripts/run_migration.js migrate_multi_org.sql",
+        "migrate:org-sharing-v2": "node scripts/run_migration.js migrate_org_sharing_v2.sql",
+        "migrate:project-goals": "node scripts/run_migration.js migrate_project_goals.sql"
     },
     "dependencies": {
         "@faker-js/faker": "^10.3.0",

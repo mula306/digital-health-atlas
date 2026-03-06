@@ -1,7 +1,7 @@
-// Run canonical schema.sql to fully initialize DHAtlas on fresh installs.
+// Run migrations for existing databases that were created before schema.sql became canonical.
 // Usage:
-//   node scripts/setup_db.js
-//   npm run setup-db
+//   node scripts/upgrade_db.js
+//   npm run upgrade-db
 
 import fs from 'fs';
 import path from 'path';
@@ -13,8 +13,14 @@ const DB_NAME = process.env.DB_NAME || 'DHAtlas';
 const CONNECT_RETRIES = Number.parseInt(process.env.DB_CONNECT_RETRIES || '30', 10);
 const CONNECT_DELAY_MS = Number.parseInt(process.env.DB_CONNECT_DELAY_MS || '2000', 10);
 
-const SQL_FILES_IN_ORDER = [
-    'schema.sql'
+const MIGRATION_FILES_IN_ORDER = [
+    'migrate_governance_phase0.sql',
+    'migrate_governance_phase1.sql',
+    'migrate_governance_phase2.sql',
+    'migrate_governance_phase3.sql',
+    'migrate_multi_org.sql',
+    'migrate_org_sharing_v2.sql',
+    'migrate_project_goals.sql'
 ];
 
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -22,7 +28,7 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const assertSafeDbName = (dbName) => {
     if (!/^[A-Za-z0-9_]+$/.test(dbName)) {
         throw new Error(
-            `DB_NAME "${dbName}" is invalid. Use letters, numbers, or underscore only for setup scripts.`
+            `DB_NAME "${dbName}" is invalid. Use letters, numbers, or underscore only for migration scripts.`
         );
     }
 };
@@ -87,54 +93,24 @@ const runSqlFile = async (pool, filename, dbName) => {
     process.stdout.write('\n');
 };
 
-const verifyDatabase = async (pool, dbName) => {
-    const escapedDbName = dbName.replace(/]/g, ']]');
-    const tableCountQuery = `
-        SELECT COUNT(*) AS count
-        FROM [${escapedDbName}].INFORMATION_SCHEMA.TABLES
-        WHERE TABLE_TYPE = 'BASE TABLE'
-    `;
-    const tableNamesQuery = `
-        SELECT TABLE_NAME
-        FROM [${escapedDbName}].INFORMATION_SCHEMA.TABLES
-        WHERE TABLE_TYPE = 'BASE TABLE'
-        ORDER BY TABLE_NAME
-    `;
-
-    const countResult = await pool.request().query(tableCountQuery);
-    const tablesResult = await pool.request().query(tableNamesQuery);
-
-    console.log(`\nDatabase "${dbName}" is ready.`);
-    console.log(`  Tables: ${countResult.recordset[0].count}`);
-    tablesResult.recordset.slice(0, 20).forEach((row) => {
-        console.log(`  - ${row.TABLE_NAME}`);
-    });
-    if (tablesResult.recordset.length > 20) {
-        console.log(`  ...and ${tablesResult.recordset.length - 20} more.`);
-    }
-};
-
-async function setupDatabase() {
+async function upgradeDatabase() {
     let pool;
     try {
         assertSafeDbName(DB_NAME);
-
-        console.log(`Preparing database "${DB_NAME}"...`);
+        console.log(`Applying migrations to "${DB_NAME}"...`);
         pool = await connectWithRetry();
 
-        for (const sqlFile of SQL_FILES_IN_ORDER) {
+        for (const sqlFile of MIGRATION_FILES_IN_ORDER) {
             await runSqlFile(pool, sqlFile, DB_NAME);
         }
 
-        await verifyDatabase(pool, DB_NAME);
-        console.log('\nDatabase setup completed successfully.');
+        console.log('\nMigration upgrade completed successfully.');
         process.exit(0);
     } catch (err) {
-        console.error('\nDatabase setup failed:', err.message);
+        console.error('\nMigration upgrade failed:', err.message);
         console.error('\nCheck:');
-        console.error('  1. Docker SQL Server container is running');
+        console.error('  1. Database already exists (run npm run setup-db for fresh installs)');
         console.error('  2. server/.env has valid DB_* settings');
-        console.error('  3. SA password meets SQL Server complexity rules');
         process.exit(1);
     } finally {
         if (pool?.close) {
@@ -143,4 +119,4 @@ async function setupDatabase() {
     }
 }
 
-setupDatabase();
+upgradeDatabase();
