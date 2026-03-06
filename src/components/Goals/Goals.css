@@ -26,12 +26,12 @@
     gap: 0.5rem;
 }
 
-.btn-sm {
+.goals-view .btn-sm {
     padding: 0.4rem 0.75rem;
     font-size: 0.8rem;
 }
 
-.btn-secondary {
+.goals-view .btn-secondary {
     display: inline-flex;
     align-items: center;
     gap: 0.35rem;
@@ -45,7 +45,7 @@
     transition: all 0.2s;
 }
 
-.btn-secondary:hover {
+.goals-view .btn-secondary:hover {
     background: var(--bg-tertiary);
     color: var(--text-primary);
     border-color: var(--accent-primary);

@@ -1,7 +1,6 @@
 import express from 'express';
 import { getPool } from '../db.js';
 import { checkPermission } from '../middleware/authMiddleware.js';
-import { softOrg } from '../middleware/orgScope.js';
 import { handleError } from '../utils/errorHandler.js';
 import { cache, CACHE_KEYS } from '../utils/cache.js';
 

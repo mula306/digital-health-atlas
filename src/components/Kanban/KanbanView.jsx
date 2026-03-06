@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useData } from '../../context/DataContext';
 import { KanbanBoard } from './KanbanBoard';
-import { Plus, Folder, Target, Search, X } from 'lucide-react';
+import { Plus, Folder, Target, Search, X, LayoutGrid, Table } from 'lucide-react';
 import { Modal } from '../UI/Modal';
 import { AddProjectForm } from './AddProjectForm';
 import { getDescendantGoalIds } from '../../utils/goalHelpers';
@@ -45,6 +45,10 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
     const [selectedTags, setSelectedTags] = useState([]);
     const [selectedStatuses, setSelectedStatuses] = useState([]);
     const [searchTerm, setSearchTerm] = useState('');
+    const [projectListView, setProjectListViewState] = useState(() => {
+        const stored = localStorage.getItem('dha_projects_list_view');
+        return stored === 'table' ? 'table' : 'cards';
+    });
     const [exactProjectFilterId, setExactProjectFilterId] = useState(() => {
         const stored = localStorage.getItem('dha_project_filter_id');
         return stored || '';
@@ -188,6 +192,32 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
     // Use server-filtered projects when filters are active, otherwise global paginated projects
     const displayProjects = hasActiveFilters ? (filteredServerProjects || []) : projects;
 
+    const setProjectListView = (mode) => {
+        const normalized = mode === 'table' ? 'table' : 'cards';
+        localStorage.setItem('dha_projects_list_view', normalized);
+        setProjectListViewState(normalized);
+    };
+
+    const getProjectStatus = (project) => {
+        return String(project.report?.overallStatus || project.latestReport?.overallStatus || 'unknown').toLowerCase();
+    };
+
+    const getProjectStatusLabel = (project) => {
+        const status = getProjectStatus(project);
+        if (status === 'red') return 'Red';
+        if (status === 'yellow') return 'Yellow';
+        if (status === 'green') return 'Green';
+        return 'No Report';
+    };
+
+    const getProjectStatusColor = (project) => {
+        const status = getProjectStatus(project);
+        if (status === 'red') return '#ef4444';
+        if (status === 'yellow') return '#f59e0b';
+        if (status === 'green') return '#10b981';
+        return '#9ca3af';
+    };
+
     // Get goal title by ID
     const getGoalTitle = (goalId) => {
         const goal = goals.find(g => g.id === goalId);
@@ -247,6 +277,26 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
                             onChange={e => setSearchTerm(e.target.value)}
                         />
                     </div>
+                    <div className="project-view-toggle" role="tablist" aria-label="Project list view">
+                        <button
+                            type="button"
+                            className={`project-view-toggle-btn ${projectListView === 'cards' ? 'active' : ''}`}
+                            onClick={() => setProjectListView('cards')}
+                            title="Card view"
+                            aria-label="Card view"
+                        >
+                            <LayoutGrid size={16} />
+                        </button>
+                        <button
+                            type="button"
+                            className={`project-view-toggle-btn ${projectListView === 'table' ? 'active' : ''}`}
+                            onClick={() => setProjectListView('table')}
+                            title="Table view"
+                            aria-label="Table view"
+                        >
+                            <Table size={16} />
+                        </button>
+                    </div>
                     {canEdit && (
                         <button className="btn-primary" onClick={() => setShowProjectModal(true)}>
                             <Plus size={18} />
@@ -294,14 +344,76 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
                 </div>
             )}
 
-            <div className="projects-grid">
-                {displayProjects.length === 0 && !filterLoading ? (
-                    <EmptyState
-                        title="No projects found"
-                        message={`No projects found${goalFilter ? ' for this goal' : ''}.`}
-                    />
-                ) : (
-                    displayProjects.map(project => (
+            {displayProjects.length === 0 && !filterLoading ? (
+                <EmptyState
+                    title="No projects found"
+                    message={`No projects found${goalFilter ? ' for this goal' : ''}.`}
+                />
+            ) : projectListView === 'table' ? (
+                <div className="projects-table-wrap">
+                    <table className="projects-table">
+                        <thead>
+                            <tr>
+                                <th>Project</th>
+                                <th>Goal</th>
+                                <th>Status</th>
+                                <th>Tasks</th>
+                                <th>Progress</th>
+                                <th>Tags</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {displayProjects.map(project => (
+                                <tr
+                                    key={project.id}
+                                    className="project-table-row"
+                                    onClick={() => setSelectedProjectId(project.id)}
+                                >
+                                    <td>
+                                        <div className="project-cell-primary">
+                                            <span className="project-cell-title">{project.title}</span>
+                                            <span className="project-cell-desc">{project.description || 'No description'}</span>
+                                        </div>
+                                    </td>
+                                    <td>{getGoalTitle(project.goalId)}</td>
+                                    <td>
+                                        <span
+                                            className="project-status-badge"
+                                            style={{
+                                                backgroundColor: `${getProjectStatusColor(project)}20`,
+                                                color: getProjectStatusColor(project)
+                                            }}
+                                        >
+                                            {getProjectStatusLabel(project)}
+                                        </span>
+                                    </td>
+                                    <td>{project.taskCount || project.tasks?.length || 0}</td>
+                                    <td>
+                                        <div className="project-table-progress">
+                                            <div className="progress-bar-track">
+                                                <div
+                                                    className="progress-bar-fill"
+                                                    style={{ width: `${project.completion || 0}%` }}
+                                                ></div>
+                                            </div>
+                                            <span className="progress-label">{project.completion || 0}%</span>
+                                        </div>
+                                    </td>
+                                    <td>
+                                        {project.tags && project.tags.length > 0 ? (
+                                            <ProjectTagBadges tags={project.tags} maxDisplay={2} />
+                                        ) : (
+                                            <span className="project-table-empty">No tags</span>
+                                        )}
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            ) : (
+                <div className="projects-grid">
+                    {displayProjects.map(project => (
                         <div
                             key={project.id}
                             className="project-card"
@@ -338,9 +450,9 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
                                 <span className="progress-label">{project.completion || 0}% Complete</span>
                             </div>
                         </div>
-                    ))
-                )}
-            </div>
+                    ))}
+                </div>
+            )}
 
             {/* Pagination Controls */}
             <div className="pagination-controls-wrapper">

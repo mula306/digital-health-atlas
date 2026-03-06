@@ -22,7 +22,7 @@ router.get('/me', requireAuth, async (req, res) => {
         }
         
         res.json(user);
-    } catch (err) {
+    } catch (_err) {
         // Fallback: return user without org info
         res.json(req.user);
     }

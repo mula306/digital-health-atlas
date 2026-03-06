@@ -40,7 +40,7 @@ const GOVERNANCE_REASON_TEMPLATES = {
     ]
 };
 
-export function IntakeRequestsList({ initialFilter = 'all' }) {
+export function IntakeRequestsList({ initialFilter = 'all', showFilterTabs = true }) {
     const {
         intakeSubmissions,
         intakeForms,
@@ -543,57 +543,63 @@ export function IntakeRequestsList({ initialFilter = 'all' }) {
     return (
         <div className="intake-requests">
             {/* Tabs */}
-            <div className="intake-tabs">
-                <button
-                    className={`intake-tab ${filter === 'all' ? 'active' : ''}`}
-                    onClick={() => setFilter('all')}
-                >
-                    All Requests
-                </button>
-                <button
-                    className={`intake-tab ${filter === 'pending' ? 'active' : ''}`}
-                    onClick={() => setFilter('pending')}
-                >
-                    Pending
-                    {pendingCount > 0 && <span className="badge">{pendingCount}</span>}
-                </button>
-                <button
-                    className={`intake-tab ${filter === 'awaiting-response' ? 'active' : ''}`}
-                    onClick={() => setFilter('awaiting-response')}
-                >
-                    Awaiting Response
-                    {awaitingCount > 0 && <span className="badge">{awaitingCount}</span>}
-                </button>
-                <button
-                    className={`intake-tab ${filter === 'approved' ? 'active' : ''}`}
-                    onClick={() => setFilter('approved')}
-                >
-                    Approved
-                </button>
-                <button
-                    className={`intake-tab ${filter === 'rejected' ? 'active' : ''}`}
-                    onClick={() => setFilter('rejected')}
-                >
-                    Rejected
-                </button>
-                {canViewGovernanceQueue && (
+            {showFilterTabs && (
+                <div className="intake-tabs">
                     <button
-                        className={`intake-tab ${filter === 'governance' ? 'active' : ''}`}
-                        onClick={() => setFilter('governance')}
+                        className={`intake-tab ${filter === 'all' ? 'active' : ''}`}
+                        onClick={() => setFilter('all')}
                     >
-                        <Scale size={14} style={{ marginRight: '0.35rem' }} />
-                        Governance
-                        {governanceCount > 0 && <span className="badge">{governanceCount}</span>}
+                        All Requests
                     </button>
-                )}
-            </div>
+                    <button
+                        className={`intake-tab ${filter === 'pending' ? 'active' : ''}`}
+                        onClick={() => setFilter('pending')}
+                    >
+                        Pending
+                        {pendingCount > 0 && <span className="badge">{pendingCount}</span>}
+                    </button>
+                    <button
+                        className={`intake-tab ${filter === 'awaiting-response' ? 'active' : ''}`}
+                        onClick={() => setFilter('awaiting-response')}
+                    >
+                        Awaiting Response
+                        {awaitingCount > 0 && <span className="badge">{awaitingCount}</span>}
+                    </button>
+                    <button
+                        className={`intake-tab ${filter === 'approved' ? 'active' : ''}`}
+                        onClick={() => setFilter('approved')}
+                    >
+                        Approved
+                    </button>
+                    <button
+                        className={`intake-tab ${filter === 'rejected' ? 'active' : ''}`}
+                        onClick={() => setFilter('rejected')}
+                    >
+                        Rejected
+                    </button>
+                    {canViewGovernanceQueue && (
+                        <button
+                            className={`intake-tab ${filter === 'governance' ? 'active' : ''}`}
+                            onClick={() => setFilter('governance')}
+                        >
+                            <Scale size={14} style={{ marginRight: '0.35rem' }} />
+                            Governance
+                            {governanceCount > 0 && <span className="badge">{governanceCount}</span>}
+                        </button>
+                    )}
+                </div>
+            )}
 
             {isGovernanceFilter && canViewGovernanceQueue && (
-                <div style={{ marginBottom: '0.75rem', display: 'grid', gap: '0.6rem' }}>
-                    <div className="governance-summary-bar">
-                        <div className="form-group" style={{ marginBottom: 0 }}>
-                            <label style={{ fontSize: '0.75rem' }}>Board</label>
-                            <select value={queueBoardId} onChange={(e) => updateQueueFilter({ boardId: e.target.value })}>
+                <div className="intake-governance-filters">
+                    <div className="governance-filter-grid">
+                        <div className="form-group governance-filter-field">
+                            <label>Board</label>
+                            <select
+                                className="form-select governance-filter-select"
+                                value={queueBoardId}
+                                onChange={(e) => updateQueueFilter({ boardId: e.target.value })}
+                            >
                                 <option value="">All boards</option>
                                 {governanceBoards.map((board) => (
                                     <option key={board.id} value={board.id}>
@@ -602,9 +608,13 @@ export function IntakeRequestsList({ initialFilter = 'all' }) {
                                 ))}
                             </select>
                         </div>
-                        <div className="form-group" style={{ marginBottom: 0 }}>
-                            <label style={{ fontSize: '0.75rem' }}>Governance Status</label>
-                            <select value={queueGovernanceStatus} onChange={(e) => updateQueueFilter({ governanceStatus: e.target.value })}>
+                        <div className="form-group governance-filter-field">
+                            <label>Governance Status</label>
+                            <select
+                                className="form-select governance-filter-select"
+                                value={queueGovernanceStatus}
+                                onChange={(e) => updateQueueFilter({ governanceStatus: e.target.value })}
+                            >
                                 <option value="">All statuses</option>
                                 <option value="not-started">Not Started</option>
                                 <option value="in-review">In Review</option>
@@ -612,9 +622,13 @@ export function IntakeRequestsList({ initialFilter = 'all' }) {
                                 <option value="skipped">Skipped</option>
                             </select>
                         </div>
-                        <div className="form-group" style={{ marginBottom: 0 }}>
-                            <label style={{ fontSize: '0.75rem' }}>Decision</label>
-                            <select value={queueGovernanceDecision} onChange={(e) => updateQueueFilter({ governanceDecision: e.target.value })}>
+                        <div className="form-group governance-filter-field">
+                            <label>Decision</label>
+                            <select
+                                className="form-select governance-filter-select"
+                                value={queueGovernanceDecision}
+                                onChange={(e) => updateQueueFilter({ governanceDecision: e.target.value })}
+                            >
                                 <option value="">All decisions</option>
                                 <option value="approved-now">Approved Now</option>
                                 <option value="approved-backlog">Approved Backlog</option>
@@ -622,28 +636,30 @@ export function IntakeRequestsList({ initialFilter = 'all' }) {
                                 <option value="rejected">Rejected</option>
                             </select>
                         </div>
-                        <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.8rem', marginTop: '1.3rem' }}>
-                            <input
-                                type="checkbox"
-                                checked={queueMyPendingVotes}
-                                onChange={(e) => updateQueueFilter({ myPendingVotes: e.target.checked })}
-                            />
-                            My pending votes
-                        </label>
-                        <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.8rem', marginTop: '1.3rem' }}>
-                            <input
-                                type="checkbox"
-                                checked={queueNeedsChairDecision}
-                                onChange={(e) => updateQueueFilter({ needsChairDecision: e.target.checked })}
-                            />
-                            Needs chair decision
-                        </label>
+                        <div className="governance-filter-checks">
+                            <label className="governance-filter-checkbox">
+                                <input
+                                    type="checkbox"
+                                    checked={queueMyPendingVotes}
+                                    onChange={(e) => updateQueueFilter({ myPendingVotes: e.target.checked })}
+                                />
+                                <span>My pending votes</span>
+                            </label>
+                            <label className="governance-filter-checkbox">
+                                <input
+                                    type="checkbox"
+                                    checked={queueNeedsChairDecision}
+                                    onChange={(e) => updateQueueFilter({ needsChairDecision: e.target.checked })}
+                                />
+                                <span>Needs chair decision</span>
+                            </label>
+                        </div>
                     </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                        <div style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
+                    <div className="governance-filter-footer">
+                        <div className="governance-filter-count">
                             {queuePagination.total} item{queuePagination.total === 1 ? '' : 's'} in queue
                         </div>
-                        <div style={{ display: 'flex', gap: '0.5rem' }}>
+                        <div className="governance-filter-actions">
                             <button className="btn-secondary" onClick={clearQueueFilters} disabled={loadingGovernanceQueue}>
                                 Reset Filters
                             </button>
@@ -939,50 +955,53 @@ export function IntakeRequestsList({ initialFilter = 'all' }) {
                                                 </button>
                                                 {voteOpen && (
                                                     <div className="governance-panel-content">
-                                                        {(governanceReview.criteria || []).filter(c => c.enabled).map(criterion => (
-                                                            <div key={criterion.id} className="form-group" style={{ marginBottom: '0.6rem' }}>
-                                                                <label style={{ fontSize: '0.8rem' }}>
-                                                                    {criterion.name} ({criterion.weight}%)
+                                                        {governanceReviewPermissions.canVote ? (
+                                                            <>
+                                                                {(governanceReview.criteria || []).filter(c => c.enabled).map(criterion => (
+                                                                    <div key={criterion.id} className="form-group" style={{ marginBottom: '0.6rem' }}>
+                                                                        <label style={{ fontSize: '0.8rem' }}>
+                                                                            {criterion.name} ({criterion.weight}%)
+                                                                        </label>
+                                                                        <select
+                                                                            value={voteScores[criterion.id] ?? 3}
+                                                                            onChange={(e) => setVoteScores(prev => ({ ...prev, [criterion.id]: Number(e.target.value) }))}
+                                                                            disabled={governanceActionLoading}
+                                                                        >
+                                                                            <option value={1}>1 - Low</option>
+                                                                            <option value={2}>2</option>
+                                                                            <option value={3}>3 - Medium</option>
+                                                                            <option value={4}>4</option>
+                                                                            <option value={5}>5 - High</option>
+                                                                        </select>
+                                                                    </div>
+                                                                ))}
+                                                                <div className="form-group" style={{ marginBottom: '0.5rem' }}>
+                                                                    <label style={{ fontSize: '0.8rem' }}>Comment (optional)</label>
+                                                                    <textarea
+                                                                        value={voteComment}
+                                                                        onChange={(e) => setVoteComment(e.target.value)}
+                                                                        placeholder="Add rationale for your score..."
+                                                                        disabled={governanceActionLoading}
+                                                                    />
+                                                                </div>
+                                                                <label style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', fontSize: '0.8rem' }}>
+                                                                    <input
+                                                                        type="checkbox"
+                                                                        checked={voteConflictDeclared}
+                                                                        onChange={(e) => setVoteConflictDeclared(e.target.checked)}
+                                                                        disabled={governanceActionLoading}
+                                                                    />
+                                                                    I have a conflict of interest related to this vote
                                                                 </label>
-                                                                <select
-                                                                    value={voteScores[criterion.id] ?? 3}
-                                                                    onChange={(e) => setVoteScores(prev => ({ ...prev, [criterion.id]: Number(e.target.value) }))}
-                                                                    disabled={!governanceReviewPermissions.canVote || governanceActionLoading}
-                                                                >
-                                                                    <option value={1}>1 - Low</option>
-                                                                    <option value={2}>2</option>
-                                                                    <option value={3}>3 - Medium</option>
-                                                                    <option value={4}>4</option>
-                                                                    <option value={5}>5 - High</option>
-                                                                </select>
-                                                            </div>
-                                                        ))}
-                                                        <div className="form-group" style={{ marginBottom: '0.5rem' }}>
-                                                            <label style={{ fontSize: '0.8rem' }}>Comment (optional)</label>
-                                                            <textarea
-                                                                value={voteComment}
-                                                                onChange={(e) => setVoteComment(e.target.value)}
-                                                                placeholder="Add rationale for your score..."
-                                                                disabled={!governanceReviewPermissions.canVote || governanceActionLoading}
-                                                            />
-                                                        </div>
-                                                        <label style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', fontSize: '0.8rem' }}>
-                                                            <input
-                                                                type="checkbox"
-                                                                checked={voteConflictDeclared}
-                                                                onChange={(e) => setVoteConflictDeclared(e.target.checked)}
-                                                                disabled={!governanceReviewPermissions.canVote || governanceActionLoading}
-                                                            />
-                                                            I have a conflict of interest related to this vote
-                                                        </label>
-                                                        <div className="form-actions" style={{ marginTop: '0.75rem' }}>
-                                                            <button className="btn-primary" onClick={handleSubmitVote} disabled={governanceActionLoading || !governanceReviewPermissions.canVote}>
-                                                                Submit Vote
-                                                            </button>
-                                                        </div>
-                                                        {governanceReviewPermissions.voteBlocker && (
+                                                                <div className="form-actions" style={{ marginTop: '0.75rem' }}>
+                                                                    <button className="btn-primary" onClick={handleSubmitVote} disabled={governanceActionLoading}>
+                                                                        Submit Vote
+                                                                    </button>
+                                                                </div>
+                                                            </>
+                                                        ) : (
                                                             <div className="governance-warning">
-                                                                {governanceReviewPermissions.voteBlocker}
+                                                                {governanceReviewPermissions.voteBlocker || 'Voting is currently unavailable.'}
                                                             </div>
                                                         )}
                                                     </div>

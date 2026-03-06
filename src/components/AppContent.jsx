@@ -30,6 +30,10 @@ export function AppContent() {
     const [intakeParams, setIntakeParams] = useState(null);
     const { hasPermission, error } = useData();
     const toast = useToast();
+    const canAccessIntakeWorkspace =
+        hasPermission('can_view_intake') ||
+        hasPermission('can_view_incoming_requests') ||
+        hasPermission('can_view_governance_queue');
 
     // Show global data errors
     useEffect(() => {
@@ -138,7 +142,7 @@ export function AppContent() {
                                 /> :
                                 <div className="p-4">Access Denied</div>;
                         case 'intake':
-                            return hasPermission('can_view_intake') ?
+                            return canAccessIntakeWorkspace ?
                                 <IntakePage /> :
                                 <div className="p-4">Access Denied</div>;
                         case 'admin':

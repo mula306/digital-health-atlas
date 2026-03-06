@@ -65,6 +65,14 @@
     color: var(--text-primary);
 }
 
+.permission-item-row {
+    transition: background-color 0.2s;
+}
+
+.permission-item-row:hover {
+    background-color: var(--bg-secondary);
+}
+
 .category-row td {
     background: var(--bg-secondary);
     font-weight: 700;
@@ -426,26 +434,58 @@ input:checked+.slider:before {
     background: var(--bg-secondary);
 }
 
-.governance-criteria-table {
+.governance-criteria-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.governance-criteria-item {
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
-    overflow: hidden;
-}
-
-.governance-criteria-table th {
-    background: var(--bg-secondary);
-}
-
-.governance-criteria-table td {
     background: var(--bg-card);
+    padding: 0.75rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.65rem;
 }
 
-.governance-criteria-table tr:last-child td {
-    border-bottom: none;
+.governance-criteria-item-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    flex-wrap: wrap;
 }
 
-.governance-criteria-table input[type="text"],
-.governance-criteria-table input[type="number"] {
+.governance-criteria-item-index {
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.governance-criteria-item-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    flex-wrap: wrap;
+}
+
+.governance-criteria-item-body {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 140px 130px;
+    gap: 0.65rem;
+    align-items: start;
+}
+
+.governance-criteria-field {
+    margin-bottom: 0;
+}
+
+.governance-criteria-item input[type="text"],
+.governance-criteria-item input[type="number"] {
     width: 100%;
     padding: 0.5rem 0.65rem;
     border: 1px solid var(--border-color);
@@ -455,26 +495,63 @@ input:checked+.slider:before {
     font-size: 0.85rem;
 }
 
-.governance-criteria-table input[type="text"]:focus,
-.governance-criteria-table input[type="number"]:focus {
+.governance-criteria-name-input {
+    min-width: 0;
+}
+
+.governance-criteria-weight-input {
+    text-align: right;
+}
+
+.governance-criteria-item input[type="text"]:focus,
+.governance-criteria-item input[type="number"]:focus {
     outline: none;
     border-color: var(--accent-primary);
     box-shadow: 0 0 0 2px hsla(var(--hue-indigo), 85%, 60%, 0.15);
 }
 
-.governance-criteria-table td:nth-child(2) input,
-.governance-criteria-table td:nth-child(4) input {
-    max-width: 90px;
-}
-
-.governance-criteria-table .required-checkbox {
+.governance-criteria-enabled {
+    gap: 0.3rem;
+    font-size: 0.76rem;
+    white-space: nowrap;
     margin: 0;
     justify-content: flex-start;
 }
 
-.governance-criteria-table .btn-secondary {
-    padding: 0.45rem 0.7rem;
-    font-size: 0.8rem;
+.governance-criteria-remove-btn {
+    white-space: nowrap;
+}
+
+.governance-criteria-sort-controls .btn-icon,
+.governance-criteria-remove-btn.btn-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 30px;
+    min-width: 30px;
+    padding: 0.35rem 0.55rem;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.governance-criteria-sort-controls .btn-icon:hover,
+.governance-criteria-remove-btn.btn-icon:hover {
+    border-color: var(--accent-primary);
+    color: var(--text-primary);
+}
+
+.governance-criteria-remove-btn.btn-icon.danger:hover {
+    border-color: rgba(239, 68, 68, 0.3);
+    color: #ef4444;
+}
+
+.governance-criteria-sort-controls .btn-icon:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
 }
 
 .governance-user-name {
@@ -714,6 +791,10 @@ input:checked+.slider:before {
     align-items: start;
 }
 
+.governance-criteria-section .governance-step-layout {
+    grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+}
+
 .governance-step-sidebar {
     display: flex;
     flex-direction: column;
@@ -747,6 +828,10 @@ input:checked+.slider:before {
 
 @media (max-width: 960px) {
     .governance-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .governance-criteria-item-body {
         grid-template-columns: 1fr;
     }
 

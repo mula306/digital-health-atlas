@@ -94,7 +94,7 @@ export function MySubmissionsList() {
                 <Clock size={48} />
                 <p>You haven't submitted any requests yet.</p>
                 <p style={{ fontSize: '0.9rem', color: 'var(--text-tertiary)' }}>
-                    Select a form above to create your first request.
+                    Open the Submission stage to create your first request.
                 </p>
             </div>
         );

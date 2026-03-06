@@ -168,8 +168,14 @@ export function DataProvider({ children }) {
                 // Tags (generally public/authenticated)
                 secondaryPromises.push(authFetch(`${API_BASE}/tags`).then(r => r.json()).then(setTagGroups).catch(e => console.warn('Tags fetch failed', e)));
 
-                // Intake Forms (if can view/manage)
-                if (checkPerm('can_view_intake') || checkPerm('can_manage_intake') || checkPerm('can_manage_intake_forms')) {
+                // Intake Forms (needed for submit, triage labels, and governance queue context)
+                if (
+                    checkPerm('can_view_intake') ||
+                    checkPerm('can_manage_intake') ||
+                    checkPerm('can_manage_intake_forms') ||
+                    checkPerm('can_view_incoming_requests') ||
+                    checkPerm('can_view_governance_queue')
+                ) {
                     secondaryPromises.push(authFetch(`${API_BASE}/intake/forms`).then(r => r.json()).then(setIntakeForms).catch(e => console.warn('Intake forms failed', e)));
                 }
 

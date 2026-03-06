@@ -1,4 +1,4 @@
-import { getPool, sql } from '../db.js';
+import { getPool } from '../db.js';
 
 /**
  * Walk a goal up to its root (no parent), returning the chain of IDs.

@@ -90,6 +90,10 @@ export function Layout({ children, currentView, onViewChange }) {
     } = useData();
     const { theme, toggleTheme } = useTheme();
     const [portfolioPulseStats, setPortfolioPulseStats] = useState(null);
+    const canAccessIntakeWorkspace =
+        hasPermission('can_view_intake') ||
+        hasPermission('can_view_incoming_requests') ||
+        hasPermission('can_view_governance_queue');
 
     const allNavItems = [
         { id: 'exec-dashboard', label: 'Executive Summary', icon: LayoutDashboard, permission: 'can_view_exec_dashboard' },
@@ -102,6 +106,9 @@ export function Layout({ children, currentView, onViewChange }) {
     ];
 
     const navItems = allNavItems.filter(item => {
+        if (item.id === 'intake') {
+            return canAccessIntakeWorkspace;
+        }
         if (!item.permission) return true;
         return hasPermission(item.permission);
     });
@@ -124,7 +131,7 @@ export function Layout({ children, currentView, onViewChange }) {
         dashboard: 'Cross-project delivery status and operational movement.',
         projects: 'Deep project execution with task-level visibility.',
         reports: 'Create and compare status narratives across projects.',
-        intake: 'Review and triage incoming project requests.',
+        intake: 'Submit, triage, govern, and resolve incoming requests.',
         admin: 'Manage access, governance settings, and platform controls.'
     };
 

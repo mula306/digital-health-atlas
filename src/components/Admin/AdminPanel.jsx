@@ -303,7 +303,7 @@ export function AdminPanel() {
                                                 <td colSpan={targetRoles.length}></td>
                                             </tr>
                                             {group.items.map(item => (
-                                                <tr key={item.key} className="permission-item-row" style={{ transition: 'background-color 0.2s', ':hover': { backgroundColor: 'var(--bg-secondary)' } }}>
+                                                <tr key={item.key} className="permission-item-row">
                                                     <td className="perm-label">{item.label}</td>
                                                     {targetRoles.map(role => (
                                                         <td key={role} className="chk-cell">

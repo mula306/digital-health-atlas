@@ -105,7 +105,7 @@ export function ReportFilterTree({ onSelectionChange, allProjects = [] }) {
         }
 
         return filtered;
-    }, [projects, allProjects, selectedTags, selectedStatuses]);
+    }, [projects, allProjects, selectedTags, selectedStatuses, searchQuery]);
 
     const treeData = useMemo(() => {
         // Build hierarchy tree using filtered projects

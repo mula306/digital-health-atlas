@@ -1604,75 +1604,74 @@ export function GovernanceConfig() {
                                     </div>
                                 </div>
 
-                                <div className="governance-table-wrap governance-criteria-table-wrap">
-                                    <table className="permissions-table governance-criteria-table">
-                                        <thead>
-                                            <tr>
-                                                <th>Name</th>
-                                                <th>Weight</th>
-                                                <th>Enabled</th>
-                                                <th>Sort</th>
-                                                <th>Actions</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {criteriaDraft.map((criterion, index) => (
-                                                <tr key={criterion.id || index}>
-                                                    <td>
-                                                        <input
-                                                            type="text"
-                                                            value={criterion.name}
-                                                            onChange={(e) => handleUpdateCriterion(index, { name: e.target.value })}
-                                                        />
-                                                    </td>
-                                                    <td>
-                                                        <input
-                                                            type="number"
-                                                            min="0"
-                                                            max="100"
-                                                            value={criterion.weight}
-                                                            onChange={(e) => handleUpdateCriterion(index, { weight: Number(e.target.value) })}
-                                                        />
-                                                    </td>
-                                                    <td>
-                                                        <label className="required-checkbox">
-                                                            <input
-                                                                type="checkbox"
-                                                                checked={criterion.enabled}
-                                                                onChange={(e) => handleUpdateCriterion(index, { enabled: e.target.checked })}
-                                                            />
-                                                            Enabled
-                                                        </label>
-                                                    </td>
-                                                    <td>
-                                                        <div className="governance-criteria-sort-controls">
-                                                            <button
-                                                                className="btn-icon"
-                                                                onClick={() => moveCriterion(index, -1)}
-                                                                disabled={index === 0}
-                                                                title="Move Up"
-                                                            >
-                                                                <ArrowUp size={14} />
-                                                            </button>
-                                                            <button
-                                                                className="btn-icon"
-                                                                onClick={() => moveCriterion(index, 1)}
-                                                                disabled={index === criteriaDraft.length - 1}
-                                                                title="Move Down"
-                                                            >
-                                                                <ArrowDown size={14} />
-                                                            </button>
-                                                        </div>
-                                                    </td>
-                                                    <td>
-                                                        <button className="btn-icon danger" onClick={() => handleRemoveCriterion(index)}>
-                                                            Remove
+                                <div className="governance-criteria-list">
+                                    {criteriaDraft.map((criterion, index) => (
+                                        <article key={criterion.id || index} className="governance-criteria-item">
+                                            <div className="governance-criteria-item-head">
+                                                <span className="governance-criteria-item-index">
+                                                    Criterion {index + 1}
+                                                </span>
+                                                <div className="governance-criteria-item-controls">
+                                                    <div className="governance-criteria-sort-controls">
+                                                        <button
+                                                            className="btn-icon"
+                                                            onClick={() => moveCriterion(index, -1)}
+                                                            disabled={index === 0}
+                                                            title="Move Up"
+                                                        >
+                                                            <ArrowUp size={14} />
                                                         </button>
-                                                    </td>
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
+                                                        <button
+                                                            className="btn-icon"
+                                                            onClick={() => moveCriterion(index, 1)}
+                                                            disabled={index === criteriaDraft.length - 1}
+                                                            title="Move Down"
+                                                        >
+                                                            <ArrowDown size={14} />
+                                                        </button>
+                                                    </div>
+                                                    <button className="btn-icon danger governance-criteria-remove-btn" onClick={() => handleRemoveCriterion(index)}>
+                                                        Remove
+                                                    </button>
+                                                </div>
+                                            </div>
+
+                                            <div className="governance-criteria-item-body">
+                                                <div className="form-group governance-criteria-field governance-criteria-name-field">
+                                                    <label>Name</label>
+                                                    <input
+                                                        type="text"
+                                                        value={criterion.name}
+                                                        className="governance-criteria-name-input"
+                                                        placeholder="Criterion name"
+                                                        onChange={(e) => handleUpdateCriterion(index, { name: e.target.value })}
+                                                    />
+                                                </div>
+                                                <div className="form-group governance-criteria-field governance-criteria-weight-field">
+                                                    <label>Weight (0-100)</label>
+                                                    <input
+                                                        type="number"
+                                                        min="0"
+                                                        max="100"
+                                                        value={criterion.weight}
+                                                        className="governance-criteria-weight-input"
+                                                        onChange={(e) => handleUpdateCriterion(index, { weight: Number(e.target.value) })}
+                                                    />
+                                                </div>
+                                                <div className="form-group governance-criteria-field governance-criteria-enabled-field">
+                                                    <label>Enabled</label>
+                                                    <label className="required-checkbox governance-criteria-enabled">
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={criterion.enabled}
+                                                            onChange={(e) => handleUpdateCriterion(index, { enabled: e.target.checked })}
+                                                        />
+                                                        Enabled
+                                                    </label>
+                                                </div>
+                                            </div>
+                                        </article>
+                                    ))}
                                 </div>
                                 <div className="form-actions">
                                     <button className="btn-secondary" onClick={handleAddCriterion}>

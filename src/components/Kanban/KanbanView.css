@@ -26,6 +26,80 @@
     margin: 0;
 }
 
+.kanban-view .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+
+.kanban-view .search-bar {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
+.kanban-view .search-bar svg {
+    position: absolute;
+    left: 12px;
+    color: var(--text-tertiary);
+    pointer-events: none;
+}
+
+.kanban-view .search-bar input {
+    width: 240px;
+    padding: 0.6rem 0.75rem 0.6rem 2.5rem;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    font-size: 0.9rem;
+    color: var(--text-primary);
+    transition: all 0.2s;
+}
+
+.kanban-view .search-bar input:focus {
+    outline: none;
+    border-color: var(--accent-primary);
+    background: var(--bg-card);
+    width: 300px;
+}
+
+.kanban-view .search-bar input::placeholder {
+    color: var(--text-tertiary);
+}
+
+.project-view-toggle {
+    display: flex;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: 0.25rem;
+}
+
+.project-view-toggle-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border: none;
+    background: transparent;
+    border-radius: var(--radius-sm);
+    color: var(--text-tertiary);
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.project-view-toggle-btn:hover {
+    color: var(--text-primary);
+}
+
+.project-view-toggle-btn.active {
+    background: var(--bg-card);
+    color: var(--accent-primary);
+    box-shadow: var(--shadow-sm);
+}
+
 /* Filter Bar */
 .filter-bar {
     display: flex;
@@ -89,6 +163,95 @@
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
     gap: 1.5rem;
+}
+
+.projects-table-wrap {
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    background: var(--bg-card);
+    box-shadow: var(--shadow-sm);
+    overflow: auto;
+}
+
+.projects-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    min-width: 820px;
+}
+
+.projects-table thead th {
+    text-align: left;
+    font-size: 0.78rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+    background: var(--bg-secondary);
+    padding: 0.85rem 1rem;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.projects-table tbody td {
+    padding: 0.9rem 1rem;
+    border-bottom: 1px solid var(--border-color);
+    vertical-align: middle;
+}
+
+.projects-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.project-table-row {
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.project-table-row:hover {
+    background: var(--bg-secondary);
+}
+
+.project-cell-primary {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+}
+
+.project-cell-title {
+    font-weight: 600;
+    color: var(--text-primary);
+    font-size: 0.92rem;
+}
+
+.project-cell-desc {
+    font-size: 0.8rem;
+    color: var(--text-tertiary);
+    max-width: 340px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.project-status-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.2rem 0.55rem;
+    border-radius: 999px;
+    font-size: 0.74rem;
+    font-weight: 600;
+}
+
+.project-table-progress {
+    min-width: 120px;
+}
+
+.project-table-progress .progress-label {
+    display: inline-block;
+    margin-top: 0.25rem;
+}
+
+.project-table-empty {
+    font-size: 0.8rem;
+    color: var(--text-tertiary);
 }
 
 .project-card {
@@ -203,6 +366,19 @@
     .view-header .btn-primary {
         width: 100%;
         justify-content: center;
+    }
+
+    .kanban-view .header-actions {
+        width: 100%;
+    }
+
+    .kanban-view .search-bar {
+        width: 100%;
+    }
+
+    .kanban-view .search-bar input,
+    .kanban-view .search-bar input:focus {
+        width: 100%;
     }
 
     .filter-bar {

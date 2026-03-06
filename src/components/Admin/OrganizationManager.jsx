@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useData } from '../../context/DataContext';
 import { useToast } from '../../context/ToastContext';
 import {
     Building2, Plus, Edit3, Users, Share2, Check, X,
-    Search, UserPlus, Trash2, Eye, PenTool, Shield,
+    Search, UserPlus, Trash2, Eye, PenTool, Shield, RefreshCw,
     ToggleLeft, ToggleRight, CircleDot, Target, CheckSquare,
     Square, MinusSquare, ChevronRight, Filter
 } from 'lucide-react';
@@ -13,10 +13,10 @@ import './OrganizationManager.css';
 export function OrganizationManager() {
     const {
         fetchOrganizations, createOrganization, updateOrganization,
-        assignUserToOrg, fetchProjectSharing, shareProject, unshareProject,
+        assignUserToOrg, unshareProject,
         fetchOrgSharingSummary, bulkShareProjects, bulkUnshareProjects,
         bulkShareGoals, bulkUnshareGoals,
-        fetchGovernanceUsers, authFetch, currentUser
+        authFetch, currentUser
     } = useData();
     const { success, error: showError } = useToast();
 
@@ -25,13 +25,13 @@ export function OrganizationManager() {
     const [showCreateForm, setShowCreateForm] = useState(false);
     const [editingOrg, setEditingOrg] = useState(null);
     const [activeSection, setActiveSection] = useState('orgs'); // orgs | members | sharing
+    const [selectedOrgId, setSelectedOrgId] = useState(null);
 
     // Create/edit form state
     const [formName, setFormName] = useState('');
     const [formSlug, setFormSlug] = useState('');
 
     // User assignment state
-    const [selectedOrgForMembers, setSelectedOrgForMembers] = useState(null);
     const [userSearchQuery, setUserSearchQuery] = useState('');
     const [allUsers, setAllUsers] = useState([]);
     const [loadingAllUsers, setLoadingAllUsers] = useState(false);
@@ -40,7 +40,6 @@ export function OrganizationManager() {
     const [bulkAssigningUsers, setBulkAssigningUsers] = useState(false);
 
     // ─── Data Sharing State ───
-    const [sharingTargetOrg, setSharingTargetOrg] = useState(null);
     const [sharingSubTab, setSharingSubTab] = useState('projects'); // projects | goals
     const [sharingSummary, setSharingSummary] = useState({ projects: [], goals: [] });
     const [loadingSummary, setLoadingSummary] = useState(false);
@@ -69,6 +68,28 @@ export function OrganizationManager() {
     }, [fetchOrganizations, showError]);
 
     useEffect(() => { loadOrganizations(); }, [loadOrganizations]);
+
+    const activeOrganizations = useMemo(
+        () => organizations.filter(org => org.isActive),
+        [organizations]
+    );
+
+    useEffect(() => {
+        if (activeOrganizations.length === 0) {
+            if (selectedOrgId !== null) {
+                setSelectedOrgId(null);
+            }
+            return;
+        }
+
+        const selectedIsActive = activeOrganizations.some(org => String(org.id) === String(selectedOrgId));
+        if (!selectedIsActive) {
+            setSelectedOrgId(activeOrganizations[0].id);
+        }
+    }, [activeOrganizations, selectedOrgId]);
+
+    const selectedOrgForMembers = selectedOrgId;
+    const sharingTargetOrg = selectedOrgId;
 
     // Auto-generate slug from name
     const handleNameChange = (value) => {
@@ -140,7 +161,7 @@ export function OrganizationManager() {
         } finally {
             setLoadingAllUsers(false);
         }
-    }, [authFetch, API_BASE, usersLoaded, showError]);
+    }, [authFetch, usersLoaded, showError]);
 
     // Lazy-load users when entering the members tab
     useEffect(() => {
@@ -168,10 +189,14 @@ export function OrganizationManager() {
         });
     }, [allUsers, userSearchQuery, selectedOrgForMembers]);
 
-    const handleSelectMemberOrg = (orgId) => {
-        setSelectedOrgForMembers(orgId);
+    const handleSelectOrg = (orgId) => {
+        setSelectedOrgId(orgId);
         setUserSearchQuery('');
         setSelectedUserIds(new Set());
+        setSelectedProjectIds(new Set());
+        setSelectedGoalIds(new Set());
+        setProjectSearch('');
+        setGoalSearch('');
     };
 
     const toggleUserSelection = (userId) => {
@@ -245,7 +270,7 @@ export function OrganizationManager() {
         } catch {
             showError('Failed to load sharing data');
         }
-    }, [authFetch, API_BASE, pickerDataLoaded, showError]);
+    }, [authFetch, pickerDataLoaded, showError]);
 
     // Lazy-load picker data when entering the sharing tab
     useEffect(() => {
@@ -268,15 +293,14 @@ export function OrganizationManager() {
         }
     }, [fetchOrgSharingSummary, showError]);
 
-    const handleSelectSharingOrg = useCallback((orgId) => {
-        setSharingTargetOrg(orgId);
-        setSelectedProjectIds(new Set());
-        setSelectedGoalIds(new Set());
-        setProjectSearch('');
-        setGoalSearch('');
-        if (orgId) loadSharingSummary(orgId);
-        else setSharingSummary({ projects: [], goals: [] });
-    }, [loadSharingSummary]);
+    useEffect(() => {
+        if (activeSection !== 'sharing') return;
+        if (!sharingTargetOrg) {
+            setSharingSummary({ projects: [], goals: [] });
+            return;
+        }
+        loadSharingSummary(sharingTargetOrg);
+    }, [activeSection, sharingTargetOrg, loadSharingSummary]);
 
     // Project list: owner projects only (not from target org)
     const sharingTargetOrgObj = useMemo(() =>
@@ -440,7 +464,51 @@ export function OrganizationManager() {
     };
 
     const totalMembers = organizations.reduce((sum, o) => sum + (o.memberCount || 0), 0);
-    const activeOrgs = organizations.filter(o => o.isActive).length;
+    const activeOrgs = activeOrganizations.length;
+    const orgsWithMembersCount = activeOrganizations.filter(org => Number(org.memberCount || 0) > 0).length;
+    const selectedOrgSharedCount = sharingSummary.projects.length + sharingSummary.goals.length;
+
+    const workflowSteps = useMemo(() => ([
+        {
+            id: 'orgs',
+            step: '1',
+            label: 'Organizations',
+            icon: Building2,
+            description: 'Create organizations and set active/inactive status.',
+            ready: true,
+            complete: activeOrgs > 0,
+            counter: `${activeOrgs}/${organizations.length} active`,
+            blocker: organizations.length === 0 ? 'Create your first organization to continue.' : ''
+        },
+        {
+            id: 'members',
+            step: '2',
+            label: 'Members',
+            icon: Users,
+            description: 'Assign users to active organizations.',
+            ready: activeOrgs > 0,
+            complete: activeOrgs > 0 && orgsWithMembersCount === activeOrgs,
+            counter: `${orgsWithMembersCount}/${activeOrgs || 0} staffed`,
+            blocker: activeOrgs > 0 ? '' : 'Activate at least one organization in Step 1.'
+        },
+        {
+            id: 'sharing',
+            step: '3',
+            label: 'Sharing',
+            icon: Share2,
+            description: 'Configure cross-organization project and goal sharing.',
+            ready: activeOrgs > 1,
+            complete: activeOrgs > 1 && selectedOrgSharedCount > 0,
+            counter: selectedOrgId ? `${selectedOrgSharedCount} shared` : 'Select org',
+            blocker: activeOrgs > 1 ? '' : 'Activate at least two organizations to enable sharing.'
+        }
+    ]), [activeOrgs, organizations.length, orgsWithMembersCount, selectedOrgId, selectedOrgSharedCount]);
+
+    const getStepState = useCallback((step) => {
+        if (!step.ready) return 'not-ready';
+        if (step.complete) return 'complete';
+        return 'ready';
+    }, []);
 
     // Selection state helpers
     const allFilteredUnsharedProjectsSelected = useMemo(() => {
@@ -513,17 +581,38 @@ export function OrganizationManager() {
                 )}
             </div>
 
-            {/* Sub-Navigation */}
-            <div className="org-nav">
-                <button className={`org-nav-btn ${activeSection === 'orgs' ? 'active' : ''}`} onClick={() => setActiveSection('orgs')}>
-                    <Building2 size={15} /> Organizations
-                </button>
-                <button className={`org-nav-btn ${activeSection === 'members' ? 'active' : ''}`} onClick={() => setActiveSection('members')}>
-                    <Users size={15} /> Member Assignment
-                </button>
-                <button className={`org-nav-btn ${activeSection === 'sharing' ? 'active' : ''}`} onClick={() => setActiveSection('sharing')}>
-                    <Share2 size={15} /> Data Sharing
-                </button>
+            {/* Guided Workflow Navigation */}
+            <div className="org-workflow-nav">
+                {workflowSteps.map((step) => {
+                    const StepIcon = step.icon;
+                    const state = getStepState(step);
+                    return (
+                        <button
+                            key={step.id}
+                            className={`org-workflow-card ${activeSection === step.id ? 'active' : ''} ${state}`}
+                            onClick={() => setActiveSection(step.id)}
+                            disabled={!step.ready}
+                        >
+                            <div className="org-workflow-card-head">
+                                <span className="org-workflow-label">
+                                    <span className="org-workflow-index">{step.step}</span>
+                                    <StepIcon size={14} />
+                                    {step.label}
+                                </span>
+                                <span className={`org-workflow-badge ${state}`}>
+                                    {state === 'not-ready' ? 'Not Ready' : state === 'complete' ? 'Complete' : 'Ready'}
+                                </span>
+                            </div>
+                            <div className="org-workflow-card-body">
+                                <p>{step.description}</p>
+                                <div className="org-workflow-meta">
+                                    <span>{step.counter}</span>
+                                    {step.blocker && <span className="org-workflow-blocker">{step.blocker}</span>}
+                                </div>
+                            </div>
+                        </button>
+                    );
+                })}
             </div>
 
             {/* ────────── SECTION: Organizations ────────── */}
@@ -531,8 +620,8 @@ export function OrganizationManager() {
                 <div className="org-section-panel">
                     <div className="org-section-header">
                         <div>
-                            <h3><Building2 size={18} /> Manage Organizations</h3>
-                            <p className="org-section-subtitle">Create and manage organizational units for data isolation</p>
+                            <h3><Building2 size={18} /> Step 1 of 3: Organizations</h3>
+                            <p className="org-section-subtitle">Create and manage organizational units for data isolation.</p>
                         </div>
                         <button className="btn-primary btn-sm" onClick={() => { setShowCreateForm(!showCreateForm); if (editingOrg) resetForm(); }}>
                             <Plus size={14} /> {showCreateForm ? 'Cancel' : 'New Organization'}
@@ -640,21 +729,24 @@ export function OrganizationManager() {
                 <div className="org-section-panel">
                     <div className="org-section-header">
                         <div>
-                            <h3><Users size={18} /> Assign Members to Organizations</h3>
-                            <p className="org-section-subtitle">Select an organization, then browse and assign users</p>
+                            <h3><Users size={18} /> Step 2 of 3: Member Assignment</h3>
+                            <p className="org-section-subtitle">Assign users to the selected active organization.</p>
                         </div>
                     </div>
+                    {activeOrganizations.length === 0 && (
+                        <p className="org-step-warning">Activate at least one organization in Step 1 before assigning members.</p>
+                    )}
 
                     <div className="org-sharing-layout">
                         {/* Org Selector Sidebar */}
                         <div className="org-sharing-sidebar">
-                            <label className="org-field-label">Select Organization</label>
+                            <label className="org-field-label">Selected Organization</label>
                             <div className="org-member-org-list">
-                                {organizations.filter(o => o.isActive).map(org => (
+                                {activeOrganizations.map(org => (
                                     <button
                                         key={org.id}
-                                        className={`org-member-org-btn ${selectedOrgForMembers === org.id ? 'selected' : ''}`}
-                                        onClick={() => handleSelectMemberOrg(org.id)}
+                                        className={`org-member-org-btn ${String(selectedOrgForMembers) === String(org.id) ? 'selected' : ''}`}
+                                        onClick={() => handleSelectOrg(org.id)}
                                     >
                                         <Building2 size={14} />
                                         <span className="org-member-org-name">{org.name}</span>
@@ -814,7 +906,7 @@ export function OrganizationManager() {
                             ) : (
                                 <div className="org-member-placeholder">
                                     <Users size={28} />
-                                    <p>Select an organization from the left to manage its members</p>
+                                    <p>Select an active organization to manage members.</p>
                                 </div>
                             )}
                         </div>
@@ -832,21 +924,24 @@ export function OrganizationManager() {
                 <div className="org-section-panel">
                     <div className="org-section-header">
                         <div>
-                            <h3><Share2 size={18} /> Cross-Organization Data Sharing</h3>
-                            <p className="org-section-subtitle">Select a target organization, then share projects and goals with them in bulk</p>
+                            <h3><Share2 size={18} /> Step 3 of 3: Cross-Organization Sharing</h3>
+                            <p className="org-section-subtitle">Use the same selected organization to configure data sharing.</p>
                         </div>
                     </div>
+                    {activeOrganizations.length < 2 && (
+                        <p className="org-step-warning">Activate at least two organizations in Step 1 before configuring sharing.</p>
+                    )}
 
                     <div className="org-sharing-layout">
                         {/* Org Selector Sidebar */}
                         <div className="org-sharing-sidebar">
-                            <label className="org-field-label">Target Organization</label>
+                            <label className="org-field-label">Selected Organization</label>
                             <div className="org-member-org-list">
-                                {organizations.filter(o => o.isActive).map(org => (
+                                {activeOrganizations.map(org => (
                                     <button
                                         key={org.id}
                                         className={`org-member-org-btn ${String(sharingTargetOrg) === String(org.id) ? 'selected' : ''}`}
-                                        onClick={() => handleSelectSharingOrg(org.id)}
+                                        onClick={() => handleSelectOrg(org.id)}
                                     >
                                         <Building2 size={14} />
                                         <span className="org-member-org-name">{org.name}</span>

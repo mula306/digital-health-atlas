@@ -320,8 +320,18 @@ const parseNullableBoardId = (value) => {
 // ==================== INTAKE FORMS ====================
 
 // Get all intake forms
-router.get('/forms', checkPermission('can_view_intake'), async (req, res) => {
+router.get('/forms', requireAuth, async (req, res) => {
     try {
+        const user = getAuthUser(req);
+        const canViewForms = await hasPermission(user, [
+            'can_view_intake',
+            'can_view_incoming_requests',
+            'can_view_governance_queue',
+            'can_manage_intake_forms',
+            'can_manage_intake'
+        ]);
+        if (!canViewForms) return res.status(403).json({ error: 'Forbidden' });
+
         const pool = await getPool();
         const result = await pool.request().query('SELECT * FROM IntakeForms ORDER BY id');
 

@@ -4,6 +4,13 @@
    ========================================== */
 
 /* Loading State */
+.org-manager {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    min-width: 0;
+}
+
 .org-loading {
     display: flex;
     align-items: center;
@@ -27,6 +34,7 @@
 .org-overview-bar {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 1.25rem;
     padding: 1rem 1.5rem;
     background: var(--bg-card);
@@ -121,6 +129,7 @@
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
+    flex-wrap: wrap;
     gap: 1rem;
     padding-bottom: 0.75rem;
 }
@@ -138,6 +147,142 @@
     margin: 0.3rem 0 0;
     color: var(--text-secondary);
     font-size: 0.82rem;
+}
+
+/* Guided Workflow */
+.org-workflow-nav {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.75rem;
+}
+
+.org-workflow-card {
+    text-align: left;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--bg-card);
+    padding: 0.85rem;
+    cursor: pointer;
+    transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
+}
+
+.org-workflow-card:hover:not(:disabled) {
+    border-color: hsla(var(--hue-indigo, 239), 85%, 60%, 0.35);
+    box-shadow: var(--shadow-sm);
+    transform: translateY(-1px);
+}
+
+.org-workflow-card:disabled {
+    cursor: not-allowed;
+    opacity: 0.65;
+}
+
+.org-workflow-card.active {
+    border-color: var(--accent-primary);
+    box-shadow: 0 0 0 1px hsla(var(--hue-indigo, 239), 85%, 60%, 0.25);
+}
+
+.org-workflow-card.not-ready {
+    border-style: dashed;
+}
+
+.org-workflow-card.complete {
+    border-color: rgba(34, 197, 94, 0.35);
+    background: rgba(34, 197, 94, 0.05);
+}
+
+.org-workflow-card-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.org-workflow-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.org-workflow-index {
+    width: 20px;
+    height: 20px;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: var(--accent-primary);
+    background: hsla(var(--hue-indigo, 239), 85%, 60%, 0.15);
+}
+
+.org-workflow-badge {
+    display: inline-flex;
+    align-items: center;
+    margin-left: auto;
+    padding: 0.2rem 0.55rem;
+    border-radius: 999px;
+    font-size: 0.68rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.org-workflow-badge.ready {
+    background: rgba(59, 130, 246, 0.12);
+    color: #60a5fa;
+}
+
+.org-workflow-badge.not-ready {
+    background: rgba(148, 163, 184, 0.16);
+    color: var(--text-secondary);
+}
+
+.org-workflow-badge.complete {
+    background: rgba(34, 197, 94, 0.15);
+    color: #22c55e;
+}
+
+.org-workflow-card-body {
+    margin-top: 0.65rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+}
+
+.org-workflow-card-body p {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 0.78rem;
+    line-height: 1.35;
+}
+
+.org-workflow-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    font-size: 0.72rem;
+    color: var(--text-tertiary);
+}
+
+.org-workflow-blocker {
+    color: #f59e0b;
+    font-weight: 500;
+}
+
+.org-step-warning {
+    margin: 0;
+    padding: 0.55rem 0.75rem;
+    border-radius: var(--radius-sm);
+    background: rgba(245, 158, 11, 0.08);
+    border: 1px solid rgba(245, 158, 11, 0.22);
+    color: #f59e0b;
+    font-size: 0.8rem;
 }
 
 /* ─── Create/Edit Form ─── */
@@ -709,6 +854,8 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
+    flex-wrap: wrap;
+    gap: 0.5rem;
     padding-bottom: 0.75rem;
     border-bottom: 1px solid var(--border-color);
 }
@@ -789,6 +936,7 @@
 /* Toolbar */
 .org-sharing-toolbar {
     display: flex;
+    flex-wrap: wrap;
     gap: 0.5rem;
     align-items: center;
 }
@@ -1147,6 +1295,10 @@
 
 /* ─── Responsive ─── */
 @media (max-width: 768px) {
+    .org-workflow-nav {
+        grid-template-columns: 1fr;
+    }
+
     .org-overview-bar {
         flex-wrap: wrap;
         gap: 0.75rem;
@@ -1177,5 +1329,17 @@
 
     .org-sharing-bulk-actions {
         flex-wrap: wrap;
+    }
+}
+
+@media (max-width: 1200px) {
+    .org-workflow-nav {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 960px) {
+    .org-workflow-nav {
+        grid-template-columns: 1fr;
     }
 }

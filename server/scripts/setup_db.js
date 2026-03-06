@@ -36,7 +36,7 @@ async function setupDatabase() {
                 if (i % 10 === 0 || i === batches.length - 1) {
                     process.stdout.write(`  Progress: ${i + 1}/${batches.length}\r`);
                 }
-            } catch (err) {
+            } catch (_err) {
                 // Many batches will "fail" because tables/indexes already exist — that's fine
                 skipped++;
             }

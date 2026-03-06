@@ -1,7 +1,6 @@
 import express from 'express';
 import { getPool, sql } from '../db.js';
 import { checkPermission, checkRole, getAuthUser, invalidatePermissionCache, requireAuth } from '../middleware/authMiddleware.js';
-import { requireOrg } from '../middleware/orgScope.js';
 import { handleError } from '../utils/errorHandler.js';
 import { logAudit } from '../utils/auditLogger.js';
 import { invalidateTagCache, invalidateProjectCache } from '../utils/cache.js';
@@ -682,7 +681,7 @@ router.get('/organizations/:orgId/sharing-summary', checkRole('Admin'), async (r
                     ORDER BY g.title ASC
                 `);
             goalsRecords = goalsResult.recordset;
-        } catch (goalErr) {
+        } catch (_goalErr) {
             // Table doesn't exist yet — that's OK, just return empty goals
             console.log('GoalOrgAccess table not found — goal sharing will be empty until migration is run');
         }
