@@ -9,13 +9,18 @@ import { OrganizationManager } from './OrganizationManager';
 import './AdminPanel.css';
 
 export function AdminPanel() {
-    const { permissions: contextPermissions, updatePermissionsBulk, hasPermission } = useData(); // Use context
+    const { permissions: contextPermissions, updatePermissionsBulk, hasPermission, hasRole } = useData();
     const { success, error: showError } = useToast();
     const [localPermissions, setLocalPermissions] = useState([]);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [activeTab, setActiveTab] = useState('permissions');
-    const canManageGovernance = hasPermission('can_manage_governance');
+    const isAdmin = hasRole('Admin');
+    const canManageRolePermissions = isAdmin;
+    const canManageTags = isAdmin || hasPermission('can_manage_tags');
+    const canViewAuditLog = isAdmin;
+    const canManageGovernance = isAdmin || hasPermission('can_manage_governance');
+    const canManageOrganizations = isAdmin;
 
     // Define the structure of permissions for the UI
     const permissionGroups = [
@@ -85,6 +90,21 @@ export function AdminPanel() {
     ];
 
     const targetRoles = ['Editor', 'Viewer', 'IntakeManager', 'ExecView', 'IntakeSubmit'];
+
+    const availableTabs = [
+        canManageRolePermissions ? 'permissions' : null,
+        canManageTags ? 'tags' : null,
+        canViewAuditLog ? 'audit-log' : null,
+        canManageGovernance ? 'governance' : null,
+        canManageOrganizations ? 'organizations' : null
+    ].filter(Boolean);
+
+    useEffect(() => {
+        if (availableTabs.length === 0) return;
+        if (!availableTabs.includes(activeTab)) {
+            setActiveTab(availableTabs[0]);
+        }
+    }, [activeTab, availableTabs]);
 
     // Sync with context permissions on load
     useEffect(() => {
@@ -177,6 +197,7 @@ export function AdminPanel() {
     };
 
     const saveChanges = async () => {
+        if (!canManageRolePermissions) return;
         setSaving(true);
         try {
             // Prepare updates
@@ -205,6 +226,19 @@ export function AdminPanel() {
         return <div className="loading-spinner">Loading settings...</div>;
     }
 
+    if (availableTabs.length === 0) {
+        return (
+            <div className="admin-panel">
+                <div className="admin-content glass">
+                    <div className="admin-note">
+                        <AlertTriangle size={16} />
+                        <span>No administrative tools are available for your account.</span>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
     return (
         <div className="admin-panel">
             <header className="admin-header">
@@ -212,7 +246,7 @@ export function AdminPanel() {
                     <h1>System Administration</h1>
                     <p>Manage users, organizational structure, tags, and system settings.</p>
                 </div>
-                {activeTab === 'permissions' && (
+                {activeTab === 'permissions' && canManageRolePermissions && (
                     <button className="btn-primary" onClick={saveChanges} disabled={saving}>
                         {saving ? <RefreshCw className="spin" size={18} /> : <Save size={18} />}
                         Apply Changes
@@ -223,24 +257,30 @@ export function AdminPanel() {
             <div className="admin-layout">
                 {/* Vertical Sidebar */}
                 <div className="admin-sidebar">
-                    <button
-                        className={`admin-tab ${activeTab === 'permissions' ? 'active' : ''}`}
-                        onClick={() => setActiveTab('permissions')}
-                    >
-                        <Shield size={16} /> Role Permissions
-                    </button>
-                    <button
-                        className={`admin-tab ${activeTab === 'tags' ? 'active' : ''}`}
-                        onClick={() => setActiveTab('tags')}
-                    >
-                        <Tag size={16} /> Tag Management
-                    </button>
-                    <button
-                        className={`admin-tab ${activeTab === 'audit-log' ? 'active' : ''}`}
-                        onClick={() => setActiveTab('audit-log')}
-                    >
-                        <Activity size={16} /> Audit Log
-                    </button>
+                    {canManageRolePermissions && (
+                        <button
+                            className={`admin-tab ${activeTab === 'permissions' ? 'active' : ''}`}
+                            onClick={() => setActiveTab('permissions')}
+                        >
+                            <Shield size={16} /> Role Permissions
+                        </button>
+                    )}
+                    {canManageTags && (
+                        <button
+                            className={`admin-tab ${activeTab === 'tags' ? 'active' : ''}`}
+                            onClick={() => setActiveTab('tags')}
+                        >
+                            <Tag size={16} /> Tag Management
+                        </button>
+                    )}
+                    {canViewAuditLog && (
+                        <button
+                            className={`admin-tab ${activeTab === 'audit-log' ? 'active' : ''}`}
+                            onClick={() => setActiveTab('audit-log')}
+                        >
+                            <Activity size={16} /> Audit Log
+                        </button>
+                    )}
                     {canManageGovernance && (
                         <button
                             className={`admin-tab ${activeTab === 'governance' ? 'active' : ''}`}
@@ -249,18 +289,20 @@ export function AdminPanel() {
                             <Scale size={16} /> Governance
                         </button>
                     )}
-                    <button
-                        className={`admin-tab ${activeTab === 'organizations' ? 'active' : ''}`}
-                        onClick={() => setActiveTab('organizations')}
-                    >
-                        <Building2 size={16} /> Organizations
-                    </button>
+                    {canManageOrganizations && (
+                        <button
+                            className={`admin-tab ${activeTab === 'organizations' ? 'active' : ''}`}
+                            onClick={() => setActiveTab('organizations')}
+                        >
+                            <Building2 size={16} /> Organizations
+                        </button>
+                    )}
                 </div>
 
                 {/* Main Content Area */}
                 <div className="admin-content-area">
 
-                    {activeTab === 'permissions' && (
+                    {activeTab === 'permissions' && canManageRolePermissions && (
                         <div className="admin-content glass">
                             <table className="permissions-table">
                                 <thead>
@@ -332,11 +374,11 @@ export function AdminPanel() {
                         </div>
                     )}
 
-                    {activeTab === 'tags' && (
+                    {activeTab === 'tags' && canManageTags && (
                         <TagManager />
                     )}
 
-                    {activeTab === 'audit-log' && (
+                    {activeTab === 'audit-log' && canViewAuditLog && (
                         <AuditLogView />
                     )}
 
@@ -344,7 +386,7 @@ export function AdminPanel() {
                         <GovernanceConfig />
                     )}
 
-                    {activeTab === 'organizations' && (
+                    {activeTab === 'organizations' && canManageOrganizations && (
                         <OrganizationManager />
                     )}
 

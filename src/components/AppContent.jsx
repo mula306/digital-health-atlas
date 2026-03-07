@@ -28,12 +28,16 @@ export function AppContent() {
     const [projectFilter, setProjectFilter] = useState(null);
     const [metricsFilter, setMetricsFilter] = useState(null);
     const [intakeParams, setIntakeParams] = useState(null);
-    const { hasPermission, error } = useData();
+    const { hasPermission, hasRole, error } = useData();
     const toast = useToast();
     const canAccessIntakeWorkspace =
         hasPermission('can_view_intake') ||
         hasPermission('can_view_incoming_requests') ||
         hasPermission('can_view_governance_queue');
+    const canAccessAdminPanel =
+        hasRole('Admin') ||
+        hasPermission('can_manage_tags') ||
+        hasPermission('can_manage_governance');
 
     // Show global data errors
     useEffect(() => {
@@ -146,7 +150,7 @@ export function AppContent() {
                                 <IntakePage /> :
                                 <div className="p-4">Access Denied</div>;
                         case 'admin':
-                            return (hasPermission('can_manage_users') || hasPermission('can_manage_tags') || hasPermission('can_view_audit_log')) ?
+                            return canAccessAdminPanel ?
                                 <AdminPanel /> :
                                 <div className="p-4">Access Denied</div>;
                         case 'public-intake':

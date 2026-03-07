@@ -95,6 +95,7 @@ export const KanbanCard = memo(function KanbanCard({ task, projectId, onClick })
                     >
                         <option value="todo">To Do</option>
                         <option value="in-progress">In Prog</option>
+                        <option value="blocked">Blocked</option>
                         <option value="review">Review</option>
                         <option value="done">Done</option>
                     </select>
@@ -106,6 +107,19 @@ export const KanbanCard = memo(function KanbanCard({ task, projectId, onClick })
             {/* Description preview */}
             {task.description && (
                 <p className="card-description">{task.description}</p>
+            )}
+
+            {(task.assigneeName || task.assigneeOid || (task.checklistTotal || 0) > 0) && (
+                <div className="card-metadata" style={{ display: 'flex', gap: '0.75rem', fontSize: '0.75rem', color: 'var(--text-tertiary)', marginBottom: '0.4rem' }}>
+                    <span>
+                        {task.assigneeName || task.assigneeOid ? `Owner: ${task.assigneeName || 'Assigned'}` : 'Owner: Unassigned'}
+                    </span>
+                    {(task.checklistTotal || 0) > 0 && (
+                        <span>
+                            Checklist: {task.checklistDone || 0}/{task.checklistTotal}
+                        </span>
+                    )}
+                </div>
             )}
 
             {/* End date badge */}

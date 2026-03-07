@@ -79,8 +79,8 @@ export function Layout({ children, currentView, onViewChange }) {
         }
     });
 
-    const { isAppAdmin } = useAuth();
     const {
+        hasRole,
         hasPermission,
         goals = [],
         projects = [],
@@ -94,6 +94,10 @@ export function Layout({ children, currentView, onViewChange }) {
         hasPermission('can_view_intake') ||
         hasPermission('can_view_incoming_requests') ||
         hasPermission('can_view_governance_queue');
+    const canAccessAdminPanel =
+        hasRole('Admin') ||
+        hasPermission('can_manage_tags') ||
+        hasPermission('can_manage_governance');
 
     const allNavItems = [
         { id: 'exec-dashboard', label: 'Executive Summary', icon: LayoutDashboard, permission: 'can_view_exec_dashboard' },
@@ -113,7 +117,7 @@ export function Layout({ children, currentView, onViewChange }) {
         return hasPermission(item.permission);
     });
 
-    if (isAppAdmin) {
+    if (canAccessAdminPanel) {
         navItems.push({ id: 'admin', label: 'Admin Panel', icon: Shield });
     }
 

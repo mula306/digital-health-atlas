@@ -318,34 +318,47 @@ export function DataProvider({ children }) {
         });
     }, [goals]);
 
-    // Optimization: Pre-calculate user permissions into a Set for O(1) lookup
-    const userPermissions = useMemo(() => {
+    const effectiveRoles = useMemo(() => {
         const account = instance.getActiveAccount();
         const tokenRoles = Array.isArray(account?.idTokenClaims?.roles) ? account.idTokenClaims.roles : [];
-        const roles = Array.isArray(currentUser?.roles) && currentUser.roles.length > 0
-            ? currentUser.roles
-            : tokenRoles;
-        if (roles.length === 0) return new Set();
+        const profileRoles = Array.isArray(currentUser?.roles) ? currentUser.roles : [];
+        const sourceRoles = profileRoles.length > 0 ? profileRoles : tokenRoles;
+        return [...new Set(sourceRoles
+            .filter(role => typeof role === 'string')
+            .map(role => role.trim())
+            .filter(Boolean))];
+    }, [instance, currentUser]);
+
+    // Optimization: Pre-calculate user permissions into a Set for O(1) lookup
+    const userPermissions = useMemo(() => {
+        if (effectiveRoles.length === 0) return new Set();
 
         // Admin bypass - Efficiently handle admins
-        if (roles.includes('Admin')) return 'ALL';
+        if (effectiveRoles.includes('Admin')) return 'ALL';
 
         const allowed = new Set();
         // Iterate permissions once to build the lookup set
         permissions.forEach(p => {
             // If user has the role and permission is allowed, add to set
-            if (roles.includes(p.role) && p.isAllowed) {
+            if (effectiveRoles.includes(p.role) && p.isAllowed) {
                 allowed.add(p.permission);
             }
         });
         return allowed;
-    }, [instance, permissions, currentUser]);
+    }, [effectiveRoles, permissions]);
 
     // Optimized O(1) permission check
     const hasPermission = useCallback((permissionKey) => {
         if (userPermissions === 'ALL') return true;
         return userPermissions.has(permissionKey);
     }, [userPermissions]);
+
+    const hasRole = useCallback((role) => effectiveRoles.includes(role), [effectiveRoles]);
+
+    const hasAnyRole = useCallback((roles = []) => {
+        if (!Array.isArray(roles) || roles.length === 0) return false;
+        return roles.some(role => effectiveRoles.includes(role));
+    }, [effectiveRoles]);
 
     // ==================== GOALS ====================
 
@@ -579,28 +592,34 @@ export function DataProvider({ children }) {
 
                 return { ...p, tasks: [...p.tasks, newTask], taskCount: p.tasks.length + 1 };
             }));
+            return newTask;
         } catch (err) {
             console.error('Error adding task:', err);
+            throw err;
         }
     }, [authFetch]);
 
     const updateTask = useCallback(async (projectId, taskId, updates) => {
         try {
-            await authFetch(`${API_BASE}/tasks/${taskId}`, {
+            const res = await authFetch(`${API_BASE}/tasks/${taskId}`, {
                 method: 'PUT',
                 body: JSON.stringify(updates)
             });
+            const data = await res.json().catch(() => ({}));
+            const serverTaskPatch = data?.task || {};
             setProjects(prev => prev.map(p => {
                 if (String(p.id) !== String(projectId)) return p;
                 if (!p.tasks) return p; // Tasks not loaded, nothing to update in state
 
                 return {
                     ...p,
-                    tasks: p.tasks.map(t => String(t.id) === String(taskId) ? { ...t, ...updates } : t)
+                    tasks: p.tasks.map(t => String(t.id) === String(taskId) ? { ...t, ...updates, ...serverTaskPatch } : t)
                 };
             }));
+            return { ...updates, ...serverTaskPatch };
         } catch (err) {
             console.error('Error updating task:', err);
+            throw err;
         }
     }, [authFetch]);
 
@@ -621,9 +640,47 @@ export function DataProvider({ children }) {
                     taskCount: p.tasks.length - 1
                 };
             }));
+            return true;
         } catch (err) {
             console.error('Error deleting task:', err);
+            throw err;
         }
+    }, [authFetch]);
+
+    const fetchAssignableUsers = useCallback(async (query = '') => {
+        const params = new URLSearchParams();
+        if (query.trim()) params.set('q', query.trim());
+        const suffix = params.toString() ? `?${params.toString()}` : '';
+        const res = await authFetch(`${API_BASE}/users/assignable${suffix}`);
+        return await res.json();
+    }, [authFetch]);
+
+    const fetchTaskChecklist = useCallback(async (taskId) => {
+        const res = await authFetch(`${API_BASE}/tasks/${taskId}/checklist`);
+        return await res.json();
+    }, [authFetch]);
+
+    const addTaskChecklistItem = useCallback(async (taskId, payload) => {
+        const res = await authFetch(`${API_BASE}/tasks/${taskId}/checklist`, {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
+        return await res.json();
+    }, [authFetch]);
+
+    const updateTaskChecklistItem = useCallback(async (taskId, itemId, payload) => {
+        const res = await authFetch(`${API_BASE}/tasks/${taskId}/checklist/${itemId}`, {
+            method: 'PUT',
+            body: JSON.stringify(payload)
+        });
+        return await res.json();
+    }, [authFetch]);
+
+    const deleteTaskChecklistItem = useCallback(async (taskId, itemId) => {
+        const res = await authFetch(`${API_BASE}/tasks/${taskId}/checklist/${itemId}`, {
+            method: 'DELETE'
+        });
+        return await res.json();
     }, [authFetch]);
 
     // ==================== STATUS REPORTS ====================
@@ -1386,6 +1443,7 @@ export function DataProvider({ children }) {
             moveTask, addTask, addProject, updateProject, deleteProject, loadProjectDetails,
             watchProject, unwatchProject,
             updateTask, deleteTask,
+            fetchAssignableUsers, fetchTaskChecklist, addTaskChecklistItem, updateTaskChecklistItem, deleteTaskChecklistItem,
             intakeForms, addIntakeForm, updateIntakeForm, deleteIntakeForm,
             intakeSubmissions, mySubmissions, addIntakeSubmission, updateIntakeSubmission,
             getGovernanceSettings, updateGovernanceSettings,
@@ -1400,7 +1458,7 @@ export function DataProvider({ children }) {
             addStatusReport, getLatestStatusReport, restoreStatusReport,
             authFetch, fetchExecSummaryProjects,
 
-            permissions, hasPermission, updatePermissionsBulk,
+            permissions, hasPermission, hasRole, hasAnyRole, userRoles: effectiveRoles, updatePermissionsBulk,
 
             fetchOrganizations, createOrganization, updateOrganization,
             assignUserToOrg, fetchProjectSharing, shareProject, unshareProject,

@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import { Settings, LayoutGrid, Table, GanttChart, FileText, Calendar, Activity, Star } from 'lucide-react';
 import { useData } from '../../context/DataContext';
 import { KanbanColumn } from './KanbanColumn';
@@ -16,6 +16,7 @@ import './Kanban.css';
 const COLUMNS = [
     { id: 'todo', title: 'To Do', color: 'var(--text-secondary)' },
     { id: 'in-progress', title: 'In Progress', color: '#3b82f6' },
+    { id: 'blocked', title: 'Blocked', color: '#ef4444' },
     { id: 'review', title: 'Review', color: '#8b5cf6' },
     { id: 'done', title: 'Done', color: '#10b981' }
 ];
@@ -25,13 +26,15 @@ const PRIORITY_ORDER = { high: 0, medium: 1, low: 2 };
 import { useAuth } from '../../hooks/useAuth';
 
 export function KanbanBoard({ project, onBack, goalTitle }) {
-    const { moveTask: _moveTask, watchProject, unwatchProject } = useData();
+    const { watchProject, unwatchProject, fetchAssignableUsers, currentUser } = useData();
     const { canEdit } = useAuth();
     const [showAddModal, setShowAddModal] = useState(false);
     const [showEditModal, setShowEditModal] = useState(false);
     const [selectedTask, setSelectedTask] = useState(null);
     const [viewMode, setViewMode] = useState('table'); // 'table', 'gantt', 'kanban', 'reports'
     const [isUpdatingWatch, setIsUpdatingWatch] = useState(false);
+    const [taskQuickFilter, setTaskQuickFilter] = useState('all');
+    const [assigneeOptions, setAssigneeOptions] = useState([]);
 
     const sortTasks = useCallback((tasks) => {
         return [...tasks].sort((a, b) => {
@@ -47,13 +50,51 @@ export function KanbanBoard({ project, onBack, goalTitle }) {
         });
     }, []);
 
+    const filteredTasks = useMemo(() => {
+        const tasks = project.tasks || [];
+        if (taskQuickFilter === 'all') return tasks;
+
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        const isOverdue = (task) => {
+            const endDate = task.endDate || task.dueDate;
+            if (!endDate) return false;
+            return new Date(endDate) < today && task.status !== 'done';
+        };
+
+        if (taskQuickFilter === 'mine') {
+            const currentOid = String(currentUser?.oid || '');
+            return tasks.filter((task) => String(task.assigneeOid || '') === currentOid);
+        }
+
+        if (taskQuickFilter === 'unassigned') {
+            return tasks.filter((task) => !task.assigneeOid);
+        }
+
+        if (taskQuickFilter === 'overdue') {
+            return tasks.filter((task) => isOverdue(task));
+        }
+
+        if (taskQuickFilter === 'done') {
+            return tasks.filter((task) => task.status === 'done');
+        }
+
+        return tasks;
+    }, [project.tasks, taskQuickFilter, currentUser?.oid]);
+
     const tasksByStatus = useMemo(() => {
         return COLUMNS.reduce((acc, col) => {
-            const columnTasks = (project.tasks || []).filter(t => t.status === col.id);
+            const columnTasks = filteredTasks.filter(t => t.status === col.id);
             acc[col.id] = sortTasks(columnTasks);
             return acc;
         }, {});
-    }, [project.tasks, sortTasks]);
+    }, [filteredTasks, sortTasks]);
+
+    const projectForView = useMemo(() => ({
+        ...project,
+        tasks: filteredTasks
+    }), [project, filteredTasks]);
 
     const handleEditClose = useCallback((wasDeleted) => {
         setShowEditModal(false);
@@ -82,16 +123,33 @@ export function KanbanBoard({ project, onBack, goalTitle }) {
         }
     }, [isUpdatingWatch, project.isWatched, project.id, unwatchProject, watchProject]);
 
-    // Keep selectedTask in sync with project updates (e.g. after editing)
-    // Keep selectedTask in sync with project updates (Derived State Pattern)
-    if (selectedTask) {
-        const updatedTask = project.tasks.find(t => t.id === selectedTask.id);
-        // If task exists and has changed, update local state
-        // Note: We use JSON.stringify for deep comparison as per original logic, though it has performance cost.
-        if (updatedTask && JSON.stringify(updatedTask) !== JSON.stringify(selectedTask)) {
+    useEffect(() => {
+        if (!canEdit) return;
+        let cancelled = false;
+        fetchAssignableUsers()
+            .then((users) => {
+                if (!cancelled && Array.isArray(users)) {
+                    setAssigneeOptions(users);
+                }
+            })
+            .catch((err) => {
+                console.error('Failed to load assignable users:', err);
+            });
+        return () => { cancelled = true; };
+    }, [canEdit, fetchAssignableUsers]);
+
+    // Keep selectedTask in sync with project updates.
+    useEffect(() => {
+        if (!selectedTask) return;
+        const updatedTask = (project.tasks || []).find(t => String(t.id) === String(selectedTask.id));
+        if (!updatedTask) {
+            setSelectedTask(null);
+            return;
+        }
+        if (JSON.stringify(updatedTask) !== JSON.stringify(selectedTask)) {
             setSelectedTask(updatedTask);
         }
-    }
+    }, [project.tasks, selectedTask]);
 
     return (
         <div className="kanban-board-container">
@@ -180,6 +238,47 @@ export function KanbanBoard({ project, onBack, goalTitle }) {
                 </div>
             </div>
 
+            {viewMode !== 'reports' && viewMode !== 'activity' && (
+                <div className="task-quick-filters">
+                    <button
+                        type="button"
+                        className={`task-filter-btn ${taskQuickFilter === 'all' ? 'active' : ''}`}
+                        onClick={() => setTaskQuickFilter('all')}
+                    >
+                        All
+                    </button>
+                    <button
+                        type="button"
+                        className={`task-filter-btn ${taskQuickFilter === 'mine' ? 'active' : ''}`}
+                        onClick={() => setTaskQuickFilter('mine')}
+                        disabled={!currentUser?.oid}
+                    >
+                        My Tasks
+                    </button>
+                    <button
+                        type="button"
+                        className={`task-filter-btn ${taskQuickFilter === 'unassigned' ? 'active' : ''}`}
+                        onClick={() => setTaskQuickFilter('unassigned')}
+                    >
+                        Unassigned
+                    </button>
+                    <button
+                        type="button"
+                        className={`task-filter-btn ${taskQuickFilter === 'overdue' ? 'active' : ''}`}
+                        onClick={() => setTaskQuickFilter('overdue')}
+                    >
+                        Overdue
+                    </button>
+                    <button
+                        type="button"
+                        className={`task-filter-btn ${taskQuickFilter === 'done' ? 'active' : ''}`}
+                        onClick={() => setTaskQuickFilter('done')}
+                    >
+                        Done
+                    </button>
+                </div>
+            )}
+
             {viewMode === 'kanban' && (
                 <div className="kanban-columns">
                     {COLUMNS.map(col => (
@@ -196,21 +295,21 @@ export function KanbanBoard({ project, onBack, goalTitle }) {
 
             {viewMode === 'table' && (
                 <TaskTableView
-                    project={project}
+                    project={projectForView}
                     onTaskClick={handleTaskClick}
                 />
             )}
 
             {viewMode === 'calendar' && (
                 <CalendarView
-                    project={project}
+                    project={projectForView}
                     onTaskClick={handleTaskClick}
                 />
             )}
 
             {viewMode === 'gantt' && (
                 <GanttView
-                    project={project}
+                    project={projectForView}
                     onTaskClick={handleTaskClick}
                 />
             )}
@@ -232,7 +331,12 @@ export function KanbanBoard({ project, onBack, goalTitle }) {
                 title={`Add Task to ${project.title}`}
                 closeOnOverlayClick={false}
             >
-                <AddTaskForm onClose={() => setShowAddModal(false)} projectId={project.id} />
+                <AddTaskForm
+                    onClose={() => setShowAddModal(false)}
+                    projectId={project.id}
+                    assigneeOptions={assigneeOptions}
+                    currentUser={currentUser}
+                />
             </Modal>
 
             <Modal
@@ -249,6 +353,7 @@ export function KanbanBoard({ project, onBack, goalTitle }) {
                 <TaskDetailPanel
                     task={selectedTask}
                     projectId={project.id}
+                    assigneeOptions={assigneeOptions}
                     onClose={() => setSelectedTask(null)}
                 />
             )}

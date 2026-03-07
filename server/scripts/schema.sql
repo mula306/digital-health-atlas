@@ -75,13 +75,80 @@ CREATE TABLE Tasks (
     id INT IDENTITY(1,1) PRIMARY KEY,
     projectId INT NOT NULL,
     title NVARCHAR(255) NOT NULL,
-    status NVARCHAR(20) DEFAULT 'todo',  -- todo, in-progress, review, done
+    status NVARCHAR(20) DEFAULT 'todo',  -- todo, in-progress, blocked, review, done
     priority NVARCHAR(20) DEFAULT 'medium',  -- low, medium, high
     description NVARCHAR(MAX) NULL,
     startDate DATE NULL,
     endDate DATE NULL,
+    assigneeOid NVARCHAR(100) NULL,
+    blockerNote NVARCHAR(1000) NULL,
     createdAt DATETIME2 DEFAULT GETDATE(),
-    CONSTRAINT FK_Tasks_Project FOREIGN KEY (projectId) REFERENCES Projects(id) ON DELETE CASCADE
+    CONSTRAINT FK_Tasks_Project FOREIGN KEY (projectId) REFERENCES Projects(id) ON DELETE CASCADE,
+    CONSTRAINT CK_Tasks_Status CHECK (status IN ('todo', 'in-progress', 'blocked', 'review', 'done')),
+    CONSTRAINT CK_Tasks_Priority CHECK (priority IN ('low', 'medium', 'high')),
+    CONSTRAINT CK_Tasks_DateOrder CHECK (startDate IS NULL OR endDate IS NULL OR endDate >= startDate)
+);
+GO
+
+IF COL_LENGTH('Tasks', 'assigneeOid') IS NULL
+BEGIN
+    ALTER TABLE Tasks ADD assigneeOid NVARCHAR(100) NULL;
+END
+GO
+
+IF COL_LENGTH('Tasks', 'blockerNote') IS NULL
+BEGIN
+    ALTER TABLE Tasks ADD blockerNote NVARCHAR(1000) NULL;
+END
+GO
+
+IF NOT EXISTS (
+    SELECT 1
+    FROM sys.check_constraints
+    WHERE name = 'CK_Tasks_Status'
+)
+BEGIN
+    ALTER TABLE Tasks
+    ADD CONSTRAINT CK_Tasks_Status
+    CHECK (status IN ('todo', 'in-progress', 'blocked', 'review', 'done'));
+END
+GO
+
+IF NOT EXISTS (
+    SELECT 1
+    FROM sys.check_constraints
+    WHERE name = 'CK_Tasks_Priority'
+)
+BEGIN
+    ALTER TABLE Tasks
+    ADD CONSTRAINT CK_Tasks_Priority
+    CHECK (priority IN ('low', 'medium', 'high'));
+END
+GO
+
+IF NOT EXISTS (
+    SELECT 1
+    FROM sys.check_constraints
+    WHERE name = 'CK_Tasks_DateOrder'
+)
+BEGIN
+    ALTER TABLE Tasks
+    ADD CONSTRAINT CK_Tasks_DateOrder
+    CHECK (startDate IS NULL OR endDate IS NULL OR endDate >= startDate);
+END
+GO
+
+-- Task checklist items (lightweight subtasks)
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'TaskChecklistItems')
+CREATE TABLE TaskChecklistItems (
+    id INT IDENTITY(1,1) PRIMARY KEY,
+    taskId INT NOT NULL,
+    title NVARCHAR(255) NOT NULL,
+    isDone BIT NOT NULL DEFAULT 0,
+    sortOrder INT NOT NULL DEFAULT 0,
+    createdAt DATETIME2 NOT NULL DEFAULT GETDATE(),
+    CONSTRAINT FK_TaskChecklistItems_Task FOREIGN KEY (taskId) REFERENCES Tasks(id) ON DELETE CASCADE,
+    CONSTRAINT CK_TaskChecklistItems_SortOrder CHECK (sortOrder >= 0)
 );
 GO
 
@@ -528,6 +595,15 @@ IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Tasks_ProjectId')
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Tasks_Status')
     CREATE INDEX IX_Tasks_Status ON Tasks(status);
 
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Tasks_AssigneeOid')
+    CREATE INDEX IX_Tasks_AssigneeOid ON Tasks(assigneeOid);
+
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_TaskChecklistItems_TaskId')
+    CREATE INDEX IX_TaskChecklistItems_TaskId ON TaskChecklistItems(taskId);
+
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_TaskChecklistItems_TaskSort')
+    CREATE INDEX IX_TaskChecklistItems_TaskSort ON TaskChecklistItems(taskId, sortOrder, id);
+
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_StatusReports_ProjectId')
     CREATE INDEX IX_StatusReports_ProjectId ON StatusReports(projectId);
 
@@ -601,6 +677,16 @@ BEGIN
     
     CREATE INDEX IX_Users_OID ON Users(oid);
     CREATE INDEX IX_Users_Email ON Users(email);
+END
+GO
+
+IF COL_LENGTH('Tasks', 'assigneeOid') IS NOT NULL
+   AND OBJECT_ID('Users', 'U') IS NOT NULL
+   AND NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_Tasks_Assignee')
+BEGIN
+    ALTER TABLE Tasks
+    ADD CONSTRAINT FK_Tasks_Assignee
+    FOREIGN KEY (assigneeOid) REFERENCES Users(oid) ON DELETE SET NULL;
 END
 GO
 

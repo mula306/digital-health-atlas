@@ -32,6 +32,11 @@ const AUTH_FALLBACK_ROLES = (process.env.AUTH_FALLBACK_ROLES || '')
     .split(',')
     .map((role) => role.trim())
     .filter(Boolean);
+const AUTH_LAST_LOGIN_UPDATE_MS = Number.parseInt(process.env.AUTH_LAST_LOGIN_UPDATE_MS || '300000', 10);
+const LAST_LOGIN_UPDATE_INTERVAL_MS = Number.isFinite(AUTH_LAST_LOGIN_UPDATE_MS) && AUTH_LAST_LOGIN_UPDATE_MS >= 0
+    ? AUTH_LAST_LOGIN_UPDATE_MS
+    : 300000;
+const DUPLICATE_KEY_ERROR_CODES = new Set([2601, 2627]);
 const configuredCorsOrigins = (process.env.CORS_ALLOWED_ORIGINS || '')
     .split(',')
     .map((origin) => origin.trim())
@@ -51,6 +56,9 @@ if (!AZURE_TENANT_ID || AZURE_TENANT_ID === 'common') {
 }
 if (!AZURE_CLIENT_ID) {
     throw new Error('AZURE_CLIENT_ID must be set.');
+}
+if (!IS_DEVELOPMENT && AUTH_FALLBACK_ROLES.length > 0) {
+    throw new Error('AUTH_FALLBACK_ROLES must be empty in production.');
 }
 
 // ==================== MIDDLEWARE ====================
@@ -121,18 +129,32 @@ passport.use(new JwtStrategy(jwtOptions, async (jwt_payload, done) => {
             const email = jwt_payload.preferred_username || jwt_payload.email || 'unknown@example.com';
             const tid = jwt_payload.tid || AZURE_TENANT_ID;
 
-            const insertResult = await pool.request()
-                .input('oid', sql.NVarChar, jwt_payload.oid)
-                .input('tid', sql.NVarChar, tid)
-                .input('name', sql.NVarChar, name)
-                .input('email', sql.NVarChar, email)
-                .input('roles', sql.NVarChar, JSON.stringify(AUTH_FALLBACK_ROLES))
-                .query(`
-                    INSERT INTO Users (oid, tid, name, email, roles) 
-                    OUTPUT INSERTED.* 
-                    VALUES (@oid, @tid, @name, @email, @roles)
-                `);
-            user = insertResult.recordset[0];
+            try {
+                const insertResult = await pool.request()
+                    .input('oid', sql.NVarChar, jwt_payload.oid)
+                    .input('tid', sql.NVarChar, tid)
+                    .input('name', sql.NVarChar, name)
+                    .input('email', sql.NVarChar, email)
+                    .input('roles', sql.NVarChar, JSON.stringify(AUTH_FALLBACK_ROLES))
+                    .query(`
+                        INSERT INTO Users (oid, tid, name, email, roles)
+                        OUTPUT INSERTED.*
+                        VALUES (@oid, @tid, @name, @email, @roles)
+                    `);
+                user = insertResult.recordset[0];
+            } catch (insertErr) {
+                if (!DUPLICATE_KEY_ERROR_CODES.has(insertErr?.number)) {
+                    throw insertErr;
+                }
+                const existing = await pool.request()
+                    .input('oid', sql.NVarChar, jwt_payload.oid)
+                    .query('SELECT * FROM Users WHERE oid = @oid');
+                user = existing.recordset[0];
+            }
+        }
+
+        if (!user) {
+            return done(new Error('Unable to provision authenticated user record.'), false);
         }
 
         // Parse DB roles
@@ -164,6 +186,19 @@ passport.use(new JwtStrategy(jwtOptions, async (jwt_payload, done) => {
                 .query('UPDATE Users SET roles = @roles WHERE oid = @oid');
         }
         user.roles = effectiveTokenRoles;
+
+        const now = new Date();
+        const previousLogin = user.lastLogin ? new Date(user.lastLogin) : null;
+        const shouldUpdateLastLogin = !previousLogin
+            || Number.isNaN(previousLogin.getTime())
+            || (now.getTime() - previousLogin.getTime()) >= LAST_LOGIN_UPDATE_INTERVAL_MS;
+        if (shouldUpdateLastLogin) {
+            await pool.request()
+                .input('oid', sql.NVarChar, jwt_payload.oid)
+                .input('lastLogin', sql.DateTime2, now)
+                .query('UPDATE Users SET lastLogin = @lastLogin WHERE oid = @oid');
+            user.lastLogin = now;
+        }
 
         // Attach orgId for multi-org scoping
         user.orgId = user.orgId || null;

@@ -30,6 +30,7 @@ const priorityColors = {
 const statusLabels = {
     'todo': 'To Do',
     'in-progress': 'In Progress',
+    'blocked': 'Blocked',
     'review': 'Review',
     'done': 'Done'
 };
@@ -41,6 +42,7 @@ export function TaskTableView({ project, onTaskClick }) {
     const statusColors = {
         'todo': '#64748b',
         'in-progress': '#3b82f6',
+        'blocked': '#ef4444',
         'review': '#8b5cf6',
         'done': '#22c55e'
     };
@@ -55,7 +57,7 @@ export function TaskTableView({ project, onTaskClick }) {
     };
 
     const priorityOrder = { high: 0, medium: 1, low: 2 };
-    const statusOrder = { 'todo': 0, 'in-progress': 1, 'review': 2, 'done': 3 };
+    const statusOrder = { 'todo': 0, 'in-progress': 1, 'blocked': 2, 'review': 3, 'done': 4 };
 
     const sortedTasks = [...(project.tasks || [])].sort((a, b) => {
         let comparison = 0;
@@ -122,12 +124,14 @@ export function TaskTableView({ project, onTaskClick }) {
                         <th onClick={() => handleSort('endDate')} className="sortable">
                             End Date {renderSortIcon('endDate')}
                         </th>
+                        <th>Owner</th>
+                        <th>Checklist</th>
                     </tr>
                 </thead>
                 <tbody>
                     {sortedTasks.length === 0 ? (
                         <tr>
-                            <td colSpan="5" className="empty-row">No tasks yet. Add one to get started!</td>
+                            <td colSpan="7" className="empty-row">No tasks yet. Add one to get started!</td>
                         </tr>
                     ) : (
                         sortedTasks.map(task => {
@@ -179,7 +183,7 @@ export function TaskTableView({ project, onTaskClick }) {
                                                 {new Date(startDate).toLocaleDateString(undefined, { timeZone: 'UTC' })}
                                             </span>
                                         ) : (
-                                            <span className="no-date">—</span>
+                                            <span className="no-date">-</span>
                                         )}
                                     </td>
                                     <td className={overdue ? 'overdue-date' : ''}>
@@ -189,8 +193,14 @@ export function TaskTableView({ project, onTaskClick }) {
                                                 {new Date(endDate).toLocaleDateString(undefined, { timeZone: 'UTC' })}
                                             </span>
                                         ) : (
-                                            <span className="no-date">—</span>
+                                            <span className="no-date">-</span>
                                         )}
+                                    </td>
+                                    <td>{task.assigneeName || (task.assigneeOid ? 'Assigned' : 'Unassigned')}</td>
+                                    <td>
+                                        {(task.checklistTotal || 0) > 0
+                                            ? `${task.checklistDone || 0}/${task.checklistTotal}`
+                                            : '-'}
                                     </td>
                                 </tr>
                             );

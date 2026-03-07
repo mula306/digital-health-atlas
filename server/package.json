@@ -19,7 +19,8 @@
         "migrate:multi-org": "node scripts/run_migration.js migrate_multi_org.sql",
         "migrate:org-sharing-v2": "node scripts/run_migration.js migrate_org_sharing_v2.sql",
         "migrate:project-goals": "node scripts/run_migration.js migrate_project_goals.sql",
-        "migrate:project-watchlist": "node scripts/run_migration.js migrate_project_watchlist.sql"
+        "migrate:project-watchlist": "node scripts/run_migration.js migrate_project_watchlist.sql",
+        "migrate:task-tracking:phase1": "node scripts/run_migration.js migrate_task_tracking_phase1.sql"
     },
     "dependencies": {
         "@faker-js/faker": "^10.3.0",

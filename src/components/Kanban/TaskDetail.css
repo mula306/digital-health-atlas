@@ -176,3 +176,72 @@
     background: #ef4444;
     color: white;
 }
+
+.task-checklist {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+}
+
+.task-checklist-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.6rem;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--bg-secondary);
+}
+
+.task-checklist-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.8rem;
+    height: 1.8rem;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background: var(--bg-card);
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+
+.task-checklist-title {
+    flex: 1;
+    color: var(--text-primary);
+    font-size: 0.92rem;
+}
+
+.task-checklist-title.done {
+    text-decoration: line-through;
+    color: var(--text-tertiary);
+}
+
+.task-checklist-delete {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.8rem;
+    height: 1.8rem;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: transparent;
+    color: #ef4444;
+    cursor: pointer;
+}
+
+.task-checklist-add {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 0.25rem;
+}
+
+.task-checklist-add .form-input {
+    flex: 1;
+}
+
+.text-muted {
+    color: var(--text-tertiary);
+}

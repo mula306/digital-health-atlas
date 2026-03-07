@@ -52,6 +52,42 @@
     gap: 1rem;
 }
 
+.task-quick-filters {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: -1rem 0 1rem;
+    flex-wrap: wrap;
+}
+
+.task-filter-btn {
+    border: 1px solid var(--border-color);
+    background: var(--bg-card);
+    color: var(--text-secondary);
+    border-radius: 999px;
+    padding: 0.35rem 0.8rem;
+    font-size: 0.78rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.task-filter-btn:hover:not(:disabled) {
+    border-color: var(--text-secondary);
+    color: var(--text-primary);
+}
+
+.task-filter-btn.active {
+    border-color: var(--accent-primary);
+    color: var(--accent-primary);
+    background: color-mix(in srgb, var(--accent-primary) 12%, var(--bg-card));
+}
+
+.task-filter-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
 .view-toggle {
     display: flex;
     background: var(--bg-secondary);

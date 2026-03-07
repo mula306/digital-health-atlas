@@ -51,6 +51,25 @@ const parseTruthyQueryFlag = (value) => {
     return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
 };
 
+const TASK_STATUSES = new Set(['todo', 'in-progress', 'blocked', 'review', 'done']);
+const TASK_PRIORITIES = new Set(['low', 'medium', 'high']);
+
+const normalizeTaskDate = (value) => {
+    if (value === undefined) return undefined;
+    if (value === null || value === '') return null;
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return null;
+    return parsed.toISOString().slice(0, 10);
+};
+
+const normalizeTaskString = (value, maxLength = 0) => {
+    if (value === undefined || value === null) return null;
+    const trimmed = String(value).trim();
+    if (!trimmed) return null;
+    if (maxLength > 0) return trimmed.slice(0, maxLength);
+    return trimmed;
+};
+
 // Get lightweight executive summary of ALL projects
 router.get('/exec-summary', checkPermission(['can_view_exec_dashboard', 'can_view_projects']), withSharedScope, async (req, res) => {
     try {
@@ -618,10 +637,26 @@ router.get('/:id', checkPermission('can_view_projects'), withSharedScope, checkP
             .query('SELECT goalId FROM ProjectGoals WHERE projectId = @projectId');
         const goalIds = goalsResult.recordset.map(r => r.goalId.toString());
 
-        // Fetch all tasks
+        // Fetch all tasks with assignee/checklist metadata
         const tasksResult = await pool.request()
             .input('projectId', sql.Int, id)
-            .query('SELECT * FROM Tasks WHERE projectId = @projectId');
+            .query(`
+                SELECT
+                    t.*,
+                    u.name AS assigneeName,
+                    checklist.totalItems AS checklistTotal,
+                    checklist.doneItems AS checklistDone
+                FROM Tasks t
+                LEFT JOIN Users u ON u.oid = t.assigneeOid
+                OUTER APPLY (
+                    SELECT
+                        COUNT(*) AS totalItems,
+                        SUM(CASE WHEN i.isDone = 1 THEN 1 ELSE 0 END) AS doneItems
+                    FROM TaskChecklistItems i
+                    WHERE i.taskId = t.id
+                ) checklist
+                WHERE t.projectId = @projectId
+            `);
 
         // Fetch report count
         const reportsResult = await pool.request()
@@ -658,7 +693,12 @@ router.get('/:id', checkPermission('can_view_projects'), withSharedScope, checkP
             priority: t.priority,
             description: t.description,
             startDate: t.startDate,
-            endDate: t.endDate
+            endDate: t.endDate,
+            assigneeOid: t.assigneeOid || null,
+            assigneeName: t.assigneeName || null,
+            blockerNote: t.blockerNote || null,
+            checklistTotal: Number(t.checklistTotal || 0),
+            checklistDone: Number(t.checklistDone || 0)
         }));
 
         const doneCount = tasks.filter(t => t.status === 'done').length;
@@ -906,25 +946,106 @@ router.put('/:id/tags', checkPermission('can_edit_project'), withSharedScope, ch
 // Add task to project
 router.post('/:projectId/tasks', checkPermission('can_edit_project'), withSharedScope, checkProjectWriteAccess((req) => req.params.projectId), requireProjectWriteAccess, async (req, res) => {
     try {
-        const { title, status, priority, description, startDate, endDate } = req.body;
-        if (!title) {
+        const { title, status, priority, description, startDate, endDate, assigneeOid, blockerNote } = req.body;
+        const normalizedTitle = typeof title === 'string' ? title.trim() : '';
+        if (!normalizedTitle) {
             return res.status(400).json({ error: 'Missing required field: title' });
         }
+
+        const normalizedStatus = String(status || 'todo').trim().toLowerCase();
+        if (!TASK_STATUSES.has(normalizedStatus)) {
+            return res.status(400).json({ error: `Invalid task status. Allowed: ${Array.from(TASK_STATUSES).join(', ')}` });
+        }
+
+        const normalizedPriority = String(priority || 'medium').trim().toLowerCase();
+        if (!TASK_PRIORITIES.has(normalizedPriority)) {
+            return res.status(400).json({ error: `Invalid task priority. Allowed: ${Array.from(TASK_PRIORITIES).join(', ')}` });
+        }
+
+        const normalizedStartDate = normalizeTaskDate(startDate);
+        const normalizedEndDate = normalizeTaskDate(endDate);
+
+        if (startDate && !normalizedStartDate) {
+            return res.status(400).json({ error: 'Invalid startDate. Use YYYY-MM-DD or ISO date format.' });
+        }
+        if (endDate && !normalizedEndDate) {
+            return res.status(400).json({ error: 'Invalid endDate. Use YYYY-MM-DD or ISO date format.' });
+        }
+        if (normalizedStartDate && normalizedEndDate && normalizedEndDate < normalizedStartDate) {
+            return res.status(400).json({ error: 'endDate cannot be earlier than startDate.' });
+        }
+
         const pool = await getPool();
+        const normalizedAssigneeOid = normalizeTaskString(assigneeOid, 100);
+        let assigneeName = null;
+        if (normalizedAssigneeOid) {
+            const assigneeResult = await pool.request()
+                .input('oid', sql.NVarChar(100), normalizedAssigneeOid)
+                .query('SELECT TOP 1 oid, name, orgId FROM Users WHERE oid = @oid');
+            if (!assigneeResult.recordset.length) {
+                return res.status(400).json({ error: 'Assignee not found.' });
+            }
+            const assignee = assigneeResult.recordset[0];
+            if (req.orgId && assignee.orgId && assignee.orgId !== req.orgId) {
+                return res.status(400).json({ error: 'Assignee must belong to your organization.' });
+            }
+            assigneeName = assignee.name || null;
+        }
+
+        const normalizedDescription = description === undefined || description === null ? '' : String(description);
+        const normalizedBlockerNote = normalizeTaskString(blockerNote, 1000);
+        const persistedBlockerNote = normalizedStatus === 'blocked' ? normalizedBlockerNote : null;
+
         const result = await pool.request()
             .input('projectId', sql.Int, parseInt(req.params.projectId))
-            .input('title', sql.NVarChar, title)
-            .input('status', sql.NVarChar, status || 'todo')
-            .input('priority', sql.NVarChar, priority || 'medium')
-            .input('description', sql.NVarChar(sql.MAX), description || '')
-            .input('startDate', sql.Date, startDate || null)
-            .input('endDate', sql.Date, endDate || null)
-            .query('INSERT INTO Tasks (projectId, title, status, priority, description, startDate, endDate) OUTPUT INSERTED.id VALUES (@projectId, @title, @status, @priority, @description, @startDate, @endDate)');
+            .input('title', sql.NVarChar, normalizedTitle)
+            .input('status', sql.NVarChar, normalizedStatus)
+            .input('priority', sql.NVarChar, normalizedPriority)
+            .input('description', sql.NVarChar(sql.MAX), normalizedDescription)
+            .input('startDate', sql.Date, normalizedStartDate)
+            .input('endDate', sql.Date, normalizedEndDate)
+            .input('assigneeOid', sql.NVarChar(100), normalizedAssigneeOid)
+            .input('blockerNote', sql.NVarChar(1000), persistedBlockerNote)
+            .query(`
+                INSERT INTO Tasks (projectId, title, status, priority, description, startDate, endDate, assigneeOid, blockerNote)
+                OUTPUT INSERTED.id
+                VALUES (@projectId, @title, @status, @priority, @description, @startDate, @endDate, @assigneeOid, @blockerNote)
+            `);
 
         invalidateProjectCache();
         const newId = result.recordset[0].id.toString();
-        logAudit({ action: 'task.create', entityType: 'task', entityId: newId, entityTitle: title, user: getAuthUser(req), after: { title, status: status || 'todo', priority: priority || 'medium', startDate, endDate }, metadata: { projectId: req.params.projectId }, req });
-        res.json({ id: newId, title, status: status || 'todo', priority: priority || 'medium', startDate, endDate });
+        logAudit({
+            action: 'task.create',
+            entityType: 'task',
+            entityId: newId,
+            entityTitle: normalizedTitle,
+            user: getAuthUser(req),
+            after: {
+                title: normalizedTitle,
+                status: normalizedStatus,
+                priority: normalizedPriority,
+                startDate: normalizedStartDate,
+                endDate: normalizedEndDate,
+                assigneeOid: normalizedAssigneeOid,
+                blockerNote: persistedBlockerNote
+            },
+            metadata: { projectId: req.params.projectId },
+            req
+        });
+        res.json({
+            id: newId,
+            title: normalizedTitle,
+            status: normalizedStatus,
+            priority: normalizedPriority,
+            description: normalizedDescription,
+            startDate: normalizedStartDate,
+            endDate: normalizedEndDate,
+            assigneeOid: normalizedAssigneeOid,
+            assigneeName,
+            blockerNote: persistedBlockerNote,
+            checklistTotal: 0,
+            checklistDone: 0
+        });
     } catch (err) {
         handleError(res, 'creating task', err);
     }
