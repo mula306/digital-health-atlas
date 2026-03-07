@@ -26,6 +26,8 @@ export function Dashboard() {
 
     // Fetch stats from server
     useEffect(() => {
+        let isActive = true;
+
         const fetchStats = async () => {
             setLoading(true);
             try {
@@ -40,20 +42,29 @@ export function Dashboard() {
                 const statusParam = selectedStatuses.length > 0 ? `&statuses=${selectedStatuses.join(',')}` : '';
                 const watchedParam = watchedOnly ? '&watchedOnly=1' : '';
                 const res = await authFetch(`${API_BASE}/dashboard/stats?goalIds=${goalIds}${tagParam}${statusParam}${watchedParam}`);
+                if (!isActive) return;
+
                 if (res.ok) {
                     const data = await res.json();
+                    if (!isActive) return;
                     setStats(data);
                 } else {
                     console.error("Failed to load dashboard stats");
                 }
             } catch (err) {
+                if (!isActive) return;
                 console.error("Error fetching stats:", err);
             } finally {
-                setLoading(false);
+                if (isActive) {
+                    setLoading(false);
+                }
             }
         };
 
         fetchStats();
+        return () => {
+            isActive = false;
+        };
     }, [goalFilter, selectedTags, selectedStatuses, watchedOnly, goals, authFetch]);
 
 
@@ -63,10 +74,31 @@ export function Dashboard() {
         return [goalFilter, ...getDescendantGoalIds(goals, goalFilter)];
     };
     const filterGoalIds = getFilterGoalIds();
-    const filteredGoals = filterGoalIds
-        ? goals.filter(g => filterGoalIds.includes(g.id))
+    const filterGoalSet = filterGoalIds ? new Set(filterGoalIds.map(id => String(id))) : null;
+    const filteredGoals = filterGoalSet
+        ? goals.filter(g => filterGoalSet.has(String(g.id)))
         : goals;
     const totalGoals = filteredGoals.length;
+
+    const hasProjectScopedFilters = selectedTags.length > 0 || selectedStatuses.length > 0 || watchedOnly;
+    const filteredProjectGoalIds = Array.isArray(stats?.filteredGoalIds)
+        ? stats.filteredGoalIds.map((id) => String(id))
+        : [];
+
+    const goalsById = new Map(goals.map((goal) => [String(goal.id), goal]));
+    const expandedProjectGoalIds = new Set(filteredProjectGoalIds);
+    filteredProjectGoalIds.forEach((goalId) => {
+        let current = goalsById.get(String(goalId));
+        while (current && current.parentId) {
+            const parentId = String(current.parentId);
+            expandedProjectGoalIds.add(parentId);
+            current = goalsById.get(parentId);
+        }
+    });
+
+    const kpiGoals = hasProjectScopedFilters
+        ? filteredGoals.filter((goal) => expandedProjectGoalIds.has(String(goal.id)))
+        : filteredGoals;
 
 
     // Stats from Server (or 0/empty if loading)
@@ -91,7 +123,7 @@ export function Dashboard() {
 
 
     // All KPIs across filtered goals
-    const allKpis = filteredGoals.flatMap(g =>
+    const allKpis = kpiGoals.flatMap(g =>
         (g.kpis || []).map(k => ({ ...k, goalTitle: g.title }))
     );
 

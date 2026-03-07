@@ -175,6 +175,21 @@ router.get('/stats', checkPermission(['can_view_projects']), withSharedScope, as
         `;
         const completionResult = await runQuery(completionQuery);
 
+        // 7. Distinct goal IDs represented by the currently filtered project set
+        const filteredGoalIdsQuery = `
+            SELECT DISTINCT pg.goalId
+            FROM Projects p
+            ${tagJoin}
+            ${statusJoin}
+            INNER JOIN ProjectGoals pg ON pg.projectId = p.id
+            ${whereClause}
+        `;
+        const filteredGoalIdsResult = await runQuery(filteredGoalIdsQuery);
+        const filteredGoalIds = filteredGoalIdsResult.recordset
+            .map((row) => row.goalId)
+            .filter((id) => id !== null && id !== undefined)
+            .map((id) => String(id));
+
         res.json({
             totalProjects: stats.totalProjects || 0,
             totalTasks: stats.totalTasks || 0,
@@ -183,7 +198,8 @@ router.get('/stats', checkPermission(['can_view_projects']), withSharedScope, as
             overdueCount: overdueCountResult.recordset[0].count,
             inProgressTasks: inProgressResult.recordset,
             inProgressCount: inProgressCountResult.recordset[0].count,
-            avgProjectCompletion: Math.round(completionResult.recordset[0].avgCompletion || 0)
+            avgProjectCompletion: Math.round(completionResult.recordset[0].avgCompletion || 0),
+            filteredGoalIds
         });
 
     } catch (err) {
