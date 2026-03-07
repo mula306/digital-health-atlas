@@ -49,6 +49,7 @@ Digital Health Atlas is a portfolio and governance platform for digital health i
 
 - SQL Server database bootstrapped from `server/scripts/schema.sql`
 - Upgrade path for older databases via migration scripts
+- Onboarding/auth hardening changes are runtime/configuration only and do not require schema changes
 - Personal project watchlists are stored in `ProjectWatchers` (included in canonical schema + migration path)
 - Optional faker-based sample data seeding for local/dev environments
 
@@ -131,6 +132,8 @@ npm run setup-db
 - Waits for SQL Server readiness with retries
 - Creates the database if missing
 - Applies canonical `schema.sql`
+
+Recent onboarding and permission-seeding updates do not require extra SQL migration for fresh installs.
 
 This command is idempotent and safe to re-run.
 
@@ -215,4 +218,5 @@ npm run migrate:multi-org
 npm run migrate:org-sharing-v2
 npm run migrate:project-goals
 npm run migrate:project-watchlist
+npm run migrate:task-tracking:phase1
 ```

@@ -3,10 +3,13 @@
 //   node scripts/setup_db.js
 //   npm run setup-db
 
-import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { getSqlConfig, sql } from '../db.js';
+import {
+    assertSafeDbName,
+    connectMasterWithRetry,
+    runSqlFile
+} from './sql_script_runner.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DB_NAME = process.env.DB_NAME || 'DHAtlas';
@@ -16,76 +19,6 @@ const CONNECT_DELAY_MS = Number.parseInt(process.env.DB_CONNECT_DELAY_MS || '200
 const SQL_FILES_IN_ORDER = [
     'schema.sql'
 ];
-
-const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-const assertSafeDbName = (dbName) => {
-    if (!/^[A-Za-z0-9_]+$/.test(dbName)) {
-        throw new Error(
-            `DB_NAME "${dbName}" is invalid. Use letters, numbers, or underscore only for setup scripts.`
-        );
-    }
-};
-
-const applyDatabaseName = (script, dbName) => script.replace(/\bDHAtlas\b/g, dbName);
-
-const splitSqlBatches = (script) => script.split(/^\s*GO\s*$/gim).filter((batch) => batch.trim());
-
-const connectWithRetry = async () => {
-    const masterConfig = getSqlConfig({ database: 'master' });
-    let lastError = null;
-
-    for (let attempt = 1; attempt <= CONNECT_RETRIES; attempt += 1) {
-        try {
-            const pool = await sql.connect(masterConfig);
-            console.log(`Connected to SQL Server (attempt ${attempt}/${CONNECT_RETRIES}).`);
-            return pool;
-        } catch (err) {
-            lastError = err;
-            console.log(
-                `SQL not ready yet (attempt ${attempt}/${CONNECT_RETRIES}): ${err.message}`
-            );
-            if (attempt < CONNECT_RETRIES) {
-                await pause(CONNECT_DELAY_MS);
-            }
-        }
-    }
-
-    throw lastError || new Error('Unable to connect to SQL Server.');
-};
-
-const runSqlFile = async (pool, filename, dbName) => {
-    const filePath = path.join(__dirname, filename);
-    if (!fs.existsSync(filePath)) {
-        throw new Error(`Missing SQL file: ${filename}`);
-    }
-
-    const rawScript = fs.readFileSync(filePath, 'utf8');
-    const script = applyDatabaseName(rawScript, dbName);
-    const batches = splitSqlBatches(script);
-
-    console.log(`\nRunning ${filename} (${batches.length} batches)...`);
-
-    for (let i = 0; i < batches.length; i += 1) {
-        const batch = batches[i].trim();
-        if (!batch) continue;
-
-        try {
-            await pool.request().query(batch);
-            if (i % 10 === 0 || i === batches.length - 1) {
-                process.stdout.write(`  Progress: ${i + 1}/${batches.length}\r`);
-            }
-        } catch (err) {
-            const snippet = batch.split('\n').slice(0, 3).join(' ').slice(0, 180);
-            throw new Error(
-                `${filename} failed at batch ${i + 1}/${batches.length}: ${err.message}\n` +
-                `Batch snippet: ${snippet}`
-            );
-        }
-    }
-
-    process.stdout.write('\n');
-};
 
 const verifyDatabase = async (pool, dbName) => {
     const escapedDbName = dbName.replace(/]/g, ']]');
@@ -117,13 +50,21 @@ const verifyDatabase = async (pool, dbName) => {
 async function setupDatabase() {
     let pool;
     try {
-        assertSafeDbName(DB_NAME);
+        assertSafeDbName(DB_NAME, 'setup scripts');
 
         console.log(`Preparing database "${DB_NAME}"...`);
-        pool = await connectWithRetry();
+        pool = await connectMasterWithRetry({
+            connectRetries: CONNECT_RETRIES,
+            connectDelayMs: CONNECT_DELAY_MS
+        });
 
         for (const sqlFile of SQL_FILES_IN_ORDER) {
-            await runSqlFile(pool, sqlFile, DB_NAME);
+            await runSqlFile({
+                pool,
+                baseDir: __dirname,
+                filename: sqlFile,
+                dbName: DB_NAME
+            });
         }
 
         await verifyDatabase(pool, DB_NAME);
