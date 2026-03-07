@@ -2,18 +2,34 @@ import { useState } from 'react';
 import { useData } from '../../context/DataContext';
 import { useToast } from '../../context/ToastContext';
 import { CascadingGoalFilter } from '../UI/CascadingGoalFilter';
+import { ProjectTagSelector } from '../UI/ProjectTagSelector';
+import { validateGoalAssignment } from '../../utils/goalAssignmentValidation';
 import { X } from 'lucide-react';
 
 export function AddProjectForm({ onClose }) {
-    const { addProject, goals } = useData();
-    const toast = useToast();
+    const { addProject, updateProjectTags, goals } = useData();
+    const { success, warning, error: showError } = useToast();
     const [title, setTitle] = useState('');
     const [goalIds, setGoalIds] = useState([]);
     const [pendingGoalId, setPendingGoalId] = useState('');
     const [description, setDescription] = useState('');
+    const [projectTags, setProjectTags] = useState([]);
+
+    const areTagsEqual = (a, b) => {
+        if (a.length !== b.length) return false;
+        const normalize = (tags) => tags
+            .map((t) => ({ tagId: String(t.tagId), isPrimary: !!t.isPrimary }))
+            .sort((x, y) => x.tagId.localeCompare(y.tagId));
+        return JSON.stringify(normalize(a)) === JSON.stringify(normalize(b));
+    };
 
     const addGoal = () => {
         if (!pendingGoalId || goalIds.includes(pendingGoalId)) return;
+        const validation = validateGoalAssignment(goals, [...goalIds, pendingGoalId]);
+        if (!validation.valid) {
+            showError(validation.error);
+            return;
+        }
         setGoalIds(prev => [...prev, pendingGoalId]);
         setPendingGoalId('');
     };
@@ -27,15 +43,44 @@ export function AddProjectForm({ onClose }) {
         return goal ? `${goal.title} (${goal.type})` : id;
     };
 
-    const handleSubmit = (e) => {
+    const handleSubmit = async (e) => {
         e.preventDefault();
-        if (goalIds.length === 0) {
-            toast.warning('Please select at least one goal');
+        const normalizedPendingGoalId = String(pendingGoalId || '').trim();
+        const hasPendingGoal = normalizedPendingGoalId !== '' && !goalIds.includes(normalizedPendingGoalId);
+        const effectiveGoalIds = hasPendingGoal
+            ? [...goalIds, normalizedPendingGoalId]
+            : goalIds;
+
+        if (effectiveGoalIds.length === 0) {
+            warning('Please select at least one goal');
             return;
         }
-        addProject({ title, goalIds, description, status: 'active' });
-        toast.success('Project created');
-        onClose();
+        const goalValidation = validateGoalAssignment(goals, effectiveGoalIds);
+        if (!goalValidation.valid) {
+            showError(goalValidation.error);
+            return;
+        }
+        if (projectTags.length > 8) {
+            showError('Maximum 8 tags per project');
+            return;
+        }
+
+        try {
+            const projectId = await addProject({ title, goalIds: effectiveGoalIds, description, status: 'active' });
+            if (projectTags.length > 0) {
+                try {
+                    await updateProjectTags(projectId, projectTags);
+                } catch (tagErr) {
+                    showError(`Project created, but tags were not saved: ${tagErr.message}`);
+                    onClose();
+                    return;
+                }
+            }
+            success('Project created');
+            onClose();
+        } catch (err) {
+            showError(err.message || 'Failed to create project');
+        }
     };
 
     return (
@@ -93,6 +138,18 @@ export function AddProjectForm({ onClose }) {
                     className="form-textarea"
                     rows={3}
                     placeholder="Brief project description..."
+                />
+            </div>
+
+            <div className="form-group">
+                <label>Project Tags</label>
+                <ProjectTagSelector
+                    currentTags={projectTags}
+                    onChange={(nextTags) => {
+                        setProjectTags((prev) => (areTagsEqual(prev, nextTags) ? prev : nextTags));
+                    }}
+                    showSaveButton={false}
+                    compact={false}
                 />
             </div>
 

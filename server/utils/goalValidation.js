@@ -54,6 +54,23 @@ export function validateGoalAssignment(allGoals, goalIds) {
     if (!goalIds || goalIds.length <= 1) return { valid: true };
 
     const ids = goalIds.map(Number);
+    const rootToGoal = new Map();
+
+    // Rule: only one goal per root hierarchy (siblings included)
+    for (const id of ids) {
+        const rootId = getRootGoalId(allGoals, id);
+        if (rootId === null) continue;
+        if (rootToGoal.has(rootId)) {
+            const existingGoalId = rootToGoal.get(rootId);
+            const existingGoal = allGoals.find(g => Number(g.id) === existingGoalId);
+            const currentGoal = allGoals.find(g => Number(g.id) === id);
+            return {
+                valid: false,
+                error: `"${existingGoal?.title}" and "${currentGoal?.title}" are in the same goal hierarchy. A project can only be assigned to one goal per hierarchy.`
+            };
+        }
+        rootToGoal.set(rootId, id);
+    }
 
     for (let i = 0; i < ids.length; i++) {
         const chainA = new Set(getAncestorChain(allGoals, ids[i]));

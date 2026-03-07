@@ -12,6 +12,37 @@ const router = express.Router();
 
 // ==================== PROJECTS ====================
 
+const parseGoalIdsFromBody = (body) => {
+    const sourceGoalIds = Array.isArray(body.goalIds)
+        ? body.goalIds
+        : (body.goalId !== undefined && body.goalId !== null && body.goalId !== '' ? [body.goalId] : []);
+
+    const normalized = sourceGoalIds
+        .map((id) => String(id).trim())
+        .filter((id) => id !== '');
+    const parsed = normalized.map((id) => Number.parseInt(id, 10));
+    const invalid = normalized.filter((_, index) => Number.isNaN(parsed[index]));
+    const dedupedParsed = [...new Set(parsed.filter((id) => !Number.isNaN(id)))];
+
+    return {
+        raw: normalized,
+        parsed: dedupedParsed,
+        invalid
+    };
+};
+
+const findMissingGoalIds = async (pool, goalIds) => {
+    if (goalIds.length === 0) return [];
+
+    const { text, params } = buildInClause('goalCheck', goalIds);
+    const request = pool.request();
+    addParams(request, params);
+
+    const result = await request.query(`SELECT id FROM Goals WHERE id IN (${text})`);
+    const existing = new Set(result.recordset.map((row) => Number(row.id)));
+    return goalIds.filter((goalId) => !existing.has(Number(goalId)));
+};
+
 // Get lightweight executive summary of ALL projects
 router.get('/exec-summary', checkPermission(['can_view_exec_dashboard', 'can_view_projects']), withSharedScope, async (req, res) => {
     try {
@@ -484,9 +515,22 @@ router.get('/:id', checkPermission('can_view_projects'), withSharedScope, checkP
 router.post('/', checkPermission('can_create_project'), requireOrg, async (req, res) => {
     try {
         const { title, description, status } = req.body;
-        // Support both goalIds[] (new) and goalId (legacy)
-        const goalIds = req.body.goalIds || (req.body.goalId ? [req.body.goalId] : []);
-        const parsedGoalIds = goalIds.map(id => parseInt(id)).filter(id => !isNaN(id));
+        const { parsed: parsedGoalIds, invalid: invalidGoalIds } = parseGoalIdsFromBody(req.body);
+
+        if (invalidGoalIds.length > 0) {
+            return res.status(400).json({
+                error: `Invalid goal id(s): ${invalidGoalIds.join(', ')}`
+            });
+        }
+
+        const pool = await getPool();
+
+        const missingGoalIds = await findMissingGoalIds(pool, parsedGoalIds);
+        if (missingGoalIds.length > 0) {
+            return res.status(400).json({
+                error: `Goal id(s) not found: ${missingGoalIds.join(', ')}`
+            });
+        }
 
         // Validate hierarchy
         if (parsedGoalIds.length > 1) {
@@ -497,7 +541,6 @@ router.post('/', checkPermission('can_create_project'), requireOrg, async (req, 
             }
         }
 
-        const pool = await getPool();
         const result = await pool.request()
             .input('title', sql.NVarChar, title)
             .input('description', sql.NVarChar(sql.MAX), description)
@@ -532,9 +575,20 @@ router.put('/:id', checkPermission('can_edit_project'), withSharedScope, checkPr
         }
         const id = parseInt(req.params.id);
 
-        // Support both goalIds[] (new) and goalId (legacy)
-        const goalIds = req.body.goalIds || (req.body.goalId ? [req.body.goalId] : []);
-        const parsedGoalIds = goalIds.map(gid => parseInt(gid)).filter(gid => !isNaN(gid));
+        const { parsed: parsedGoalIds, invalid: invalidGoalIds } = parseGoalIdsFromBody(req.body);
+        if (invalidGoalIds.length > 0) {
+            return res.status(400).json({
+                error: `Invalid goal id(s): ${invalidGoalIds.join(', ')}`
+            });
+        }
+
+        const pool = await getPool();
+        const missingGoalIds = await findMissingGoalIds(pool, parsedGoalIds);
+        if (missingGoalIds.length > 0) {
+            return res.status(400).json({
+                error: `Goal id(s) not found: ${missingGoalIds.join(', ')}`
+            });
+        }
 
         // Validate hierarchy
         if (parsedGoalIds.length > 1) {
@@ -545,7 +599,6 @@ router.put('/:id', checkPermission('can_edit_project'), withSharedScope, checkPr
             }
         }
 
-        const pool = await getPool();
         const prev = await pool.request().input('id', sql.Int, id).query('SELECT title, description, status FROM Projects WHERE id = @id');
         const beforeState = prev.recordset[0];
 

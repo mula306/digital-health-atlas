@@ -544,6 +544,9 @@
 }
 
 .move-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     padding: 0.25rem 0.5rem;
     background: var(--bg-card);
     border: 1px solid var(--border-color);
@@ -560,6 +563,13 @@
 .move-btn:disabled {
     opacity: 0.3;
     cursor: not-allowed;
+}
+
+.intake-form-warning {
+    margin-top: 0.35rem;
+    margin-bottom: 0;
+    font-size: 0.8rem;
+    color: #b45309;
 }
 
 .field-config {

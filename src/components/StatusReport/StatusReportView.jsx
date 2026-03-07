@@ -323,11 +323,19 @@ export const StatusReportView = memo(function StatusReportView({ report, project
     };
 
     const getPriorityStyle = (priority) => {
-        switch (priority) {
+        const normalized = typeof priority === 'string' ? priority.toLowerCase() : 'low';
+        switch (normalized) {
             case 'high': return styles.priorityHigh;
             case 'medium': return styles.priorityMedium;
             default: return styles.priorityLow;
         }
+    };
+
+    const formatPriority = (priority) => {
+        const normalized = typeof priority === 'string' && priority.trim()
+            ? priority.trim().toLowerCase()
+            : 'low';
+        return normalized.charAt(0).toUpperCase() + normalized.slice(1);
     };
 
     return (
@@ -504,12 +512,12 @@ export const StatusReportView = memo(function StatusReportView({ report, project
                             <tbody>
                                 {report.risks.map((risk, idx) => (
                                     <tr key={idx} style={risk.status === 'closed' ? { opacity: 0.6, background: '#f3f4f6' } : {}}>
-                                        <td style={styles.dataTd}>{risk.description}</td>
-                                        <td style={styles.dataTd}>{risk.impact}</td>
+                                        <td style={styles.dataTd}>{risk.description || '-'}</td>
+                                        <td style={styles.dataTd}>{risk.impact || '-'}</td>
                                         <td style={{ ...styles.dataTd, ...getPriorityStyle(risk.priority) }}>
-                                            {risk.priority.charAt(0).toUpperCase() + risk.priority.slice(1)}
+                                            {formatPriority(risk.priority)}
                                         </td>
-                                        <td style={styles.dataTd}>{risk.mitigation}</td>
+                                        <td style={styles.dataTd}>{risk.mitigation || '-'}</td>
                                         <td style={styles.dataTd}>
                                             <span style={risk.status === 'open' ? styles.statusPillOpen : styles.statusPillClosed}>
                                                 {risk.status === 'open' ? '⚠️ Open' : '✅ Closed'}
@@ -548,9 +556,9 @@ export const StatusReportView = memo(function StatusReportView({ report, project
                                             { ...styles.statusPillOpen, background: '#fee2e2', color: '#991b1b' };
                                     return (
                                         <tr key={idx}>
-                                            <td style={styles.dataTd}>{d.description}</td>
+                                            <td style={styles.dataTd}>{d.description || '-'}</td>
                                             <td style={{ ...styles.dataTd, ...getPriorityStyle(d.priority) }}>
-                                                {d.priority.charAt(0).toUpperCase() + d.priority.slice(1)}
+                                                {formatPriority(d.priority)}
                                             </td>
                                             <td style={styles.dataTd}>
                                                 <span style={statusStyle}>

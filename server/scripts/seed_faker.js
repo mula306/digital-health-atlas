@@ -215,13 +215,23 @@ async function seedFakerData() {
                     overallStatus: faker.helpers.arrayElement(['green', 'yellow', 'red']),
                     risks: Array.from({ length: faker.number.int({ min: 1, max: 3 }) }, () => ({
                         description: faker.lorem.sentence(),
+                        impact: faker.lorem.sentence(),
+                        priority: faker.helpers.arrayElement(['low', 'medium', 'high']),
                         mitigation: faker.lorem.sentence(),
-                        status: faker.helpers.arrayElement(['open', 'closed'])
+                        status: faker.helpers.arrayElement(['open', 'closed']),
+                        closedDate: faker.date.recent()
                     })),
                     milestones: Array.from({ length: faker.number.int({ min: 1, max: 4 }) }, () => ({
                         name: faker.company.buzzPhrase(),
                         date: faker.date.future(),
                         status: faker.helpers.arrayElement(['pending', 'in-progress', 'complete'])
+                    })),
+                    decisions: Array.from({ length: faker.number.int({ min: 1, max: 3 }) }, () => ({
+                        description: faker.lorem.sentence(),
+                        priority: faker.helpers.arrayElement(['low', 'medium', 'high']),
+                        status: faker.helpers.arrayElement(['pending', 'approved', 'rejected']),
+                        decisionStatement: faker.lorem.sentence(),
+                        decisionDate: faker.date.recent()
                     }))
                 });
 

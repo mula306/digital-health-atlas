@@ -254,6 +254,13 @@
     color: var(--text-tertiary);
 }
 
+.project-goals-cell {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    max-width: 320px;
+}
+
 .project-card {
     background: var(--bg-card);
     border: 1px solid var(--border-color);
@@ -327,6 +334,53 @@
     padding: 0.35rem 0.75rem;
     border-radius: 99px;
     margin-bottom: 1rem;
+}
+
+.project-goal-section {
+    margin-bottom: 1rem;
+}
+
+.project-goal-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-weight: 600;
+    color: var(--text-tertiary);
+    margin-bottom: 0.4rem;
+}
+
+.project-goal-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+}
+
+.project-goal-chip {
+    display: inline-flex;
+    align-items: center;
+    max-width: 220px;
+    padding: 0.25rem 0.55rem;
+    border-radius: 999px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+    line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.project-goal-chip-more {
+    border-style: dashed;
+    color: var(--text-tertiary);
+}
+
+.project-goal-chip-empty {
+    color: var(--text-tertiary);
 }
 
 .project-progress {

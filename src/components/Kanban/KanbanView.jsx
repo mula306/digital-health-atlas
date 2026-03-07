@@ -218,10 +218,27 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
         return '#9ca3af';
     };
 
-    // Get goal title by ID
     const getGoalTitle = (goalId) => {
-        const goal = goals.find(g => g.id === goalId);
-        return goal ? goal.title : 'Unlinked';
+        const goal = goals.find(g => String(g.id) === String(goalId));
+        return goal ? goal.title : null;
+    };
+
+    const getProjectGoalTitles = (project) => {
+        const goalIds = Array.isArray(project.goalIds) && project.goalIds.length > 0
+            ? project.goalIds
+            : (project.goalId ? [project.goalId] : []);
+
+        const uniqueGoalIds = [...new Set(goalIds.map((id) => String(id)))];
+        return uniqueGoalIds
+            .map((goalId) => getGoalTitle(goalId))
+            .filter(Boolean);
+    };
+
+    const getProjectGoalSummary = (project) => {
+        const titles = getProjectGoalTitles(project);
+        if (titles.length === 0) return 'Unlinked';
+        if (titles.length === 1) return titles[0];
+        return `${titles[0]} +${titles.length - 1} more`;
     };
 
     const handleFilterChange = (newGoalId) => {
@@ -259,7 +276,7 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
             <KanbanBoard
                 project={selectedProject}
                 onBack={() => setSelectedProjectId(null)}
-                goalTitle={getGoalTitle(selectedProject.goalId)}
+                goalTitle={getProjectGoalSummary(selectedProject)}
             />
         );
     }
@@ -355,7 +372,7 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
                         <thead>
                             <tr>
                                 <th>Project</th>
-                                <th>Goal</th>
+                                <th>Goals</th>
                                 <th>Status</th>
                                 <th>Tasks</th>
                                 <th>Progress</th>
@@ -363,7 +380,11 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
                             </tr>
                         </thead>
                         <tbody>
-                            {displayProjects.map(project => (
+                            {displayProjects.map(project => {
+                                const goalTitles = getProjectGoalTitles(project);
+                                const visibleGoalTitles = goalTitles.slice(0, 2);
+                                const hiddenGoalCount = Math.max(0, goalTitles.length - visibleGoalTitles.length);
+                                return (
                                 <tr
                                     key={project.id}
                                     className="project-table-row"
@@ -375,7 +396,27 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
                                             <span className="project-cell-desc">{project.description || 'No description'}</span>
                                         </div>
                                     </td>
-                                    <td>{getGoalTitle(project.goalId)}</td>
+                                    <td>
+                                        {goalTitles.length > 0 ? (
+                                            <div className="project-goals-cell" title={goalTitles.join(', ')}>
+                                                {visibleGoalTitles.map((title, index) => (
+                                                    <span
+                                                        key={`${project.id}-goal-${index}`}
+                                                        className="project-goal-chip"
+                                                    >
+                                                        {title}
+                                                    </span>
+                                                ))}
+                                                {hiddenGoalCount > 0 && (
+                                                    <span className="project-goal-chip project-goal-chip-more">
+                                                        +{hiddenGoalCount} more
+                                                    </span>
+                                                )}
+                                            </div>
+                                        ) : (
+                                            <span className="project-table-empty">Unlinked</span>
+                                        )}
+                                    </td>
                                     <td>
                                         <span
                                             className="project-status-badge"
@@ -407,13 +448,18 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
                                         )}
                                     </td>
                                 </tr>
-                            ))}
+                                );
+                            })}
                         </tbody>
                     </table>
                 </div>
             ) : (
                 <div className="projects-grid">
-                    {displayProjects.map(project => (
+                    {displayProjects.map(project => {
+                        const goalTitles = getProjectGoalTitles(project);
+                        const visibleGoalTitles = goalTitles.slice(0, 2);
+                        const hiddenGoalCount = Math.max(0, goalTitles.length - visibleGoalTitles.length);
+                        return (
                         <div
                             key={project.id}
                             className="project-card"
@@ -435,9 +481,29 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
                                 <ProjectTagBadges tags={project.tags} maxDisplay={3} />
                             )}
 
-                            <div className="project-goal-link">
-                                <Target size={14} />
-                                <span>{getGoalTitle(project.goalId)}</span>
+                            <div className="project-goal-section">
+                                <div className="project-goal-label">
+                                    <Target size={14} />
+                                    <span>Goals</span>
+                                </div>
+                                <div className="project-goal-links" title={goalTitles.join(', ')}>
+                                    {goalTitles.length === 0 && (
+                                        <span className="project-goal-chip project-goal-chip-empty">Unlinked</span>
+                                    )}
+                                    {visibleGoalTitles.map((title, index) => (
+                                        <span
+                                            key={`${project.id}-goal-card-${index}`}
+                                            className="project-goal-chip"
+                                        >
+                                            {title}
+                                        </span>
+                                    ))}
+                                    {hiddenGoalCount > 0 && (
+                                        <span className="project-goal-chip project-goal-chip-more">
+                                            +{hiddenGoalCount} more
+                                        </span>
+                                    )}
+                                </div>
                             </div>
 
                             <div className="project-progress">
@@ -450,7 +516,8 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
                                 <span className="progress-label">{project.completion || 0}% Complete</span>
                             </div>
                         </div>
-                    ))}
+                        );
+                    })}
                 </div>
             )}
 

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo } from 'react';
 import { Filter, X } from 'lucide-react';
 import { useData } from '../../context/DataContext';
 import './CascadingGoalFilter.css';
@@ -6,13 +6,34 @@ import './CascadingGoalFilter.css';
 export function CascadingGoalFilter({ value, onChange }) {
     const { goals } = useData();
 
-    // Track selections at each level
-    const [selections, setSelections] = useState({
-        org: '',
-        division: '',
-        department: '',
-        branch: ''
-    });
+    const goalsById = useMemo(() => {
+        const byId = new Map();
+        goals.forEach((goal) => {
+            byId.set(String(goal.id), goal);
+        });
+        return byId;
+    }, [goals]);
+
+    const selections = useMemo(() => {
+        if (!value) {
+            return { org: '', division: '', department: '', branch: '' };
+        }
+
+        const ancestry = [];
+        let current = goalsById.get(String(value));
+        while (current) {
+            ancestry.unshift(String(current.id));
+            const parentId = current.parentId ? String(current.parentId) : '';
+            current = parentId ? goalsById.get(parentId) : null;
+        }
+
+        return {
+            org: ancestry[0] || '',
+            division: ancestry[1] || '',
+            department: ancestry[2] || '',
+            branch: ancestry[3] || ''
+        };
+    }, [value, goalsById]);
 
     // Get goals at each level
     const getGoalsAtLevel = (level, parentId = null) => {
@@ -58,8 +79,6 @@ export function CascadingGoalFilter({ value, onChange }) {
                 break;
         }
 
-        setSelections(newSelections);
-
         // Return the most specific (deepest) selection
         const selectedId = newSelections.branch || newSelections.department ||
             newSelections.division || newSelections.org || '';
@@ -68,40 +87,8 @@ export function CascadingGoalFilter({ value, onChange }) {
 
     // Clear all filters
     const handleClear = () => {
-        setSelections({ org: '', division: '', department: '', branch: '' });
         onChange('');
     };
-
-    // Sync external value changes (Derived State Pattern)
-    const [prevValue, setPrevValue] = useState(value);
-    if (value !== prevValue) {
-        setPrevValue(value);
-        if (!value) {
-            setSelections({ org: '', division: '', department: '', branch: '' });
-        } else {
-            // Find the goal and trace its ancestry
-            // Use loose equality or parsing to match string/number
-            const goal = goals.find(g => g.id == value);
-            if (goal) {
-                // Build ancestry chain
-                const ancestry = [];
-                let current = goal;
-                while (current) {
-                    ancestry.unshift(current.id);
-                    // Ensure parentId lookup is robust
-                    current = goals.find(g => g.id === current.parentId);
-                }
-
-                // Set selections based on ancestry
-                setSelections({
-                    org: ancestry[0] || '',
-                    division: ancestry[1] || '',
-                    department: ancestry[2] || '',
-                    branch: ancestry[3] || ''
-                });
-            }
-        }
-    }
 
     const hasAnySelection = selections.org || selections.division ||
         selections.department || selections.branch;
@@ -172,6 +159,7 @@ export function CascadingGoalFilter({ value, onChange }) {
                 {/* Clear button */}
                 {hasAnySelection && (
                     <button
+                        type="button"
                         className="btn-secondary"
                         onClick={handleClear}
                         title="Clear filters"

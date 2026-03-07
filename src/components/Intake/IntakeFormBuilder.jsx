@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Plus, Trash2, Copy, Check, FileText } from 'lucide-react';
+import { Plus, Trash2, Copy, Check, FileText, ChevronUp, ChevronDown } from 'lucide-react';
 import { useData } from '../../context/DataContext';
 import './Intake.css';
 
@@ -129,6 +129,7 @@ export function IntakeFormBuilder({ form, onClose }) {
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     placeholder="e.g., New Project Request"
+                    className="form-input"
                     required
                 />
             </div>
@@ -139,6 +140,7 @@ export function IntakeFormBuilder({ form, onClose }) {
                     value={description}
                     onChange={(e) => setDescription(e.target.value)}
                     placeholder="Instructions for the requester..."
+                    className="form-textarea"
                     rows={2}
                 />
             </div>
@@ -148,6 +150,7 @@ export function IntakeFormBuilder({ form, onClose }) {
                 <select
                     value={defaultGoalId}
                     onChange={(e) => setDefaultGoalId(e.target.value)}
+                    className="form-select"
                 >
                     <option value="">No default goal</option>
                     {goals.map(g => (
@@ -167,6 +170,7 @@ export function IntakeFormBuilder({ form, onClose }) {
                                 setGovernanceMode(mode);
                                 if (mode === 'off') setGovernanceBoardId('');
                             }}
+                            className="form-select"
                         >
                             <option value="off">Off (default intake flow)</option>
                             <option value="optional">Optional (manager decides per submission)</option>
@@ -179,6 +183,7 @@ export function IntakeFormBuilder({ form, onClose }) {
                         <select
                             value={governanceBoardId}
                             onChange={(e) => setGovernanceBoardId(e.target.value)}
+                            className="form-select"
                             disabled={governanceMode === 'off'}
                         >
                             <option value="">{governanceMode === 'off' ? 'No board required' : 'Select board'}</option>
@@ -189,7 +194,7 @@ export function IntakeFormBuilder({ form, onClose }) {
                             ))}
                         </select>
                         {governanceMode !== 'off' && !governanceBoardId && (
-                            <p style={{ marginTop: '0.35rem', fontSize: '0.8rem', color: '#b45309' }}>
+                            <p className="intake-form-warning">
                                 Select a board when policy is optional or required.
                             </p>
                         )}
@@ -221,13 +226,19 @@ export function IntakeFormBuilder({ form, onClose }) {
                                     onClick={() => moveField(index, -1)}
                                     disabled={index === 0}
                                     className="move-btn"
-                                >↑</button>
+                                    aria-label="Move field up"
+                                >
+                                    <ChevronUp size={14} />
+                                </button>
                                 <button
                                     type="button"
                                     onClick={() => moveField(index, 1)}
                                     disabled={index === fields.length - 1}
                                     className="move-btn"
-                                >↓</button>
+                                    aria-label="Move field down"
+                                >
+                                    <ChevronDown size={14} />
+                                </button>
                             </div>
 
                             <div className="field-config">
@@ -236,13 +247,13 @@ export function IntakeFormBuilder({ form, onClose }) {
                                     value={field.label}
                                     onChange={(e) => updateField(field.id, { label: e.target.value })}
                                     placeholder="Field label"
-                                    className="field-label-input"
+                                    className="form-input field-label-input"
                                 />
 
                                 <select
                                     value={field.type}
                                     onChange={(e) => updateField(field.id, { type: e.target.value })}
-                                    className="field-type-select"
+                                    className="form-select field-type-select"
                                 >
                                     {FIELD_TYPES.map(t => (
                                         <option key={t.value} value={t.value}>{t.label}</option>
@@ -276,6 +287,7 @@ export function IntakeFormBuilder({ form, onClose }) {
                                             options: e.target.value.split(',').map(o => o.trim()).filter(Boolean)
                                         })}
                                         placeholder="Options (comma-separated)"
+                                        className="form-input"
                                     />
                                 </div>
                             )}
@@ -288,7 +300,7 @@ export function IntakeFormBuilder({ form, onClose }) {
                 <div className="form-link-section">
                     <label>Shareable Link</label>
                     <div className="link-copy">
-                        <input type="text" value={getFormUrl()} readOnly />
+                        <input type="text" value={getFormUrl()} readOnly className="form-input" />
                         <button type="button" onClick={copyLink} className="btn-secondary">
                             {copied ? <Check size={16} /> : <Copy size={16} />}
                             {copied ? 'Copied!' : 'Copy'}

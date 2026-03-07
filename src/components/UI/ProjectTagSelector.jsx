@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import { useData } from '../../context/DataContext';
 import { useToast } from '../../context/ToastContext';
 import { Tag, Star, Search, X, Check, AlertTriangle } from 'lucide-react';
@@ -11,27 +11,50 @@ import './ProjectTagSelector.css';
  *   projectId: string — the project to tag
  *   currentTags: array — existing tag assignments [{ tagId, isPrimary, ... }]
  *   onSave: (tags) => void — callback after save (optional override)
+ *   onChange: (tags) => void — callback when selection changes (for parent-managed save)
+ *   showSaveButton: boolean — show internal Save Tags button (default true)
  *   compact: boolean — compact mode for inline display
  */
-export function ProjectTagSelector({ projectId, currentTags = [], onSave, compact = false }) {
+export function ProjectTagSelector({
+    projectId,
+    currentTags = [],
+    onSave,
+    onChange,
+    showSaveButton = true,
+    compact = false
+}) {
     const { tagGroups, updateProjectTags } = useData();
     const { success, error: showError } = useToast();
 
     // Local tag selection state: { [tagId]: { selected: bool, isPrimary: bool } }
-    const [selections, setSelections] = useState(() => {
+    const toSelectionMap = useCallback((tags) => {
         const map = {};
-        currentTags.forEach(t => {
-            map[t.tagId] = { selected: true, isPrimary: !!t.isPrimary };
+        tags.forEach(t => {
+            const id = String(t.tagId ?? t.id);
+            map[id] = { selected: true, isPrimary: !!t.isPrimary };
         });
         return map;
-    });
+    }, []);
+    const [selections, setSelections] = useState(() => toSelectionMap(currentTags));
     const [searchQuery, setSearchQuery] = useState('');
     const [saving, setSaving] = useState(false);
     const [isOpen, setIsOpen] = useState(!compact);
 
+    useEffect(() => {
+        setSelections(toSelectionMap(currentTags));
+    }, [currentTags, toSelectionMap]);
+
     const selectedCount = useMemo(() =>
         Object.values(selections).filter(s => s.selected).length
         , [selections]);
+
+    const allTags = useMemo(() => tagGroups.flatMap(g => g.tags), [tagGroups]);
+
+    const buildTagsFromSelections = useCallback((selectionState) => (
+        Object.entries(selectionState)
+            .filter(([, s]) => s.selected)
+            .map(([tagId, s]) => ({ tagId, isPrimary: !!s.isPrimary }))
+    ), []);
 
     // Filter tags by search (including aliases)
     const filterTag = useCallback((tag) => {
@@ -45,33 +68,43 @@ export function ProjectTagSelector({ projectId, currentTags = [], onSave, compac
     }, [searchQuery]);
 
     const toggleTag = (tagId, groupId) => {
+        const tagKey = String(tagId);
+        const current = selections[tagKey];
+        if (!current?.selected) {
+            const currentSelectedCount = Object.values(selections).filter((s) => s.selected).length;
+            if (currentSelectedCount >= 8) {
+                showError('Maximum 8 tags per project');
+                return;
+            }
+        }
+
         setSelections(prev => {
-            const current = prev[tagId];
-            if (current?.selected) {
+            if (prev[tagKey]?.selected) {
                 // Deselect
                 const updated = { ...prev };
-                delete updated[tagId];
+                delete updated[tagKey];
                 return updated;
             } else {
                 // Select
-                const group = tagGroups.find(g => g.id === groupId);
+                const group = tagGroups.find(g => String(g.id) === String(groupId));
                 const isPrimary = group?.requirePrimary && !Object.entries(prev).some(([tid, s]) => {
-                    const tag = tagGroups.flatMap(g => g.tags).find(t => t.id === tid);
-                    return s.selected && tag?.groupId === groupId;
+                    const tag = allTags.find(t => String(t.id) === String(tid));
+                    return s.selected && String(tag?.groupId) === String(groupId);
                 });
-                return { ...prev, [tagId]: { selected: true, isPrimary } };
+                return { ...prev, [tagKey]: { selected: true, isPrimary } };
             }
         });
     };
 
     const setPrimaryTag = (tagId, groupId) => {
+        const tagKey = String(tagId);
         setSelections(prev => {
             const updated = { ...prev };
             // Remove primary from all other tags in this group
             Object.entries(updated).forEach(([tid, s]) => {
-                const tag = tagGroups.flatMap(g => g.tags).find(t => t.id === tid);
-                if (tag?.groupId === groupId && s.selected) {
-                    updated[tid] = { ...s, isPrimary: tid === tagId };
+                const tag = allTags.find(t => String(t.id) === String(tid));
+                if (String(tag?.groupId) === String(groupId) && s.selected) {
+                    updated[tid] = { ...s, isPrimary: tid === tagKey };
                 }
             });
             return updated;
@@ -79,9 +112,7 @@ export function ProjectTagSelector({ projectId, currentTags = [], onSave, compac
     };
 
     const handleSave = async () => {
-        const tags = Object.entries(selections)
-            .filter(([, s]) => s.selected)
-            .map(([tagId, s]) => ({ tagId, isPrimary: !!s.isPrimary }));
+        const tags = buildTagsFromSelections(selections);
 
         if (tags.length > 8) {
             return showError('Maximum 8 tags per project');
@@ -103,17 +134,22 @@ export function ProjectTagSelector({ projectId, currentTags = [], onSave, compac
         }
     };
 
+    useEffect(() => {
+        if (!showSaveButton && onChange) {
+            onChange(buildTagsFromSelections(selections));
+        }
+    }, [selections, showSaveButton, onChange, buildTagsFromSelections]);
+
     // Get selected tags for compact badge display
     const selectedTags = useMemo(() => {
-        const allTags = tagGroups.flatMap(g => g.tags);
         return Object.entries(selections)
             .filter(([, s]) => s.selected)
             .map(([tagId, s]) => {
-                const tag = allTags.find(t => t.id === tagId);
+                const tag = allTags.find(t => String(t.id) === String(tagId));
                 return tag ? { ...tag, isPrimary: s.isPrimary } : null;
             })
             .filter(Boolean);
-    }, [selections, tagGroups]);
+    }, [selections, allTags]);
 
     if (compact && !isOpen) {
         return (
@@ -164,7 +200,6 @@ export function ProjectTagSelector({ projectId, currentTags = [], onSave, compac
                         <div key={group.id} className="tag-selector-group">
                             <div className="tag-selector-group-label">
                                 {group.name}
-                                {group.requirePrimary && <Star size={10} className="primary-indicator" />}
                             </div>
                             <div className="tag-selector-options">
                                 {visibleTags.map(tag => {
@@ -218,14 +253,18 @@ export function ProjectTagSelector({ projectId, currentTags = [], onSave, compac
                     ))}
                     {selectedTags.length > 5 && <span className="tag-more">+{selectedTags.length - 5} more</span>}
                 </div>
-                <div className="tag-selector-actions">
-                    {compact && (
-                        <button className="btn-ghost btn-sm" onClick={() => setIsOpen(false)}>Cancel</button>
-                    )}
-                    <button className="btn-primary btn-sm" onClick={handleSave} disabled={saving}>
-                        {saving ? 'Saving...' : 'Save Tags'}
-                    </button>
-                </div>
+                {showSaveButton ? (
+                    <div className="tag-selector-actions">
+                        {compact && (
+                            <button className="btn-ghost btn-sm" onClick={() => setIsOpen(false)}>Cancel</button>
+                        )}
+                        <button className="btn-primary btn-sm" onClick={handleSave} disabled={saving}>
+                            {saving ? 'Saving...' : 'Save Tags'}
+                        </button>
+                    </div>
+                ) : (
+                    <div className="tag-save-hint">Saved with project changes</div>
+                )}
             </div>
         </div>
     );

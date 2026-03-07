@@ -262,6 +262,12 @@
     flex-shrink: 0;
 }
 
+.tag-save-hint {
+    font-size: 0.75rem;
+    color: var(--text-tertiary);
+    white-space: nowrap;
+}
+
 /* ===== Shared Filter Tag Pills (used in ExecDashboard & Reports) ===== */
 .exec-tag-pill {
     display: inline-flex;

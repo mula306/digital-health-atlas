@@ -3,11 +3,12 @@ import { useData } from '../../context/DataContext';
 import { useToast } from '../../context/ToastContext';
 import { ProjectTagSelector } from '../UI/ProjectTagSelector';
 import { CascadingGoalFilter } from '../UI/CascadingGoalFilter';
+import { validateGoalAssignment } from '../../utils/goalAssignmentValidation';
 import { X } from 'lucide-react';
 
 export function EditProjectForm({ project, onClose }) {
-    const { updateProject, deleteProject, goals } = useData();
-    const { success } = useToast();
+    const { updateProject, updateProjectTags, deleteProject, goals } = useData();
+    const { success, error: showError } = useToast();
     const [title, setTitle] = useState(project.title || '');
     // Initialize from goalIds array or fall back to single goalId
     const [goalIds, setGoalIds] = useState(() => {
@@ -18,10 +19,29 @@ export function EditProjectForm({ project, onClose }) {
     const [pendingGoalId, setPendingGoalId] = useState('');
     const [description, setDescription] = useState(project.description || '');
     const [status, setStatus] = useState(project.status || 'active');
+    const [projectTags, setProjectTags] = useState(() =>
+        (project.tags || []).map((tag) => ({
+            tagId: String(tag.tagId ?? tag.id),
+            isPrimary: !!tag.isPrimary
+        }))
+    );
     const [confirmDelete, setConfirmDelete] = useState(false);
+
+    const areTagsEqual = (a, b) => {
+        if (a.length !== b.length) return false;
+        const normalize = (tags) => tags
+            .map((t) => ({ tagId: String(t.tagId), isPrimary: !!t.isPrimary }))
+            .sort((x, y) => x.tagId.localeCompare(y.tagId));
+        return JSON.stringify(normalize(a)) === JSON.stringify(normalize(b));
+    };
 
     const addGoal = () => {
         if (!pendingGoalId || goalIds.includes(String(pendingGoalId))) return;
+        const validation = validateGoalAssignment(goals, [...goalIds, String(pendingGoalId)]);
+        if (!validation.valid) {
+            showError(validation.error);
+            return;
+        }
         setGoalIds(prev => [...prev, String(pendingGoalId)]);
         setPendingGoalId('');
     };
@@ -37,9 +57,33 @@ export function EditProjectForm({ project, onClose }) {
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        await updateProject(project.id, { title, goalIds, description, status });
-        success('Project updated successfully');
-        onClose();
+        const normalizedPendingGoalId = String(pendingGoalId || '').trim();
+        const hasPendingGoal = normalizedPendingGoalId !== '' && !goalIds.includes(normalizedPendingGoalId);
+        const effectiveGoalIds = hasPendingGoal
+            ? [...goalIds, normalizedPendingGoalId]
+            : goalIds;
+
+        const goalValidation = validateGoalAssignment(goals, effectiveGoalIds);
+        if (!goalValidation.valid) {
+            showError(goalValidation.error);
+            return;
+        }
+        if (projectTags.length > 8) {
+            showError('Maximum 8 tags per project');
+            return;
+        }
+        try {
+            await updateProject(project.id, { title, goalIds: effectiveGoalIds, description, status });
+            await updateProjectTags(project.id, projectTags);
+            success('Project and tags updated successfully');
+            onClose();
+        } catch (err) {
+            if (typeof err?.message === 'string' && err.message.toLowerCase().includes('maximum 8 tags')) {
+                showError('Maximum 8 tags per project');
+                return;
+            }
+            showError(err.message || 'Failed to update project');
+        }
     };
 
     const handleDelete = () => {
@@ -127,7 +171,11 @@ export function EditProjectForm({ project, onClose }) {
                 <label>Project Tags</label>
                 <ProjectTagSelector
                     projectId={project.id}
-                    currentTags={project.tags || []}
+                    currentTags={projectTags}
+                    onChange={(nextTags) => {
+                        setProjectTags((prev) => (areTagsEqual(prev, nextTags) ? prev : nextTags));
+                    }}
+                    showSaveButton={false}
                     compact={false}
                 />
             </div>

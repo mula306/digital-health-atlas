@@ -494,8 +494,10 @@ export function DataProvider({ children }) {
                 body: JSON.stringify(updates)
             });
             setProjects(prev => prev.map(p => p.id === id ? { ...p, ...updates } : p));
+            return true;
         } catch (err) {
             console.error('Error updating project:', err);
+            throw err;
         }
     }, [authFetch]);
 
