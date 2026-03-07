@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
-import { ChevronRight, ChevronDown, Folder, CheckSquare, Square, Tag, Activity, X, Search, Filter, Maximize2, Minimize2, Trash2 } from 'lucide-react';
+import { ChevronRight, ChevronDown, Folder, CheckSquare, Square, Tag, Activity, X, Search, Filter, Maximize2, Minimize2, Trash2, Star } from 'lucide-react';
 import { useData } from '../../context/DataContext';
 import { getDescendantGoalIds } from '../../utils/goalHelpers';
 import '../UI/ProjectTagSelector.css';
@@ -12,6 +12,7 @@ export function ReportFilterTree({ onSelectionChange, allProjects = [] }) {
     const [selectedStatuses, setSelectedStatuses] = useState([]);
     const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
+    const [watchedOnly, setWatchedOnly] = useState(false);
 
     // Get only active tags grouped for the filter UI
     const activeTags = useMemo(() => {
@@ -89,6 +90,10 @@ export function ReportFilterTree({ onSelectionChange, allProjects = [] }) {
             filtered = filtered.filter(p => (p.title || '').toLowerCase().includes(q));
         }
 
+        if (watchedOnly) {
+            filtered = filtered.filter((project) => !!project.isWatched);
+        }
+
         if (selectedTags.length > 0) {
             filtered = filtered.filter(p => {
                 if (!p.tags || p.tags.length === 0) return false;
@@ -105,7 +110,7 @@ export function ReportFilterTree({ onSelectionChange, allProjects = [] }) {
         }
 
         return filtered;
-    }, [projects, allProjects, selectedTags, selectedStatuses, searchQuery]);
+    }, [projects, allProjects, selectedTags, selectedStatuses, searchQuery, watchedOnly]);
 
     const treeData = useMemo(() => {
         // Build hierarchy tree using filtered projects
@@ -317,6 +322,14 @@ export function ReportFilterTree({ onSelectionChange, allProjects = [] }) {
                         {(selectedTags.length > 0 || selectedStatuses.length > 0) && (
                             <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--primary-color)', display: 'inline-block', marginLeft: '0.25rem' }} />
                         )}
+                    </button>
+                    <button
+                        className={`btn-secondary btn-sm ${watchedOnly ? 'active' : ''}`}
+                        onClick={() => setWatchedOnly((previous) => !previous)}
+                        title="Show only projects in my watchlist"
+                    >
+                        <Star size={14} fill={watchedOnly ? 'currentColor' : 'none'} />
+                        My Watchlist
                     </button>
                 </div>
 

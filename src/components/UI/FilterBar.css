@@ -30,6 +30,18 @@
     color: var(--accent-primary);
 }
 
+.shared-watch-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+
+.shared-watch-toggle.active {
+    border-color: var(--accent-primary);
+    color: var(--accent-primary);
+    background: color-mix(in srgb, var(--accent-primary) 12%, var(--bg-card));
+}
+
 .shared-tag-toggle.has-selection {
     border-color: var(--accent-primary);
     background: hsla(var(--hue-indigo), 60%, 60%, 0.1);

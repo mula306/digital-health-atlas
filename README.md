@@ -49,6 +49,7 @@ Digital Health Atlas is a portfolio and governance platform for digital health i
 
 - SQL Server database bootstrapped from `server/scripts/schema.sql`
 - Upgrade path for older databases via migration scripts
+- Personal project watchlists are stored in `ProjectWatchers` (included in canonical schema + migration path)
 - Optional faker-based sample data seeding for local/dev environments
 
 ### Repo structure
@@ -213,4 +214,5 @@ npm run migrate:governance:phase3
 npm run migrate:multi-org
 npm run migrate:org-sharing-v2
 npm run migrate:project-goals
+npm run migrate:project-watchlist
 ```

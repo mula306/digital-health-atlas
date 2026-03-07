@@ -510,6 +510,59 @@ export function DataProvider({ children }) {
         }
     }, [authFetch]);
 
+    const setProjectWatchState = useCallback((projectId, isWatched) => {
+        const normalizedId = String(projectId);
+        setProjects(prev => prev.map((project) => (
+            String(project.id) === normalizedId ? { ...project, isWatched: !!isWatched } : project
+        )));
+    }, []);
+
+    const watchProject = useCallback(async (projectId) => {
+        const normalizedId = String(projectId);
+        const previousState = !!projects.find((project) => String(project.id) === normalizedId)?.isWatched;
+        setProjectWatchState(normalizedId, true);
+        try {
+            const res = await authFetch(`${API_BASE}/projects/${normalizedId}/watch`, {
+                method: 'POST'
+            });
+            if (!res.ok) {
+                const errData = await res.json().catch(() => ({}));
+                throw new Error(errData.error || 'Failed to watch project');
+            }
+            const payload = await res.json().catch(() => ({}));
+            if (typeof payload.isWatched === 'boolean') {
+                setProjectWatchState(normalizedId, payload.isWatched);
+            }
+            return true;
+        } catch (err) {
+            setProjectWatchState(normalizedId, previousState);
+            throw err;
+        }
+    }, [authFetch, projects, setProjectWatchState]);
+
+    const unwatchProject = useCallback(async (projectId) => {
+        const normalizedId = String(projectId);
+        const previousState = !!projects.find((project) => String(project.id) === normalizedId)?.isWatched;
+        setProjectWatchState(normalizedId, false);
+        try {
+            const res = await authFetch(`${API_BASE}/projects/${normalizedId}/watch`, {
+                method: 'DELETE'
+            });
+            if (!res.ok) {
+                const errData = await res.json().catch(() => ({}));
+                throw new Error(errData.error || 'Failed to unwatch project');
+            }
+            const payload = await res.json().catch(() => ({}));
+            if (typeof payload.isWatched === 'boolean') {
+                setProjectWatchState(normalizedId, payload.isWatched);
+            }
+            return true;
+        } catch (err) {
+            setProjectWatchState(normalizedId, previousState);
+            throw err;
+        }
+    }, [authFetch, projects, setProjectWatchState]);
+
     // ==================== TASKS ====================
 
     const addTask = useCallback(async (projectId, task) => {
@@ -1331,6 +1384,7 @@ export function DataProvider({ children }) {
             loading,
             loadingMore,
             moveTask, addTask, addProject, updateProject, deleteProject, loadProjectDetails,
+            watchProject, unwatchProject,
             updateTask, deleteTask,
             intakeForms, addIntakeForm, updateIntakeForm, deleteIntakeForm,
             intakeSubmissions, mySubmissions, addIntakeSubmission, updateIntakeSubmission,

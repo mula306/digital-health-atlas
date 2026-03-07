@@ -7,6 +7,12 @@ import { buildInClause, addParams } from '../utils/sqlHelpers.js';
 
 const router = express.Router();
 
+const parseTruthyQueryFlag = (value) => {
+    if (value === undefined || value === null) return false;
+    const normalized = String(value).trim().toLowerCase();
+    return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
+};
+
 // Get dashboard statistics (server-side aggregation)
 router.get('/stats', checkPermission(['can_view_projects']), withSharedScope, async (req, res) => {
     try {
@@ -19,9 +25,13 @@ router.get('/stats', checkPermission(['can_view_projects']), withSharedScope, as
         const statuses = statusesParam
             ? statusesParam.split(',').map(s => String(s).trim().toLowerCase()).filter(Boolean)
             : [];
+        const watchedOnly = parseTruthyQueryFlag(req.query.watchedOnly);
+        const viewerOid = String(req.user?.oid || '').trim() || '__none__';
 
         let whereConditions = [];
-        let queryParams = {};
+        let queryParams = {
+            viewerOid
+        };
 
         // Org scoping
         if (req.orgId) {
@@ -32,7 +42,7 @@ router.get('/stats', checkPermission(['can_view_projects']), withSharedScope, as
         // 1. Goal Filtering (Safe IN clause)
         if (goalIds.length > 0) {
             const { text: goalInClause, params: goalParams } = buildInClause('goalId', goalIds);
-            whereConditions.push(`p.goalId IN (${goalInClause})`);
+            whereConditions.push(`p.id IN (SELECT projectId FROM ProjectGoals WHERE goalId IN (${goalInClause}))`);
             Object.assign(queryParams, goalParams);
         }
 
@@ -61,6 +71,10 @@ router.get('/stats', checkPermission(['can_view_projects']), withSharedScope, as
             `;
             whereConditions.push(`COALESCE(NULLIF(lsr.overallStatus, ''), 'unknown') IN (${statusInClause})`);
             Object.assign(queryParams, statusParams);
+        }
+
+        if (watchedOnly) {
+            whereConditions.push('EXISTS (SELECT 1 FROM ProjectWatchers pw WHERE pw.projectId = p.id AND pw.userOid = @viewerOid)');
         }
 
         const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';

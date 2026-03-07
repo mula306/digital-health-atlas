@@ -100,6 +100,18 @@
     box-shadow: var(--shadow-sm);
 }
 
+.project-watch-filter-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+
+.project-watch-filter-btn.active {
+    color: var(--accent-primary);
+    border-color: color-mix(in srgb, var(--accent-primary) 45%, var(--border-color));
+    background: color-mix(in srgb, var(--accent-primary) 14%, var(--bg-card));
+}
+
 /* Filter Bar */
 .filter-bar {
     display: flex;
@@ -216,6 +228,12 @@
     gap: 0.2rem;
 }
 
+.project-cell-title-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
 .project-cell-title {
     font-weight: 600;
     color: var(--text-primary);
@@ -284,6 +302,12 @@
     margin-bottom: 1rem;
 }
 
+.project-card-header-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
 .project-icon {
     width: 44px;
     height: 44px;
@@ -302,6 +326,31 @@
     padding: 0.25rem 0.75rem;
     border-radius: 99px;
     color: var(--text-secondary);
+}
+
+.project-watch-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.85rem;
+    height: 1.85rem;
+    border-radius: 999px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-card);
+    color: var(--text-tertiary);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.project-watch-btn:hover {
+    color: var(--text-primary);
+    border-color: var(--text-secondary);
+}
+
+.project-watch-btn.active {
+    color: #f59e0b;
+    border-color: color-mix(in srgb, #f59e0b 65%, var(--border-color));
+    background: color-mix(in srgb, #f59e0b 16%, var(--bg-card));
 }
 
 .project-title {

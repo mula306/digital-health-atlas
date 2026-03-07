@@ -19,6 +19,7 @@ export function GoalItem({
     forceExpand,
     selectedTags = [],
     selectedStatuses = [],
+    watchedOnly = false,
     projectsSource = []
 }) {
     const { goals, deleteGoal, projects } = useData();
@@ -46,33 +47,85 @@ export function GoalItem({
     const childGoals = goals.filter(g => g.parentId === goal.id);
     const hasChildren = childGoals.length > 0;
 
-    // Use pre-calculated counts from DataContext (server-backed)
-    // When tags are selected, compute count client-side from loaded projects
-    const projectCount = (() => {
-        if (selectedTags.length === 0 && selectedStatuses.length === 0) return goal.totalProjectCount || 0;
+    const hasScopedFilters = watchedOnly || selectedTags.length > 0 || selectedStatuses.length > 0;
+    const sourceProjects = projectsSource.length > 0 ? projectsSource : projects;
+    // Get all goal IDs in this subtree (this goal + descendants)
+    const allGoalIds = new Set([String(goal.id), ...getDescendantGoalIds(goals, goal.id).map(String)]);
+    const scopedProjects = sourceProjects.filter((project) => {
+        const projectGoalIds = (project.goalIds || (project.goalId ? [project.goalId] : [])).map(String);
+        const inGoalTree = projectGoalIds.some((goalId) => allGoalIds.has(goalId));
+        if (!inGoalTree) return false;
 
-        const sourceProjects = projectsSource.length > 0 ? projectsSource : projects;
-        // Get all goal IDs in this subtree (this goal + descendants)
-        const allGoalIds = new Set([String(goal.id), ...getDescendantGoalIds(goals, goal.id).map(String)]);
+        if (watchedOnly && !project.isWatched) {
+            return false;
+        }
 
-        return sourceProjects.filter(p => {
-            const pGoalIds = (p.goalIds || (p.goalId ? [p.goalId] : [])).map(String);
-            const inGoalTree = pGoalIds.some(gid => allGoalIds.has(gid));
-            if (!inGoalTree) return false;
+        if (selectedTags.length > 0) {
+            const tagMatch = project.tags && project.tags.some((tag) => selectedTags.includes(String(tag.tagId ?? tag.id)));
+            if (!tagMatch) return false;
+        }
 
-            if (selectedTags.length > 0) {
-                const tagMatch = p.tags && p.tags.some(t => selectedTags.includes(String(t.tagId ?? t.id)));
-                if (!tagMatch) return false;
+        if (selectedStatuses.length > 0) {
+            const statusValue = project.report?.overallStatus || project.latestReport?.overallStatus || 'unknown';
+            const normalizedStatus = String(statusValue).toLowerCase();
+            if (!selectedStatuses.includes(normalizedStatus)) return false;
+        }
+
+        return true;
+    });
+
+    const projectCount = hasScopedFilters ? scopedProjects.length : (goal.totalProjectCount || 0);
+    const scopedKpiCount = (() => {
+        if (!hasScopedFilters) {
+            return goal.totalKpiCount || goal.kpis?.length || 0;
+        }
+
+        if (scopedProjects.length === 0) return 0;
+
+        const subtreeGoalIds = new Set([...allGoalIds]);
+        const scopedProjectGoalIds = new Set();
+        scopedProjects.forEach((project) => {
+            const projectGoalIds = (project.goalIds || (project.goalId ? [project.goalId] : [])).map(String);
+            projectGoalIds.forEach((projectGoalId) => {
+                if (subtreeGoalIds.has(projectGoalId)) {
+                    scopedProjectGoalIds.add(projectGoalId);
+                }
+            });
+        });
+
+        if (scopedProjectGoalIds.size === 0) return 0;
+
+        // Include ancestor goals inside this subtree so parent-level KPIs still count
+        const includedGoalIds = new Set();
+        scopedProjectGoalIds.forEach((projectGoalId) => {
+            let current = goals.find((g) => String(g.id) === String(projectGoalId));
+            while (current && subtreeGoalIds.has(String(current.id))) {
+                includedGoalIds.add(String(current.id));
+                if (!current.parentId) break;
+                current = goals.find((g) => String(g.id) === String(current.parentId));
             }
+        });
 
-            if (selectedStatuses.length > 0) {
-                const statusValue = p.report?.overallStatus || p.latestReport?.overallStatus || 'unknown';
-                const normalizedStatus = String(statusValue).toLowerCase();
-                if (!selectedStatuses.includes(normalizedStatus)) return false;
-            }
+        return goals.reduce((sum, currentGoal) => {
+            if (!includedGoalIds.has(String(currentGoal.id))) return sum;
+            return sum + (Array.isArray(currentGoal.kpis) ? currentGoal.kpis.length : 0);
+        }, 0);
+    })();
 
-            return true;
-        }).length;
+    const progressValue = (() => {
+        if (!hasScopedFilters) return goal.progress || 0;
+        if (scopedProjects.length === 0) return 0;
+
+        const completions = scopedProjects
+            .map((project) => Number(project.completion))
+            .filter((value) => Number.isFinite(value));
+
+        if (completions.length === 0) {
+            return goal.progress || 0;
+        }
+
+        const total = completions.reduce((sum, value) => sum + value, 0);
+        return Math.round(total / completions.length);
     })();
 
     const typeLabels = {
@@ -162,14 +215,17 @@ export function GoalItem({
                             </span>
                             <div className="goal-actions">
                                 {/* KPI indicator */}
-                                {(goal.totalKpiCount > 0 || (goal.kpis && goal.kpis.length > 0)) && (
+                                {scopedKpiCount > 0 && (
                                     <button
                                         className="kpi-indicator"
-                                        title={`View ${goal.totalKpiCount} Total KPI(s) (including sub-goals)`}
+                                        title={hasScopedFilters
+                                            ? `View ${scopedKpiCount} filtered KPI(s) (including sub-goals)`
+                                            : `View ${scopedKpiCount} Total KPI(s) (including sub-goals)`
+                                        }
                                         onClick={handleKpiClick}
                                     >
                                         <Activity size={14} />
-                                        <span>{goal.totalKpiCount || goal.kpis?.length || 0}</span>
+                                        <span>{scopedKpiCount}</span>
                                     </button>
                                 )}
                                 {/* Project count link */}
@@ -225,10 +281,10 @@ export function GoalItem({
                         <div className="goal-progress-bar">
                             <div
                                 className="progress-fill"
-                                style={{ width: `${goal.progress || 0}%`, backgroundColor: typeColors[goal.type] }}
+                                style={{ width: `${progressValue}%`, backgroundColor: typeColors[goal.type] }}
                             ></div>
                         </div>
-                        <span className="goal-progress-text">{goal.progress}% Complete</span>
+                        <span className="goal-progress-text">{progressValue}% Complete</span>
                     </div>
                 </div>
             </div>
@@ -245,6 +301,7 @@ export function GoalItem({
                             forceExpand={childrenCollapsed !== null ? childrenCollapsed : forceExpand}
                             selectedTags={selectedTags}
                             selectedStatuses={selectedStatuses}
+                            watchedOnly={watchedOnly}
                             projectsSource={projectsSource}
                         />
                     ))}

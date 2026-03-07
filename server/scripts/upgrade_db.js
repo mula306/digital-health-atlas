@@ -20,7 +20,8 @@ const MIGRATION_FILES_IN_ORDER = [
     'migrate_governance_phase3.sql',
     'migrate_multi_org.sql',
     'migrate_org_sharing_v2.sql',
-    'migrate_project_goals.sql'
+    'migrate_project_goals.sql',
+    'migrate_project_watchlist.sql'
 ];
 
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));

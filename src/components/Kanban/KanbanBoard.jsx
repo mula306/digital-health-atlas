@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo } from 'react';
-import { Settings, LayoutGrid, Table, GanttChart, FileText, Calendar, Activity } from 'lucide-react';
+import { Settings, LayoutGrid, Table, GanttChart, FileText, Calendar, Activity, Star } from 'lucide-react';
 import { useData } from '../../context/DataContext';
 import { KanbanColumn } from './KanbanColumn';
 import { TaskTableView } from './TaskTableView';
@@ -25,12 +25,13 @@ const PRIORITY_ORDER = { high: 0, medium: 1, low: 2 };
 import { useAuth } from '../../hooks/useAuth';
 
 export function KanbanBoard({ project, onBack, goalTitle }) {
-    const { moveTask: _moveTask } = useData();
+    const { moveTask: _moveTask, watchProject, unwatchProject } = useData();
     const { canEdit } = useAuth();
     const [showAddModal, setShowAddModal] = useState(false);
     const [showEditModal, setShowEditModal] = useState(false);
     const [selectedTask, setSelectedTask] = useState(null);
     const [viewMode, setViewMode] = useState('table'); // 'table', 'gantt', 'kanban', 'reports'
+    const [isUpdatingWatch, setIsUpdatingWatch] = useState(false);
 
     const sortTasks = useCallback((tasks) => {
         return [...tasks].sort((a, b) => {
@@ -65,6 +66,22 @@ export function KanbanBoard({ project, onBack, goalTitle }) {
         setSelectedTask(task);
     }, []);
 
+    const handleToggleWatch = useCallback(async () => {
+        if (isUpdatingWatch) return;
+        setIsUpdatingWatch(true);
+        try {
+            if (project.isWatched) {
+                await unwatchProject(project.id);
+            } else {
+                await watchProject(project.id);
+            }
+        } catch (error) {
+            console.error('Failed to update watchlist status:', error);
+        } finally {
+            setIsUpdatingWatch(false);
+        }
+    }, [isUpdatingWatch, project.isWatched, project.id, unwatchProject, watchProject]);
+
     // Keep selectedTask in sync with project updates (e.g. after editing)
     // Keep selectedTask in sync with project updates (Derived State Pattern)
     if (selectedTask) {
@@ -83,6 +100,16 @@ export function KanbanBoard({ project, onBack, goalTitle }) {
                 <div className="board-title">
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                         <h2>{project.title}</h2>
+                        <button
+                            type="button"
+                            onClick={handleToggleWatch}
+                            className={`project-watch-btn board-project-watch-btn ${project.isWatched ? 'active' : ''}`}
+                            title={project.isWatched ? 'Remove from watchlist' : 'Add to watchlist'}
+                            aria-label={project.isWatched ? 'Remove from watchlist' : 'Add to watchlist'}
+                            disabled={isUpdatingWatch}
+                        >
+                            <Star size={16} fill={project.isWatched ? 'currentColor' : 'none'} />
+                        </button>
                         {canEdit && (
                             <button
                                 onClick={() => setShowEditModal(true)}

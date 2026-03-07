@@ -51,6 +51,7 @@ export function ExecDashboard() {
     const [selectedGoalId, setSelectedGoalId] = useState('');
     const [selectedTags, setSelectedTags] = useState([]);
     const [selectedStatuses, setSelectedStatuses] = useState([]);
+    const [watchedOnly, setWatchedOnly] = useState(false);
     const [selectedProject, setSelectedProject] = useState(null);
     const tableRef = useRef(null);
 
@@ -291,7 +292,8 @@ export function ExecDashboard() {
 
     // Process data using Cascading Filter logic
     const statusOptions = useMemo(() => {
-        const sourceProjects = allProjects.length > 0 ? allProjects : projects;
+        const sourceProjects = (allProjects.length > 0 ? allProjects : projects)
+            .filter(project => !watchedOnly || !!project.isWatched);
         const seen = new Set();
 
         sourceProjects.forEach(p => {
@@ -322,24 +324,37 @@ export function ExecDashboard() {
         });
 
         return options;
-    }, [allProjects, projects, getLatestStatusReport]);
+    }, [allProjects, projects, getLatestStatusReport, watchedOnly]);
 
     const groupedData = useMemo(() => {
         // Use allProjects if available, otherwise fallback to context projects (paginated)
         const sourceProjects = allProjects.length > 0 ? allProjects : projects;
+        const goalById = new Map(goals.map((goal) => [String(goal.id), goal]));
+
+        const getGoalDepth = (goalId) => {
+            let depth = 0;
+            let current = goalById.get(String(goalId));
+            while (current) {
+                depth += 1;
+                if (!current.parentId) break;
+                current = goalById.get(String(current.parentId));
+            }
+            return depth;
+        };
 
         // 1. Filter projects based on selected goal (and descendants)
         // 1a. Filter by goal
-        let filteredProjects = sourceProjects;
+        let filteredProjects = sourceProjects.filter(project => !watchedOnly || !!project.isWatched);
+        let selectedTargetGoalIds = null;
 
         if (selectedGoalId) {
             const descendantIds = getDescendantGoalIds(goals, selectedGoalId);
-            const targetIds = [selectedGoalId, ...descendantIds].map(id => String(id));
+            selectedTargetGoalIds = new Set([selectedGoalId, ...descendantIds].map(id => String(id)));
 
-            filteredProjects = sourceProjects.filter(p => {
+            filteredProjects = filteredProjects.filter(p => {
                 const pGoalIds = (p.goalIds || (p.goalId ? [p.goalId] : [])).map(String);
                 if (pGoalIds.length === 0) return false;
-                return pGoalIds.some(gid => targetIds.includes(gid));
+                return pGoalIds.some(gid => selectedTargetGoalIds.has(gid));
             });
         }
 
@@ -354,7 +369,19 @@ export function ExecDashboard() {
 
         // 2. Process and Map
         const mapped = filteredProjects.map(p => {
-            const h = getProjectHierarchy(goals, p.goalId || (p.goalIds && p.goalIds[0]) || null);
+            const projectGoalIds = (p.goalIds || (p.goalId ? [p.goalId] : [])).map(String);
+            let displayGoalId = projectGoalIds[0] || null;
+
+            // If a goal filter is active, force hierarchy grouping to the matched goal in that hierarchy
+            if (selectedTargetGoalIds && projectGoalIds.length > 0) {
+                const matchingGoalIds = projectGoalIds.filter((goalId) => selectedTargetGoalIds.has(goalId));
+                if (matchingGoalIds.length > 0) {
+                    matchingGoalIds.sort((left, right) => getGoalDepth(right) - getGoalDepth(left));
+                    displayGoalId = matchingGoalIds[0];
+                }
+            }
+
+            const h = getProjectHierarchy(goals, displayGoalId);
             const report = p.report || getLatestStatusReport(p.id);
             return {
                 id: p.id,
@@ -398,7 +425,7 @@ export function ExecDashboard() {
         });
 
         return groups;
-    }, [projects, allProjects, goals, getLatestStatusReport, searchTerm, selectedGoalId, selectedTags, selectedStatuses]);
+    }, [projects, allProjects, goals, getLatestStatusReport, searchTerm, selectedGoalId, selectedTags, selectedStatuses, watchedOnly]);
 
     function getStatusColor(status) {
         switch (status) {
@@ -438,6 +465,8 @@ export function ExecDashboard() {
                 selectedStatuses={selectedStatuses}
                 onStatusesChange={setSelectedStatuses}
                 statusOptions={statusOptions}
+                watchedOnly={watchedOnly}
+                onWatchedOnlyChange={setWatchedOnly}
                 countLabel={`${Object.values(groupedData).reduce((acc, org) => acc + Object.values(org).reduce((acc2, div) => acc2 + div.length, 0), 0)} project(s)`}
             >
                 {searchTerm && (

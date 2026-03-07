@@ -43,17 +43,27 @@ const findMissingGoalIds = async (pool, goalIds) => {
     return goalIds.filter((goalId) => !existing.has(Number(goalId)));
 };
 
+const getUserOidFromReq = (req) => String(req.user?.oid || '').trim();
+
+const parseTruthyQueryFlag = (value) => {
+    if (value === undefined || value === null) return false;
+    const normalized = String(value).trim().toLowerCase();
+    return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
+};
+
 // Get lightweight executive summary of ALL projects
 router.get('/exec-summary', checkPermission(['can_view_exec_dashboard', 'can_view_projects']), withSharedScope, async (req, res) => {
     try {
         const pool = await getPool();
+        const viewerOid = getUserOidFromReq(req) || '__none__';
 
         // 1. Fetch Projects with Latest Report (Updated for JSON blob)
         const projectsQuery = `
             SELECT 
                 p.id, p.title,
                 r.id as reportId, r.reportData, r.createdAt as reportDate,
-                (CASE WHEN EXISTS (SELECT 1 FROM StatusReports WHERE projectId = p.id) THEN 1 ELSE 0 END) as reportCount
+                (CASE WHEN EXISTS (SELECT 1 FROM StatusReports WHERE projectId = p.id) THEN 1 ELSE 0 END) as reportCount,
+                CAST(CASE WHEN pw.projectId IS NULL THEN 0 ELSE 1 END AS BIT) as isWatched
             FROM Projects p
             OUTER APPLY (
                 SELECT TOP 1 *
@@ -61,10 +71,14 @@ router.get('/exec-summary', checkPermission(['can_view_exec_dashboard', 'can_vie
                 WHERE sr.projectId = p.id
                 ORDER BY sr.createdAt DESC
             ) r
+            LEFT JOIN ProjectWatchers pw ON pw.projectId = p.id AND pw.userOid = @viewerOid
             WHERE (p.orgId = @orgId OR p.id IN (SELECT projectId FROM ProjectOrgAccess WHERE orgId = @orgId) OR @orgId IS NULL)
             ORDER BY p.title ASC
         `;
-        const projectsResult = await pool.request().input('orgId', sql.Int, req.orgId).query(projectsQuery);
+        const projectsResult = await pool.request()
+            .input('orgId', sql.Int, req.orgId)
+            .input('viewerOid', sql.NVarChar(100), viewerOid)
+            .query(projectsQuery);
 
         // 2. Fetch Project Tags
         const tagsResult = await pool.request().query('SELECT projectId, tagId, isPrimary FROM ProjectTags');
@@ -80,6 +94,20 @@ router.get('/exec-summary', checkPermission(['can_view_exec_dashboard', 'can_vie
         pgResult.recordset.forEach(pg => {
             if (!goalsByProject[pg.projectId]) goalsByProject[pg.projectId] = [];
             goalsByProject[pg.projectId].push(pg.goalId.toString());
+        });
+
+        // 2c. Fetch task completion stats
+        const taskStatsResult = await pool.request().query(`
+            SELECT projectId, COUNT(*) AS taskCount, SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) AS doneCount
+            FROM Tasks
+            GROUP BY projectId
+        `);
+        const taskStatsByProject = new Map();
+        taskStatsResult.recordset.forEach((row) => {
+            taskStatsByProject.set(row.projectId, {
+                taskCount: Number(row.taskCount || 0),
+                doneCount: Number(row.doneCount || 0)
+            });
         });
 
         // 3. Map Data and Parse JSON
@@ -103,14 +131,23 @@ router.get('/exec-summary', checkPermission(['can_view_exec_dashboard', 'can_vie
                 }
             }
 
+            const taskStats = taskStatsByProject.get(p.id) || { taskCount: 0, doneCount: 0 };
+            const completion = taskStats.taskCount > 0
+                ? Math.round((taskStats.doneCount / taskStats.taskCount) * 100)
+                : 0;
+
             return {
                 id: p.id.toString(),
                 title: p.title,
                 goalIds: goalsByProject[p.id] || [],
                 goalId: (goalsByProject[p.id] || [])[0] || null, // backwards compat
                 tags: tagsByProject[p.id] || [],
+                taskCount: taskStats.taskCount,
+                completedTaskCount: taskStats.doneCount,
+                completion,
                 reportCount: p.reportCount || 0,
-                report: reportDetails
+                report: reportDetails,
+                isWatched: !!p.isWatched
             };
         });
 
@@ -145,9 +182,11 @@ router.get('/', checkPermission(['can_view_projects', 'can_view_exec_dashboard']
         const tagIds = tagIdsParam
             ? tagIdsParam.split(',').map(id => parseInt(id)).filter(id => !isNaN(id))
             : [];
+        const watchedOnly = parseTruthyQueryFlag(req.query.watchedOnly);
+        const viewerOid = getUserOidFromReq(req) || '__none__';
 
         // Check cache first
-        const cacheKey = `${CACHE_KEYS.PROJECT_PREFIX}${page}_${limit}_${search}_${projectId || ''}_${statuses.join('-')}_${goalIds.join('-')}_${tagIds.join('-')}`;
+        const cacheKey = `${CACHE_KEYS.PROJECT_PREFIX}${req.orgId ?? 'all'}_${viewerOid}_${watchedOnly ? 'watched' : 'all'}_${page}_${limit}_${search}_${projectId || ''}_${statuses.join('-')}_${goalIds.join('-')}_${tagIds.join('-')}`;
         const cached = cache.get(cacheKey);
         if (cached) {
             return res.json(cached);
@@ -156,9 +195,12 @@ router.get('/', checkPermission(['can_view_projects', 'can_view_exec_dashboard']
         const pool = await getPool();
         const requestParams = {
             offset,
-            limit
+            limit,
+            viewerOid
         };
-        const countParams = {};
+        const countParams = {
+            viewerOid
+        };
 
         // Build WHERE clause for filtering
         const conditions = [];
@@ -176,6 +218,9 @@ router.get('/', checkPermission(['can_view_projects', 'can_view_exec_dashboard']
             conditions.push(`(p.title LIKE @search OR p.description LIKE @search)`);
             requestParams.search = `%${search}%`;
             countParams.search = `%${search}%`;
+        }
+        if (watchedOnly) {
+            conditions.push(`EXISTS (SELECT 1 FROM ProjectWatchers pwf WHERE pwf.projectId = p.id AND pwf.userOid = @viewerOid)`);
         }
 
         let tagJoin = '';
@@ -233,10 +278,17 @@ router.get('/', checkPermission(['can_view_projects', 'can_view_exec_dashboard']
 
         // Single optimized query with JOIN - fetch projects with pagination
         const query = `
-            SELECT DISTINCT p.id, p.title, p.description, p.status, p.createdAt
+            SELECT DISTINCT
+                p.id,
+                p.title,
+                p.description,
+                p.status,
+                p.createdAt,
+                CAST(CASE WHEN pw.projectId IS NULL THEN 0 ELSE 1 END AS BIT) AS isWatched
             FROM Projects p
             ${tagJoin}
             ${statusJoin}
+            LEFT JOIN ProjectWatchers pw ON pw.projectId = p.id AND pw.userOid = @viewerOid
             ${whereClause}
             ORDER BY p.id
             OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY
@@ -402,7 +454,8 @@ router.get('/', checkPermission(['can_view_projects', 'can_view_exec_dashboard']
                 completedTaskCount: completedCountMap.get(project.id) || 0,
                 reportCount: reportCountMap.get(project.id) || 0,
                 latestReport: latestReportMap.get(String(project.id)) || null,
-                tags: projectTagMap.get(project.id) || []
+                tags: projectTagMap.get(project.id) || [],
+                isWatched: !!project.isWatched
             };
         });
 
@@ -425,10 +478,128 @@ router.get('/', checkPermission(['can_view_projects', 'can_view_exec_dashboard']
     }
 });
 
+// Get current user's watched projects (within org/shared scope)
+router.get('/watchlist', checkPermission(['can_view_projects', 'can_view_exec_dashboard']), withSharedScope, async (req, res) => {
+    try {
+        const viewerOid = getUserOidFromReq(req);
+        if (!viewerOid) {
+            return res.json([]);
+        }
+
+        const pool = await getPool();
+        const result = await pool.request()
+            .input('viewerOid', sql.NVarChar(100), viewerOid)
+            .input('orgId', sql.Int, req.orgId)
+            .query(`
+                SELECT p.id, p.title, p.description, p.status, p.createdAt
+                FROM ProjectWatchers pw
+                INNER JOIN Projects p ON p.id = pw.projectId
+                WHERE pw.userOid = @viewerOid
+                  AND (p.orgId = @orgId OR p.id IN (SELECT projectId FROM ProjectOrgAccess WHERE orgId = @orgId) OR @orgId IS NULL)
+                ORDER BY p.title ASC
+            `);
+
+        const projects = result.recordset.map((project) => ({
+            id: String(project.id),
+            title: project.title,
+            description: project.description,
+            status: project.status || 'active',
+            createdAt: project.createdAt,
+            isWatched: true
+        }));
+
+        res.json(projects);
+    } catch (err) {
+        handleError(res, 'fetching watchlist', err);
+    }
+});
+
+// Add project to current user's watchlist
+router.post('/:id/watch', checkPermission(['can_view_projects', 'can_view_exec_dashboard']), withSharedScope, checkProjectWriteAccess(), async (req, res) => {
+    try {
+        const projectId = parseInt(req.params.id, 10);
+        if (Number.isNaN(projectId)) {
+            return res.status(400).json({ error: 'Invalid project id' });
+        }
+
+        const viewerOid = getUserOidFromReq(req);
+        if (!viewerOid) {
+            return res.status(400).json({ error: 'Unable to resolve authenticated user id' });
+        }
+
+        const pool = await getPool();
+        await pool.request()
+            .input('projectId', sql.Int, projectId)
+            .input('viewerOid', sql.NVarChar(100), viewerOid)
+            .query(`
+                IF NOT EXISTS (
+                    SELECT 1
+                    FROM ProjectWatchers
+                    WHERE projectId = @projectId AND userOid = @viewerOid
+                )
+                BEGIN
+                    INSERT INTO ProjectWatchers (projectId, userOid)
+                    VALUES (@projectId, @viewerOid)
+                END
+            `);
+
+        invalidateProjectCache();
+        logAudit({
+            action: 'project.watch_add',
+            entityType: 'project',
+            entityId: String(projectId),
+            user: getAuthUser(req),
+            metadata: { userOid: viewerOid },
+            req
+        });
+        res.json({ success: true, isWatched: true });
+    } catch (err) {
+        handleError(res, 'adding project watch', err);
+    }
+});
+
+// Remove project from current user's watchlist
+router.delete('/:id/watch', checkPermission(['can_view_projects', 'can_view_exec_dashboard']), withSharedScope, checkProjectWriteAccess(), async (req, res) => {
+    try {
+        const projectId = parseInt(req.params.id, 10);
+        if (Number.isNaN(projectId)) {
+            return res.status(400).json({ error: 'Invalid project id' });
+        }
+
+        const viewerOid = getUserOidFromReq(req);
+        if (!viewerOid) {
+            return res.status(400).json({ error: 'Unable to resolve authenticated user id' });
+        }
+
+        const pool = await getPool();
+        await pool.request()
+            .input('projectId', sql.Int, projectId)
+            .input('viewerOid', sql.NVarChar(100), viewerOid)
+            .query(`
+                DELETE FROM ProjectWatchers
+                WHERE projectId = @projectId AND userOid = @viewerOid
+            `);
+
+        invalidateProjectCache();
+        logAudit({
+            action: 'project.watch_remove',
+            entityType: 'project',
+            entityId: String(projectId),
+            user: getAuthUser(req),
+            metadata: { userOid: viewerOid },
+            req
+        });
+        res.json({ success: true, isWatched: false });
+    } catch (err) {
+        handleError(res, 'removing project watch', err);
+    }
+});
+
 // Get single project details (Full Data)
 router.get('/:id', checkPermission('can_view_projects'), withSharedScope, checkProjectWriteAccess(), async (req, res) => {
     try {
         const id = parseInt(req.params.id);
+        const viewerOid = getUserOidFromReq(req);
         const pool = await getPool();
 
         // Fetch project basic info
@@ -493,6 +664,19 @@ router.get('/:id', checkPermission('can_view_projects'), withSharedScope, checkP
         const doneCount = tasks.filter(t => t.status === 'done').length;
         const completion = tasks.length > 0 ? Math.round((doneCount / tasks.length) * 100) : 0;
 
+        let isWatched = false;
+        if (viewerOid) {
+            const watchResult = await pool.request()
+                .input('projectId', sql.Int, id)
+                .input('viewerOid', sql.NVarChar(100), viewerOid)
+                .query(`
+                    SELECT TOP 1 1 AS isWatched
+                    FROM ProjectWatchers
+                    WHERE projectId = @projectId AND userOid = @viewerOid
+                `);
+            isWatched = watchResult.recordset.length > 0;
+        }
+
         res.json({
             id: project.id.toString(),
             title: project.title,
@@ -504,7 +688,8 @@ router.get('/:id', checkPermission('can_view_projects'), withSharedScope, checkP
             completion,
             tasks,
             reportCount: reportsResult.recordset[0].count,
-            latestReport
+            latestReport,
+            isWatched
         });
     } catch (err) {
         handleError(res, 'fetching project details', err);

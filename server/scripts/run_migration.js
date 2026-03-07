@@ -1,54 +1,65 @@
-// Run the tag migration script using the existing DB connection
-import { getPool } from '../db.js';
+// Generic SQL migration runner for one migration file.
+// Usage:
+//   node scripts/run_migration.js <migration-file.sql>
+// Example:
+//   node scripts/run_migration.js migrate_project_watchlist.sql
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { getPool } from '../db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+const splitSqlBatches = (script) =>
+    script.split(/^\s*GO\s*$/gim).filter((batch) => batch.trim());
+
 async function runMigration() {
+    let pool;
     try {
-        console.log('Connecting to database...');
-        const pool = await getPool();
+        const scriptName = String(process.argv[2] || '').trim();
+        if (!scriptName) {
+            throw new Error('Missing migration file argument. Example: node scripts/run_migration.js migrate_project_watchlist.sql');
+        }
+
+        const scriptPath = path.join(__dirname, scriptName);
+        if (!fs.existsSync(scriptPath)) {
+            throw new Error(`Migration file not found: ${scriptName}`);
+        }
+
+        console.log(`Connecting to database for migration: ${scriptName}`);
+        pool = await getPool();
 
         console.log('Reading migration script...');
-        // Default to migrate_users.sql for this run, or generic logic
-        const scriptName = process.argv[2] || 'migrate_users.sql';
-        const sqlScript = fs.readFileSync(path.join(__dirname, scriptName), 'utf8');
+        const sqlScript = fs.readFileSync(scriptPath, 'utf8');
+        const batches = splitSqlBatches(sqlScript);
+        console.log(`Found ${batches.length} batch(es) to execute.`);
 
-        // Split by GO statements (MSSQL batch separator)
-        const batches = sqlScript.split(/^\s*GO\s*$/mi).filter(b => b.trim());
-
-        console.log(`Found ${batches.length} batches to execute...`);
-
-        for (let i = 0; i < batches.length; i++) {
+        for (let i = 0; i < batches.length; i += 1) {
             const batch = batches[i].trim();
             if (!batch) continue;
 
+            console.log(`Executing batch ${i + 1}/${batches.length}...`);
             try {
-                console.log(`Executing batch ${i + 1}/${batches.length}...`);
                 await pool.request().query(batch);
-                console.log(`  ✓ Batch ${i + 1} completed`);
+                console.log(`  OK: batch ${i + 1}`);
             } catch (err) {
-                console.error(`  ✗ Batch ${i + 1} failed:`, err.message);
-                // Continue with other batches (some may fail if tables already exist)
+                const snippet = batch.split('\n').slice(0, 3).join(' ').slice(0, 200);
+                throw new Error(
+                    `Batch ${i + 1}/${batches.length} failed in ${scriptName}: ${err.message}\n` +
+                    `Batch snippet: ${snippet}`
+                );
             }
         }
 
-        // Verify: count records
-        const groups = await pool.request().query('SELECT COUNT(*) as count FROM TagGroups');
-        const tags = await pool.request().query('SELECT COUNT(*) as count FROM Tags');
-        const aliases = await pool.request().query('SELECT COUNT(*) as count FROM TagAliases');
-
-        console.log('\n=== Migration Complete ===');
-        console.log(`TagGroups: ${groups.recordset[0].count}`);
-        console.log(`Tags: ${tags.recordset[0].count}`);
-        console.log(`TagAliases: ${aliases.recordset[0].count}`);
-
+        console.log('\nMigration completed successfully.');
         process.exit(0);
     } catch (err) {
-        console.error('Migration failed:', err);
+        console.error('\nMigration failed:', err.message);
         process.exit(1);
+    } finally {
+        if (pool?.close) {
+            await pool.close();
+        }
     }
 }
 

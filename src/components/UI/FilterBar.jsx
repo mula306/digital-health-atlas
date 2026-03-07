@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useData } from '../../context/DataContext';
 import { CascadingGoalFilter } from './CascadingGoalFilter';
-import { Tag, Activity, X, Filter } from 'lucide-react';
+import { Tag, Activity, X, Filter, Star } from 'lucide-react';
 import './FilterBar.css';
 
 /**
@@ -16,6 +16,8 @@ import './FilterBar.css';
  *  - selectedStatuses: string[] (selected status keys)
  *  - onStatusesChange: (statuses: string[]) => void
  *  - statusOptions: { id: string, label: string, color?: string }[]
+ *  - watchedOnly: boolean
+ *  - onWatchedOnlyChange: (watchedOnly: boolean) => void
  *  - countLabel: string (e.g., "42 project(s)")
  *  - children: extra buttons rendered in the filter row
  */
@@ -27,6 +29,8 @@ export function FilterBar({
     selectedStatuses = [],
     onStatusesChange,
     statusOptions = [],
+    watchedOnly = false,
+    onWatchedOnlyChange = null,
     countLabel,
     children
 }) {
@@ -65,9 +69,10 @@ export function FilterBar({
         onGoalFilterChange('');
         if (onTagsChange) onTagsChange([]);
         if (onStatusesChange) onStatusesChange([]);
+        if (onWatchedOnlyChange) onWatchedOnlyChange(false);
     };
 
-    const hasAnyFilter = goalFilter || selectedTags.length > 0 || selectedStatuses.length > 0;
+    const hasAnyFilter = goalFilter || selectedTags.length > 0 || selectedStatuses.length > 0 || watchedOnly;
 
     return (
         <div className="shared-filter-bar glass">
@@ -84,6 +89,17 @@ export function FilterBar({
                         {(selectedTags.length > 0 || selectedStatuses.length > 0) && (
                             <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--accent-primary)', display: 'inline-block', marginLeft: '0.25rem' }} />
                         )}
+                    </button>
+                )}
+
+                {onWatchedOnlyChange && (
+                    <button
+                        className={`btn-secondary btn-sm shared-watch-toggle ${watchedOnly ? 'active' : ''}`}
+                        onClick={() => onWatchedOnlyChange(!watchedOnly)}
+                        title="Show only projects in my watchlist"
+                    >
+                        <Star size={14} fill={watchedOnly ? 'currentColor' : 'none'} />
+                        My Watchlist
                     </button>
                 )}
 

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useData } from '../../context/DataContext';
 import { KanbanBoard } from './KanbanBoard';
-import { Plus, Folder, Target, Search, X, LayoutGrid, Table } from 'lucide-react';
+import { Plus, Folder, Target, Search, X, LayoutGrid, Table, Star } from 'lucide-react';
 import { Modal } from '../UI/Modal';
 import { AddProjectForm } from './AddProjectForm';
 import { getDescendantGoalIds } from '../../utils/goalHelpers';
@@ -22,7 +22,7 @@ const STATUS_OPTIONS = [
 ];
 
 export default function KanbanView({ initialGoalFilter, onClearFilter }) {
-    const { projects, goals, loadProjectDetails, loading, loadMoreProjects, projectsPagination, loadingMore, authFetch } = useData();
+    const { projects, goals, loadProjectDetails, loading, loadMoreProjects, projectsPagination, loadingMore, authFetch, watchProject, unwatchProject } = useData();
     const { canEdit } = useAuth();
 
     // Persist selected project to survive remounts/refresh
@@ -45,14 +45,12 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
     const [selectedTags, setSelectedTags] = useState([]);
     const [selectedStatuses, setSelectedStatuses] = useState([]);
     const [searchTerm, setSearchTerm] = useState('');
+    const [watchedOnly, setWatchedOnly] = useState(false);
     const [projectListView, setProjectListViewState] = useState(() => {
         const stored = localStorage.getItem('dha_projects_list_view');
         return stored === 'table' ? 'table' : 'cards';
     });
-    const [exactProjectFilterId, setExactProjectFilterId] = useState(() => {
-        const stored = localStorage.getItem('dha_project_filter_id');
-        return stored || '';
-    });
+    const [exactProjectFilterId, setExactProjectFilterId] = useState('');
     const [isLoadingDetails, setIsLoadingDetails] = useState(false);
 
     // Server-side filtered projects state
@@ -61,7 +59,7 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
     const [filterLoading, setFilterLoading] = useState(false);
     const [filteredLoadingMore, setFilteredLoadingMore] = useState(false);
 
-    const hasActiveFilters = !!(goalFilter || selectedTags.length > 0 || selectedStatuses.length > 0 || searchTerm.trim() || exactProjectFilterId);
+    const hasActiveFilters = !!(goalFilter || selectedTags.length > 0 || selectedStatuses.length > 0 || searchTerm.trim() || exactProjectFilterId || watchedOnly);
 
     // Sync with external filter changes
     useEffect(() => {
@@ -69,6 +67,27 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
             setGoalFilter(initialGoalFilter);
         }
     }, [initialGoalFilter]);
+
+    useEffect(() => {
+        localStorage.removeItem('dha_project_filter_id');
+
+        const oneTimeProjectFilterRaw = localStorage.getItem('dha_project_filter_payload');
+        if (!oneTimeProjectFilterRaw) return;
+
+        try {
+            const parsed = JSON.parse(oneTimeProjectFilterRaw);
+            const projectId = String(parsed?.projectId || '').trim();
+            const requestedAt = Number(parsed?.requestedAt || 0);
+            const isFresh = requestedAt > 0 && (Date.now() - requestedAt) <= 15000;
+            if (projectId && isFresh) {
+                setExactProjectFilterId(projectId);
+            }
+        } catch (error) {
+            console.warn('Ignoring invalid one-time project filter payload', error);
+        } finally {
+            localStorage.removeItem('dha_project_filter_payload');
+        }
+    }, []);
 
     useEffect(() => {
         const handleProjectFilterEvent = (event) => {
@@ -80,8 +99,9 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
             setSelectedTags([]);
             setSelectedStatuses([]);
             setSearchTerm('');
+            setWatchedOnly(false);
             setExactProjectFilterId(projectId);
-            localStorage.setItem('dha_project_filter_id', projectId);
+            localStorage.removeItem('dha_project_filter_payload');
         };
 
         window.addEventListener('dha:filter-project', handleProjectFilterEvent);
@@ -108,8 +128,11 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
         if (searchTerm.trim()) {
             params.set('search', searchTerm.trim());
         }
+        if (watchedOnly) {
+            params.set('watchedOnly', '1');
+        }
         return params;
-    }, [exactProjectFilterId, goalFilter, selectedTags, selectedStatuses, searchTerm, goals]);
+    }, [exactProjectFilterId, goalFilter, selectedTags, selectedStatuses, searchTerm, watchedOnly, goals]);
 
     // Fetch filtered projects from server when filters change
     useEffect(() => {
@@ -142,7 +165,7 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
 
         fetchFiltered();
         return () => { cancelled = true; };
-    }, [exactProjectFilterId, goalFilter, selectedTags, selectedStatuses, searchTerm, goals, authFetch, buildFilterParams, hasActiveFilters]);
+    }, [exactProjectFilterId, goalFilter, selectedTags, selectedStatuses, searchTerm, watchedOnly, goals, authFetch, buildFilterParams, hasActiveFilters]);
 
     // Load more filtered projects
     const loadMoreFilteredProjects = useCallback(async () => {
@@ -241,10 +264,42 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
         return `${titles[0]} +${titles.length - 1} more`;
     };
 
+    const handleToggleWatch = useCallback(async (event, project) => {
+        event.preventDefault();
+        event.stopPropagation();
+
+        const normalizedId = String(project.id);
+        const currentlyWatched = !!project.isWatched;
+        try {
+            if (currentlyWatched) {
+                await unwatchProject(normalizedId);
+                if (watchedOnly) {
+                    setFilteredServerProjects((prev) => (prev || []).filter((item) => String(item.id) !== normalizedId));
+                    setFilteredPagination((prev) => (
+                        prev ? { ...prev, total: Math.max(0, (prev.total || 0) - 1) } : prev
+                    ));
+                } else {
+                    setFilteredServerProjects((prev) => prev ? prev.map((item) => (
+                        String(item.id) === normalizedId ? { ...item, isWatched: false } : item
+                    )) : prev);
+                }
+                return;
+            }
+
+            await watchProject(normalizedId);
+            setFilteredServerProjects((prev) => prev ? prev.map((item) => (
+                String(item.id) === normalizedId ? { ...item, isWatched: true } : item
+            )) : prev);
+        } catch (error) {
+            console.error('Failed to update watchlist status:', error);
+        }
+    }, [watchProject, unwatchProject, watchedOnly]);
+
     const handleFilterChange = (newGoalId) => {
         if (exactProjectFilterId) {
             setExactProjectFilterId('');
             localStorage.removeItem('dha_project_filter_id');
+            localStorage.removeItem('dha_project_filter_payload');
         }
         setGoalFilter(newGoalId);
         if (!newGoalId && onClearFilter) onClearFilter();
@@ -337,12 +392,20 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
                     : `${displayProjects.length} project(s)`
                 }
             >
+                <button
+                    className={`btn-secondary btn-sm project-watch-filter-btn ${watchedOnly ? 'active' : ''}`}
+                    onClick={() => setWatchedOnly((prev) => !prev)}
+                    title="Show only projects in my watchlist"
+                >
+                    <Star size={14} fill={watchedOnly ? 'currentColor' : 'none'} /> My Watched
+                </button>
                 {exactProjectFilterId && (
                     <button
                         className="btn-secondary btn-sm shared-clear-btn"
                         onClick={() => {
                             setExactProjectFilterId('');
                             localStorage.removeItem('dha_project_filter_id');
+                            localStorage.removeItem('dha_project_filter_payload');
                         }}
                     >
                         <X size={14} /> Clear Project Filter
@@ -392,7 +455,18 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
                                 >
                                     <td>
                                         <div className="project-cell-primary">
-                                            <span className="project-cell-title">{project.title}</span>
+                                            <div className="project-cell-title-row">
+                                                <button
+                                                    type="button"
+                                                    className={`project-watch-btn ${project.isWatched ? 'active' : ''}`}
+                                                    onClick={(event) => handleToggleWatch(event, project)}
+                                                    title={project.isWatched ? 'Remove from watchlist' : 'Add to watchlist'}
+                                                    aria-label={project.isWatched ? 'Remove from watchlist' : 'Add to watchlist'}
+                                                >
+                                                    <Star size={15} fill={project.isWatched ? 'currentColor' : 'none'} />
+                                                </button>
+                                                <span className="project-cell-title">{project.title}</span>
+                                            </div>
                                             <span className="project-cell-desc">{project.description || 'No description'}</span>
                                         </div>
                                     </td>
@@ -469,9 +543,20 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
                                 <div className="project-icon">
                                     <Folder size={22} />
                                 </div>
-                                <span className="project-task-count">
-                                    {project.taskCount || project.tasks?.length || 0} Tasks
-                                </span>
+                                <div className="project-card-header-actions">
+                                    <button
+                                        type="button"
+                                        className={`project-watch-btn ${project.isWatched ? 'active' : ''}`}
+                                        onClick={(event) => handleToggleWatch(event, project)}
+                                        title={project.isWatched ? 'Remove from watchlist' : 'Add to watchlist'}
+                                        aria-label={project.isWatched ? 'Remove from watchlist' : 'Add to watchlist'}
+                                    >
+                                        <Star size={16} fill={project.isWatched ? 'currentColor' : 'none'} />
+                                    </button>
+                                    <span className="project-task-count">
+                                        {project.taskCount || project.tasks?.length || 0} Tasks
+                                    </span>
+                                </div>
                             </div>
 
                             <h3 className="project-title">{project.title}</h3>

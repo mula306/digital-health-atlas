@@ -24,6 +24,7 @@ export function GoalView({ onNavigateToProjects, onNavigateToMetrics }) {
     const [goalFilter, setGoalFilter] = useState('');
     const [selectedTags, setSelectedTags] = useState([]);
     const [selectedStatuses, setSelectedStatuses] = useState([]);
+    const [watchedOnly, setWatchedOnly] = useState(false);
     const [allProjects, setAllProjects] = useState([]);
     const [expandAll, setExpandAll] = useState(null); // null = individual control, true = all expanded, false = all collapsed
 
@@ -42,7 +43,8 @@ export function GoalView({ onNavigateToProjects, onNavigateToMetrics }) {
         return () => { isMounted = false; };
     }, [fetchExecSummaryProjects]);
 
-    const projectsForFilters = allProjects.length > 0 ? allProjects : projects;
+    const projectsForFilters = (allProjects.length > 0 ? allProjects : projects)
+        .filter(project => !watchedOnly || !!project.isWatched);
 
     // Get filtered root goals based on cascading filter
     const getFilteredRootGoals = () => {
@@ -112,6 +114,8 @@ export function GoalView({ onNavigateToProjects, onNavigateToMetrics }) {
                 selectedStatuses={selectedStatuses}
                 onStatusesChange={setSelectedStatuses}
                 statusOptions={STATUS_OPTIONS}
+                watchedOnly={watchedOnly}
+                onWatchedOnlyChange={setWatchedOnly}
             />
 
             <div className="goals-tree-container">
@@ -131,6 +135,7 @@ export function GoalView({ onNavigateToProjects, onNavigateToMetrics }) {
                             forceExpand={expandAll}
                             selectedTags={selectedTags}
                             selectedStatuses={selectedStatuses}
+                            watchedOnly={watchedOnly}
                             projectsSource={projectsForFilters}
                         />
                     ))

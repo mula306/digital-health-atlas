@@ -331,7 +331,11 @@ export function Layout({ children, currentView, onViewChange }) {
         if (command.type === 'project') {
             const projectId = String(command.projectId);
             localStorage.removeItem('dha_selected_project_id');
-            localStorage.setItem('dha_project_filter_id', projectId);
+            localStorage.removeItem('dha_project_filter_id');
+            localStorage.setItem('dha_project_filter_payload', JSON.stringify({
+                projectId,
+                requestedAt: Date.now()
+            }));
             window.dispatchEvent(new CustomEvent('dha:filter-project', {
                 detail: {
                     projectId,

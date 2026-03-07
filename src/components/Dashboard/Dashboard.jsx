@@ -20,6 +20,7 @@ export function Dashboard() {
     const [goalFilter, setGoalFilter] = useState('');
     const [selectedTags, setSelectedTags] = useState([]);
     const [selectedStatuses, setSelectedStatuses] = useState([]);
+    const [watchedOnly, setWatchedOnly] = useState(false);
     const [stats, setStats] = useState(null);
     const [loading, setLoading] = useState(true);
 
@@ -37,7 +38,8 @@ export function Dashboard() {
 
                 const tagParam = selectedTags.length > 0 ? `&tagIds=${selectedTags.join(',')}` : '';
                 const statusParam = selectedStatuses.length > 0 ? `&statuses=${selectedStatuses.join(',')}` : '';
-                const res = await authFetch(`${API_BASE}/dashboard/stats?goalIds=${goalIds}${tagParam}${statusParam}`);
+                const watchedParam = watchedOnly ? '&watchedOnly=1' : '';
+                const res = await authFetch(`${API_BASE}/dashboard/stats?goalIds=${goalIds}${tagParam}${statusParam}${watchedParam}`);
                 if (res.ok) {
                     const data = await res.json();
                     setStats(data);
@@ -52,7 +54,7 @@ export function Dashboard() {
         };
 
         fetchStats();
-    }, [goalFilter, selectedTags, selectedStatuses, goals, authFetch]);
+    }, [goalFilter, selectedTags, selectedStatuses, watchedOnly, goals, authFetch]);
 
 
     // Filter goals locally for the "Total Goals" count (since that data is fully loaded)
@@ -109,6 +111,8 @@ export function Dashboard() {
                     selectedStatuses={selectedStatuses}
                     onStatusesChange={setSelectedStatuses}
                     statusOptions={STATUS_OPTIONS}
+                    watchedOnly={watchedOnly}
+                    onWatchedOnlyChange={setWatchedOnly}
                 />
 
                 {/* Skeleton Metric Cards */}
@@ -170,6 +174,8 @@ export function Dashboard() {
                 selectedStatuses={selectedStatuses}
                 onStatusesChange={setSelectedStatuses}
                 statusOptions={STATUS_OPTIONS}
+                watchedOnly={watchedOnly}
+                onWatchedOnlyChange={setWatchedOnly}
             />
 
             {/* Metric Cards */}

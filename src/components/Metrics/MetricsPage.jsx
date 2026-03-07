@@ -11,6 +11,7 @@ export function MetricsPage({ initialGoalFilter, onClearFilter }) {
     const { goals, projects, hasPermission, fetchExecSummaryProjects } = useData();
     const [goalFilter, setGoalFilter] = useState(initialGoalFilter || '');
     const [selectedTags, setSelectedTags] = useState([]);
+    const [watchedOnly, setWatchedOnly] = useState(false);
     const [allProjects, setAllProjects] = useState([]);
 
     // Sync with external filter changes (Derived State Pattern)
@@ -67,12 +68,37 @@ export function MetricsPage({ initialGoalFilter, onClearFilter }) {
             metrics = metrics.filter(m => relevantGoalIds.includes(String(m.goalId)));
         }
 
+        if (watchedOnly) {
+            const sourceProjects = allProjects.length > 0 ? allProjects : projects;
+            const watchedProjects = sourceProjects.filter(project => !!project.isWatched);
+            const goalIdsWithWatchedProjects = new Set();
+
+            watchedProjects.forEach((project) => {
+                const projectGoalIds = project.goalIds || (project.goalId ? [project.goalId] : []);
+                projectGoalIds.forEach((goalId) => goalIdsWithWatchedProjects.add(String(goalId)));
+            });
+
+            const expandedGoalIds = new Set(goalIdsWithWatchedProjects);
+            goalIdsWithWatchedProjects.forEach((goalId) => {
+                let current = goals.find((goal) => String(goal.id) === goalId);
+                while (current && current.parentId) {
+                    expandedGoalIds.add(String(current.parentId));
+                    current = goals.find((goal) => String(goal.id) === String(current.parentId));
+                }
+            });
+
+            metrics = metrics.filter((metric) => expandedGoalIds.has(String(metric.goalId)));
+        }
+
         // Filter by tags: only show metrics from goals that have tagged projects
         if (selectedTags.length > 0) {
             const sourceProjects = allProjects.length > 0 ? allProjects : projects;
+            const effectiveProjects = watchedOnly
+                ? sourceProjects.filter(project => !!project.isWatched)
+                : sourceProjects;
             // Find all goal IDs that have at least one project with a matching tag
             const goalsWithTaggedProjects = new Set();
-            sourceProjects.forEach(p => {
+            effectiveProjects.forEach(p => {
                 if (p.tags && p.tags.some(t => selectedTags.includes(String(t.tagId ?? t.id)))) {
                     const pGoalIds = p.goalIds || (p.goalId ? [p.goalId] : []);
                     pGoalIds.forEach(gid => goalsWithTaggedProjects.add(String(gid)));
@@ -91,7 +117,7 @@ export function MetricsPage({ initialGoalFilter, onClearFilter }) {
         }
 
         return metrics;
-    }, [allMetrics, goalFilter, selectedTags, goals, projects, allProjects]);
+    }, [allMetrics, goalFilter, selectedTags, watchedOnly, goals, projects, allProjects]);
 
     // Calculate progress helper
     const calcProgress = (current, target) => {
@@ -116,6 +142,8 @@ export function MetricsPage({ initialGoalFilter, onClearFilter }) {
                 onGoalFilterChange={handleFilterChange}
                 selectedTags={selectedTags}
                 onTagsChange={setSelectedTags}
+                watchedOnly={watchedOnly}
+                onWatchedOnlyChange={setWatchedOnly}
                 countLabel={`${filteredMetrics.length} Metrics Found`}
             />
 
