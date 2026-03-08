@@ -90,6 +90,9 @@ const toISODate = (date) => {
     return value.toISOString().slice(0, 10);
 };
 
+const INTAKE_FOCUS_STORAGE_KEY = 'dha_intake_focus_submission_payload';
+const INTAKE_FOCUS_TTL_MS = 2 * 60 * 1000;
+
 const addDays = (date, days) => {
     const value = new Date(date);
     value.setDate(value.getDate() + Number(days || 0));
@@ -412,9 +415,9 @@ export function IntakeRequestsList({ initialFilter = 'all', showFilterTabs = tru
         }
     };
 
-    const openSubmission = async (submission) => {
+    const openSubmission = useCallback(async (submission) => {
         const fullSubmission = intakeSubmissions.find(s => String(s.id) === String(submission.id));
-        const selected = getSubmissionWithConversation(fullSubmission || submission);
+        const selected = migrateInfoRequestsToConversation(fullSubmission || submission);
         setSelectedSubmission(selected);
         setGovernanceDetails(null);
         setGovernanceError('');
@@ -427,7 +430,55 @@ export function IntakeRequestsList({ initialFilter = 'all', showFilterTabs = tru
         if (selected.governanceRequired || filter === 'governance') {
             await loadGovernanceDetails(selected.id);
         }
-    };
+    }, [filter, intakeSubmissions, loadGovernanceDetails, migrateInfoRequestsToConversation]);
+
+    useEffect(() => {
+        const rawPayload = localStorage.getItem(INTAKE_FOCUS_STORAGE_KEY);
+        if (!rawPayload) return;
+
+        let payload = null;
+        try {
+            payload = JSON.parse(rawPayload);
+        } catch {
+            localStorage.removeItem(INTAKE_FOCUS_STORAGE_KEY);
+            return;
+        }
+
+        const payloadStage = String(payload?.stage || '').trim().toLowerCase();
+        if (payloadStage && payloadStage !== 'governance') return;
+        if (filter !== 'governance') return;
+
+        const requestedAt = Number(payload?.requestedAt || 0);
+        const isFresh = requestedAt > 0 && (Date.now() - requestedAt) <= INTAKE_FOCUS_TTL_MS;
+        if (!isFresh) {
+            localStorage.removeItem(INTAKE_FOCUS_STORAGE_KEY);
+            return;
+        }
+
+        const submissionId = String(payload?.submissionId || '').trim();
+        if (!submissionId) {
+            localStorage.removeItem(INTAKE_FOCUS_STORAGE_KEY);
+            return;
+        }
+
+        const target = governanceQueue.find((item) => String(item.id) === submissionId)
+            || intakeSubmissions.find((item) => String(item.id) === submissionId);
+        if (!target) return;
+
+        let cancelled = false;
+        (async () => {
+            try {
+                await openSubmission(target);
+            } catch (err) {
+                console.error('Failed to open focused governance submission:', err);
+            }
+            if (!cancelled) {
+                localStorage.removeItem(INTAKE_FOCUS_STORAGE_KEY);
+            }
+        })();
+
+        return () => { cancelled = true; };
+    }, [filter, governanceQueue, intakeSubmissions, openSubmission]);
 
     const handleApplyGovernance = async () => {
         if (!selectedSubmission) return;

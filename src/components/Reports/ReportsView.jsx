@@ -6,6 +6,22 @@ import { ReportFilterTree } from './ReportFilterTree';
 import { ReportPreview } from './ReportPreview';
 import './Reports.css';
 
+const DEFAULT_PACK_FILTERS = {
+    goalIds: [],
+    tagIds: [],
+    statuses: [],
+    watchedOnly: false
+};
+
+const STATUS_FILTER_OPTIONS = [
+    { value: 'red', label: 'Red' },
+    { value: 'yellow', label: 'Yellow' },
+    { value: 'green', label: 'Green' },
+    { value: 'unknown', label: 'Unknown' }
+];
+
+const WEEKDAY_LABELS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
 export function ReportsView() {
     const {
         fetchExecSummaryProjects,
@@ -15,7 +31,10 @@ export function ReportsView() {
         fetchExecutiveReportPackRuns,
         runExecutiveReportPackNow,
         fetchExecutivePackSchedulerStatus,
-        runDueExecutivePacks
+        runDueExecutivePacks,
+        goals,
+        tagGroups,
+        hasRole
     } = useData();
     const toast = useToast();
     const [selectedProjectIds, setSelectedProjectIds] = useState([]);
@@ -40,8 +59,33 @@ export function ReportsView() {
         scheduleHour: 9,
         scheduleMinute: 0,
         exceptionOnly: false,
-        isActive: true
+        isActive: true,
+        filters: { ...DEFAULT_PACK_FILTERS }
     });
+    const canRunDuePacks = hasRole('Admin');
+
+    const availableGoals = useMemo(
+        () => (Array.isArray(goals) ? goals : [])
+            .map((goal) => ({
+                id: Number.parseInt(goal.id, 10),
+                title: goal.title || goal.name || `Goal ${goal.id}`
+            }))
+            .filter((goal) => !Number.isNaN(goal.id))
+            .sort((a, b) => a.title.localeCompare(b.title)),
+        [goals]
+    );
+
+    const availableTags = useMemo(() => {
+        const groups = Array.isArray(tagGroups) ? tagGroups : [];
+        const tags = groups.flatMap((group) => (Array.isArray(group.tags) ? group.tags.map((tag) => ({
+            id: Number.parseInt(tag.id, 10),
+            name: tag.name || `Tag ${tag.id}`,
+            groupName: group.name || ''
+        })) : []));
+        return tags
+            .filter((tag) => !Number.isNaN(tag.id))
+            .sort((a, b) => a.name.localeCompare(b.name));
+    }, [tagGroups]);
 
     const selectedPack = useMemo(
         () => packs.find((pack) => String(pack.id) === String(selectedPackId)) || null,
@@ -132,7 +176,8 @@ export function ReportsView() {
             scheduleHour: 9,
             scheduleMinute: 0,
             exceptionOnly: false,
-            isActive: true
+            isActive: true,
+            filters: { ...DEFAULT_PACK_FILTERS }
         });
     };
 
@@ -142,6 +187,7 @@ export function ReportsView() {
     };
 
     const startEditPack = (pack) => {
+        const filters = pack?.filters || {};
         setEditingPackId(String(pack.id));
         setPackForm({
             name: pack.name || '',
@@ -151,9 +197,63 @@ export function ReportsView() {
             scheduleHour: Number(pack.scheduleHour ?? 9),
             scheduleMinute: Number(pack.scheduleMinute ?? 0),
             exceptionOnly: !!pack.exceptionOnly,
-            isActive: !!pack.isActive
+            isActive: !!pack.isActive,
+            filters: {
+                goalIds: Array.isArray(filters.goalIds)
+                    ? filters.goalIds.map((id) => Number.parseInt(id, 10)).filter((id) => !Number.isNaN(id))
+                    : [],
+                tagIds: Array.isArray(filters.tagIds)
+                    ? filters.tagIds.map((id) => Number.parseInt(id, 10)).filter((id) => !Number.isNaN(id))
+                    : [],
+                statuses: Array.isArray(filters.statuses)
+                    ? filters.statuses.map((status) => String(status).toLowerCase().trim()).filter(Boolean)
+                    : [],
+                watchedOnly: !!filters.watchedOnly
+            }
         });
         setShowPackEditor(true);
+    };
+
+    const updatePackFilters = (updater) => {
+        setPackForm((previous) => {
+            const currentFilters = previous.filters || DEFAULT_PACK_FILTERS;
+            return {
+                ...previous,
+                filters: updater(currentFilters)
+            };
+        });
+    };
+
+    const toggleNumericFilter = (key, value) => {
+        updatePackFilters((filters) => {
+            const numericValue = Number.parseInt(value, 10);
+            if (Number.isNaN(numericValue)) return filters;
+            const current = new Set((filters[key] || []).map((item) => Number.parseInt(item, 10)));
+            if (current.has(numericValue)) current.delete(numericValue);
+            else current.add(numericValue);
+            return {
+                ...filters,
+                [key]: Array.from(current).filter((item) => !Number.isNaN(item))
+            };
+        });
+    };
+
+    const toggleStatusFilter = (value) => {
+        updatePackFilters((filters) => {
+            const normalized = String(value || '').toLowerCase().trim();
+            if (!normalized) return filters;
+            const current = new Set((filters.statuses || []).map((status) => String(status).toLowerCase().trim()));
+            if (current.has(normalized)) current.delete(normalized);
+            else current.add(normalized);
+            return {
+                ...filters,
+                statuses: Array.from(current)
+            };
+        });
+    };
+
+    const clearPackFilters = () => {
+        updatePackFilters(() => ({ ...DEFAULT_PACK_FILTERS }));
     };
 
     const handleSavePack = async () => {
@@ -161,6 +261,7 @@ export function ReportsView() {
             toast.error('Pack name is required');
             return;
         }
+        const normalizedStatuses = new Set(STATUS_FILTER_OPTIONS.map((option) => option.value));
 
         const payload = {
             name: packForm.name.trim(),
@@ -170,7 +271,19 @@ export function ReportsView() {
             scheduleHour: Number(packForm.scheduleHour),
             scheduleMinute: Number(packForm.scheduleMinute),
             exceptionOnly: !!packForm.exceptionOnly,
-            isActive: !!packForm.isActive
+            isActive: !!packForm.isActive,
+            filters: {
+                goalIds: Array.from(new Set((packForm.filters?.goalIds || [])
+                    .map((id) => Number.parseInt(id, 10))
+                    .filter((id) => !Number.isNaN(id)))),
+                tagIds: Array.from(new Set((packForm.filters?.tagIds || [])
+                    .map((id) => Number.parseInt(id, 10))
+                    .filter((id) => !Number.isNaN(id)))),
+                statuses: Array.from(new Set((packForm.filters?.statuses || [])
+                    .map((status) => String(status).toLowerCase().trim())
+                    .filter((status) => normalizedStatuses.has(status)))),
+                watchedOnly: !!packForm.filters?.watchedOnly
+            }
         };
 
         try {
@@ -244,6 +357,22 @@ export function ReportsView() {
         return date.toLocaleString();
     };
 
+    const getPackFilterSummary = (pack) => {
+        const filters = pack?.filters || {};
+        const goalCount = Array.isArray(filters.goalIds) ? filters.goalIds.length : 0;
+        const tagCount = Array.isArray(filters.tagIds) ? filters.tagIds.length : 0;
+        const statusCount = Array.isArray(filters.statuses) ? filters.statuses.length : 0;
+        const watchedOnly = !!filters.watchedOnly;
+
+        const parts = [];
+        if (goalCount > 0) parts.push(`${goalCount} goal${goalCount === 1 ? '' : 's'}`);
+        if (tagCount > 0) parts.push(`${tagCount} tag${tagCount === 1 ? '' : 's'}`);
+        if (statusCount > 0) parts.push(`${statusCount} status`);
+        if (watchedOnly) parts.push('watched only');
+
+        return parts.length > 0 ? `Filters: ${parts.join(' • ')}` : 'Filters: none';
+    };
+
     return (
         <div className="reports-page">
             <section className="reports-pack-panel">
@@ -253,9 +382,11 @@ export function ReportsView() {
                         <button className="btn-secondary" onClick={loadSchedulerStatus} disabled={loadingScheduler}>
                             {loadingScheduler ? 'Scheduler...' : `Due: ${schedulerStatus?.dueCount ?? 0}`}
                         </button>
-                        <button className="btn-secondary" onClick={handleRunDuePacks} disabled={runningDue}>
-                            {runningDue ? 'Running Due...' : 'Run Due Packs'}
-                        </button>
+                        {canRunDuePacks && (
+                            <button className="btn-secondary" onClick={handleRunDuePacks} disabled={runningDue}>
+                                {runningDue ? 'Running Due...' : 'Run Due Packs'}
+                            </button>
+                        )}
                         <button className="btn-secondary" onClick={loadExecutivePacks} disabled={loadingPacks}>
                             <RefreshCw size={14} /> {loadingPacks ? 'Refreshing...' : 'Refresh'}
                         </button>
@@ -335,6 +466,73 @@ export function ReportsView() {
                                 placeholder="Optional audience and context notes..."
                             />
                         </div>
+                        <div className="reports-pack-filter-head">
+                            <strong>Pack Filters</strong>
+                            <button type="button" className="btn-secondary btn-sm" onClick={clearPackFilters}>
+                                Clear Filters
+                            </button>
+                        </div>
+                        <div className="reports-pack-filter-grid">
+                            <div className="form-group">
+                                <label>Goals</label>
+                                <div className="reports-pack-filter-options">
+                                    {availableGoals.length === 0 ? (
+                                        <span className="reports-pack-empty">No goals available</span>
+                                    ) : availableGoals.map((goal) => {
+                                        const selected = (packForm.filters?.goalIds || []).includes(goal.id);
+                                        return (
+                                            <button
+                                                key={`goal-filter-${goal.id}`}
+                                                type="button"
+                                                className={`reports-filter-chip ${selected ? 'active' : ''}`}
+                                                onClick={() => toggleNumericFilter('goalIds', goal.id)}
+                                            >
+                                                {goal.title}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                            <div className="form-group">
+                                <label>Tags</label>
+                                <div className="reports-pack-filter-options">
+                                    {availableTags.length === 0 ? (
+                                        <span className="reports-pack-empty">No tags available</span>
+                                    ) : availableTags.map((tag) => {
+                                        const selected = (packForm.filters?.tagIds || []).includes(tag.id);
+                                        return (
+                                            <button
+                                                key={`tag-filter-${tag.id}`}
+                                                type="button"
+                                                className={`reports-filter-chip ${selected ? 'active' : ''}`}
+                                                onClick={() => toggleNumericFilter('tagIds', tag.id)}
+                                                title={tag.groupName || tag.name}
+                                            >
+                                                {tag.name}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                            <div className="form-group">
+                                <label>Status</label>
+                                <div className="reports-pack-filter-options">
+                                    {STATUS_FILTER_OPTIONS.map((statusOption) => {
+                                        const selected = (packForm.filters?.statuses || []).includes(statusOption.value);
+                                        return (
+                                            <button
+                                                key={`status-filter-${statusOption.value}`}
+                                                type="button"
+                                                className={`reports-filter-chip ${selected ? 'active' : ''}`}
+                                                onClick={() => toggleStatusFilter(statusOption.value)}
+                                            >
+                                                {statusOption.label}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        </div>
                         <div className="reports-pack-editor-toggles">
                             <label>
                                 <input
@@ -351,6 +549,14 @@ export function ReportsView() {
                                     onChange={(e) => setPackForm((previous) => ({ ...previous, isActive: e.target.checked }))}
                                 />
                                 Active
+                            </label>
+                            <label>
+                                <input
+                                    type="checkbox"
+                                    checked={!!packForm.filters?.watchedOnly}
+                                    onChange={(e) => updatePackFilters((filters) => ({ ...filters, watchedOnly: e.target.checked }))}
+                                />
+                                Watched projects only
                             </label>
                         </div>
                         <div className="reports-pack-editor-actions">
@@ -386,7 +592,7 @@ export function ReportsView() {
                                     <strong>{pack.name}</strong>
                                     <span>
                                         {pack.scheduleType === 'weekly'
-                                            ? `Weekly ${pack.scheduleDayOfWeek ?? '-'} @ ${pack.scheduleHour}:${String(pack.scheduleMinute).padStart(2, '0')}`
+                                            ? `Weekly ${WEEKDAY_LABELS[Number(pack.scheduleDayOfWeek ?? 1)] || pack.scheduleDayOfWeek} @ ${pack.scheduleHour}:${String(pack.scheduleMinute).padStart(2, '0')}`
                                             : 'Manual run only'}
                                     </span>
                                 </button>
@@ -397,6 +603,7 @@ export function ReportsView() {
                             <div className="reports-pack-card-meta">
                                 <span>Last run: {formatDateTime(pack.lastRunAt)}</span>
                                 <span>Next run: {formatDateTime(pack.nextRunAt)}</span>
+                                <span>{getPackFilterSummary(pack)}</span>
                             </div>
                             <div className="reports-pack-card-actions">
                                 <button className="btn-secondary btn-sm" onClick={() => startEditPack(pack)}>

@@ -13,6 +13,8 @@ import { useData } from '../../context/DataContext';
 import './MyWorkPage.css';
 
 const OPEN_SUBMISSION_STATUSES = new Set(['pending', 'awaiting-response']);
+const INTAKE_FOCUS_STORAGE_KEY = 'dha_intake_focus_submission_payload';
+const PROJECT_TASK_FOCUS_STORAGE_KEY = 'dha_project_focus_task_payload';
 
 function formatDate(dateValue) {
     if (!dateValue) return 'n/a';
@@ -142,13 +144,54 @@ export function MyWorkPage({ onViewChange }) {
         onViewChange?.('projects');
     }, [onViewChange]);
 
+    const openTask = useCallback((task) => {
+        const projectId = String(task?.projectId || '').trim();
+        const taskId = String(task?.id || '').trim();
+        if (!projectId || !taskId) return;
+
+        localStorage.removeItem('dha_project_filter_payload');
+        localStorage.setItem(PROJECT_TASK_FOCUS_STORAGE_KEY, JSON.stringify({
+            projectId,
+            taskId,
+            requestedAt: Date.now()
+        }));
+        onViewChange?.('projects', {
+            preserveSelectedProject: true,
+            selectedProjectId: projectId
+        });
+    }, [onViewChange]);
+
     const openIntakeStage = useCallback((stage = 'my-requests') => {
         onViewChange?.('intake', { stage });
+    }, [onViewChange]);
+
+    const openMySubmission = useCallback((submission) => {
+        const submissionId = String(submission?.id || '').trim();
+        if (!submissionId) return;
+
+        localStorage.setItem(INTAKE_FOCUS_STORAGE_KEY, JSON.stringify({
+            submissionId,
+            stage: 'my-requests',
+            requestedAt: Date.now()
+        }));
+        onViewChange?.('intake', { stage: 'my-requests' });
     }, [onViewChange]);
 
     const openIntakeView = useCallback(() => {
         openIntakeStage('my-requests');
     }, [openIntakeStage]);
+
+    const openGovernanceSubmission = useCallback((submission) => {
+        const submissionId = String(submission?.id || '').trim();
+        if (!submissionId) return;
+
+        localStorage.setItem(INTAKE_FOCUS_STORAGE_KEY, JSON.stringify({
+            submissionId,
+            stage: 'governance',
+            requestedAt: Date.now()
+        }));
+        onViewChange?.('intake', { stage: 'governance' });
+    }, [onViewChange]);
 
     const openGovernanceView = useCallback(() => {
         openIntakeStage('governance');
@@ -258,12 +301,17 @@ export function MyWorkPage({ onViewChange }) {
                     ) : (
                         <div className="my-work-list">
                             {myOpenTasks.map((task) => (
-                                <div key={task.id} className="my-work-list-item readonly">
+                                <button
+                                    key={task.id}
+                                    className="my-work-list-item"
+                                    onClick={() => openTask(task)}
+                                    title={`${task.projectTitle}: ${task.title}`}
+                                >
                                     <span className="my-work-list-primary">{task.title}</span>
                                     <span className="my-work-list-secondary">
                                         {task.projectTitle} - {String(task.status || 'todo').replace(/-/g, ' ')}
                                     </span>
-                                </div>
+                                </button>
                             ))}
                         </div>
                     )}
@@ -288,12 +336,17 @@ export function MyWorkPage({ onViewChange }) {
                     ) : (
                         <div className="my-work-list">
                             {openSubmissions.slice(0, 6).map((submission) => (
-                                <div key={submission.id} className="my-work-list-item readonly">
+                                <button
+                                    key={submission.id}
+                                    className="my-work-list-item"
+                                    onClick={() => openMySubmission(submission)}
+                                    title={submission.formName || 'Intake Request'}
+                                >
                                     <span className="my-work-list-primary">{submission.formName || 'Intake Request'}</span>
                                     <span className="my-work-list-secondary">
                                         {String(submission.status || 'pending').replace(/-/g, ' ')} - Submitted {formatDate(submission.submittedAt)}
                                     </span>
-                                </div>
+                                </button>
                             ))}
                         </div>
                     )}
@@ -322,12 +375,17 @@ export function MyWorkPage({ onViewChange }) {
                     ) : (
                         <div className="my-work-list">
                             {pendingVotes.map((item) => (
-                                <div key={item.id} className="my-work-list-item readonly">
+                                <button
+                                    key={item.id}
+                                    className="my-work-list-item"
+                                    onClick={() => openGovernanceSubmission(item)}
+                                    title={item.formName || 'Submission'}
+                                >
                                     <span className="my-work-list-primary">{item.formName || 'Submission'}</span>
                                     <span className="my-work-list-secondary">
                                         {formatGovernanceState(item)} - Submitted {formatDate(item.submittedAt)}
                                     </span>
-                                </div>
+                                </button>
                             ))}
                         </div>
                     )}

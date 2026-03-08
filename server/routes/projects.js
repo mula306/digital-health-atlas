@@ -585,7 +585,7 @@ router.get('/', checkPermission(['can_view_projects', 'can_view_exec_dashboard']
 
         const [tasksResult, reportsResult, latestReportsResult, projectTagsResult, projectGoalsResult] = await Promise.all([
             // Fetch only necessary task fields active tasks filtering
-            tasksRequest.query(`SELECT projectId, id, title, status, endDate FROM Tasks WHERE projectId IN (${idInClause})`),
+            tasksRequest.query(`SELECT projectId, id, title, status, endDate, assigneeOid FROM Tasks WHERE projectId IN (${idInClause})`),
             reportsRequest.query(`SELECT projectId, COUNT(*) as count FROM StatusReports WHERE projectId IN (${idInClause}) GROUP BY projectId`),
             // Fetch latest report for each project efficiently
             latestReportsRequest.query(`
@@ -667,7 +667,8 @@ router.get('/', checkPermission(['can_view_projects', 'can_view_exec_dashboard']
                     id: t.id,
                     title: t.title,
                     status: t.status,
-                    endDate: t.endDate
+                    endDate: t.endDate,
+                    assigneeOid: t.assigneeOid || null
                 }));
             activeTasksMap.set(pid, activeTasks);
         });

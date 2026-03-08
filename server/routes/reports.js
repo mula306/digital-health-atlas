@@ -887,6 +887,11 @@ router.get('/scheduler/status', checkPermission(['can_view_reports', 'can_view_e
 // Trigger due scheduled runs immediately
 router.post('/scheduler/run-due', checkPermission(['can_create_reports', 'can_view_exec_dashboard']), async (req, res) => {
     try {
+        const user = getAuthUser(req);
+        if (!isAdmin(user)) {
+            return res.status(403).json({ error: 'Only Admin users can run due executive packs.' });
+        }
+
         const maxRuns = Number.parseInt(req.body?.maxRuns, 10);
         const result = await runDueExecutiveReportPacks({
             maxRuns: Number.isNaN(maxRuns) ? 10 : maxRuns

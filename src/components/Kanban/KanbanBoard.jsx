@@ -14,6 +14,9 @@ import { TaskDetailPanel } from './TaskDetailPanel';
 import { ProjectActivityFeed } from './ProjectActivityFeed';
 import './Kanban.css';
 
+const PROJECT_TASK_FOCUS_STORAGE_KEY = 'dha_project_focus_task_payload';
+const PROJECT_TASK_FOCUS_TTL_MS = 2 * 60 * 1000;
+
 const COLUMNS = [
     { id: 'todo', title: 'To Do', color: 'var(--text-secondary)' },
     { id: 'in-progress', title: 'In Progress', color: '#3b82f6' },
@@ -157,6 +160,45 @@ export function KanbanBoard({ project, onBack, goalTitle }) {
             setSelectedTask(updatedTask);
         }
     }, [project.tasks, selectedTask]);
+
+    useEffect(() => {
+        const rawPayload = localStorage.getItem(PROJECT_TASK_FOCUS_STORAGE_KEY);
+        if (!rawPayload) return;
+
+        let payload = null;
+        try {
+            payload = JSON.parse(rawPayload);
+        } catch {
+            localStorage.removeItem(PROJECT_TASK_FOCUS_STORAGE_KEY);
+            return;
+        }
+
+        const payloadProjectId = String(payload?.projectId || '').trim();
+        const payloadTaskId = String(payload?.taskId || '').trim();
+        const requestedAt = Number(payload?.requestedAt || 0);
+        const isFresh = requestedAt > 0 && (Date.now() - requestedAt) <= PROJECT_TASK_FOCUS_TTL_MS;
+
+        if (!isFresh) {
+            localStorage.removeItem(PROJECT_TASK_FOCUS_STORAGE_KEY);
+            return;
+        }
+
+        if (!payloadProjectId || payloadProjectId !== String(project.id)) {
+            return;
+        }
+
+        if (!payloadTaskId) {
+            localStorage.removeItem(PROJECT_TASK_FOCUS_STORAGE_KEY);
+            return;
+        }
+
+        const matchedTask = (project.tasks || []).find((task) => String(task.id) === payloadTaskId);
+        if (!matchedTask) return;
+
+        setViewMode('table');
+        setSelectedTask(matchedTask);
+        localStorage.removeItem(PROJECT_TASK_FOCUS_STORAGE_KEY);
+    }, [project.id, project.tasks]);
 
     return (
         <div className="kanban-board-container">

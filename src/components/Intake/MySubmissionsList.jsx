@@ -4,6 +4,9 @@ import { useData } from '../../context/DataContext';
 import { Modal } from '../UI/Modal';
 import './Intake.css';
 
+const INTAKE_FOCUS_STORAGE_KEY = 'dha_intake_focus_submission_payload';
+const INTAKE_FOCUS_TTL_MS = 2 * 60 * 1000;
+
 const STATUS_LABELS = {
     'pending': 'Pending Review',
     'awaiting-response': 'Action Required',
@@ -27,6 +30,45 @@ export function MySubmissionsList() {
             conversationEndRef.current.scrollIntoView({ behavior: 'smooth' });
         }
     }, [selectedSubmission?.conversation]);
+
+    useEffect(() => {
+        const rawPayload = localStorage.getItem(INTAKE_FOCUS_STORAGE_KEY);
+        if (!rawPayload) return;
+
+        let payload = null;
+        try {
+            payload = JSON.parse(rawPayload);
+        } catch {
+            localStorage.removeItem(INTAKE_FOCUS_STORAGE_KEY);
+            return;
+        }
+
+        const payloadStage = String(payload?.stage || '').trim().toLowerCase();
+        if (payloadStage && payloadStage !== 'my-requests') return;
+
+        const requestedAt = Number(payload?.requestedAt || 0);
+        const isFresh = requestedAt > 0 && (Date.now() - requestedAt) <= INTAKE_FOCUS_TTL_MS;
+        if (!isFresh) {
+            localStorage.removeItem(INTAKE_FOCUS_STORAGE_KEY);
+            return;
+        }
+
+        const submissionId = String(payload?.submissionId || '').trim();
+        if (!submissionId) {
+            localStorage.removeItem(INTAKE_FOCUS_STORAGE_KEY);
+            return;
+        }
+
+        const match = sortedSubmissions.find((submission) => String(submission.id) === submissionId);
+        if (!match) return;
+
+        localStorage.removeItem(INTAKE_FOCUS_STORAGE_KEY);
+        const timerId = window.setTimeout(() => {
+            setSelectedSubmission(match);
+        }, 0);
+
+        return () => window.clearTimeout(timerId);
+    }, [sortedSubmissions]);
 
     // Mark messages as read when viewing
     useEffect(() => {
