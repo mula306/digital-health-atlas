@@ -56,8 +56,8 @@
 }
 
 .unread-badge {
-    background: var(--accent-primary);
-    color: white;
+    background: var(--accent-solid);
+    color: var(--accent-on-solid);
     font-size: 0.7rem;
     padding: 2px 6px;
     border-radius: 10px;
@@ -1196,8 +1196,8 @@
 .intake-tab .badge {
     margin-left: 0.5rem;
     padding: 0.125rem 0.5rem;
-    background: var(--accent-primary);
-    color: white;
+    background: var(--accent-solid);
+    color: var(--accent-on-solid);
     border-radius: 9999px;
     font-size: 0.7rem;
 }
@@ -1339,8 +1339,8 @@
 }
 
 .conversation-message.admin .message-bubble {
-    background: var(--accent-primary);
-    color: white;
+    background: var(--accent-solid);
+    color: var(--accent-on-solid);
     border-bottom-left-radius: 4px;
 }
 
@@ -1412,8 +1412,8 @@
 
 /* Status badge for awaiting response */
 .status-badge.awaiting-response {
-    background: rgba(139, 92, 246, 0.1);
-    color: #8b5cf6;
+    background: color-mix(in srgb, var(--brand-blue) 14%, transparent);
+    color: var(--brand-blue);
 }
 
 /* Intake governance panels (shared with intake queue modal) */
@@ -1683,7 +1683,8 @@
 }
 
 .requester-conversation .conversation-message.admin .message-bubble {
-    background: #6366f1;
+    background: var(--accent-solid);
+    color: var(--accent-on-solid);
 }
 
 .requester-conversation .conversation-message.requester .message-bubble {

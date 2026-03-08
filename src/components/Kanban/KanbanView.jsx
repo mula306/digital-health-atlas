@@ -319,7 +319,10 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
         if (loading || isLoadingDetails) {
             return (
                 <div className="flex justify-center items-center h-full">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+                    <div
+                        className="animate-spin rounded-full h-8 w-8 border-b-2"
+                        style={{ borderBottomColor: 'var(--accent-primary)' }}
+                    ></div>
                     <span className="ml-2 text-gray-500">Restoring project...</span>
                 </div>
             );
@@ -330,7 +333,10 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
         if (isLoadingDetails) {
             return (
                 <div className="flex justify-center items-center h-64">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+                    <div
+                        className="animate-spin rounded-full h-8 w-8 border-b-2"
+                        style={{ borderBottomColor: 'var(--accent-primary)' }}
+                    ></div>
                     <span className="ml-2 text-gray-500">Loading project details...</span>
                 </div>
             );

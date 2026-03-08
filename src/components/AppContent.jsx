@@ -53,7 +53,7 @@ const NAVIGABLE_VIEWS = new Set([
 
 const LoadingSpinner = () => (
     <div className="flex h-full items-center justify-center">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2" style={{ borderBottomColor: 'var(--accent-primary)' }}></div>
     </div>
 );
 

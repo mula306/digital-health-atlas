@@ -4,16 +4,26 @@
 
   /* HSL Base Values */
   --hue-slate: 220;
-  /* Cool Gray/Slate */
-  --hue-indigo: 245;
-  /* Deep Indigo */
-  --hue-violet: 260;
-  /* Vibrant Violet */
+  /* Saskatchewan-aligned accent hues */
+  --hue-indigo: 145;
+  --hue-violet: 203;
+  --hue-primary: var(--hue-indigo);
+
+  /* Saskatchewan brand palette */
+  --brand-green: #046a38;
+  --brand-blue: #00558c;
+  --brand-sky: #41b6e6;
+  --brand-canola: #fbdd40;
+  --brand-neutral-900: #333333;
+  --brand-neutral-700: #666666;
+  --brand-neutral-300: #e1e3e6;
+  --brand-neutral-100: #f5f5f5;
 
   /* Light Mode Palette (Slate-based) */
   --bg-primary: hsl(var(--hue-slate), 20%, 97%);
   /* Almost white, very cool gray */
   --bg-secondary: hsl(var(--hue-slate), 30%, 92%);
+  --bg-tertiary: hsl(var(--hue-slate), 26%, 88%);
   /* Lighter gray for sidebar */
   --bg-card: #ffffff;
   /* pure white for cards gives best pop */
@@ -22,17 +32,26 @@
   /* High transparency */
   --bg-glass-heavy: rgba(255, 255, 255, 0.85);
 
-  --text-primary: hsl(var(--hue-slate), 40%, 15%);
-  --text-secondary: hsl(var(--hue-slate), 25%, 45%);
+  --text-primary: var(--brand-neutral-900);
+  --text-secondary: hsl(var(--hue-slate), 20%, 36%);
   --text-tertiary: hsl(var(--hue-slate), 20%, 65%);
   --text-inverse: #ffffff;
 
-  /* Accent Gradients & Colors */
-  --accent-primary: hsl(var(--hue-indigo), 85%, 60%);
-  --accent-hover: hsl(var(--hue-indigo), 85%, 50%);
-  --accent-gradient: linear-gradient(135deg, hsl(var(--hue-indigo), 85%, 60%), hsl(var(--hue-violet), 85%, 60%));
+  /* Accent Colors */
+  --accent-primary: var(--brand-green);
+  --accent-secondary: var(--brand-blue);
+  --accent-hover: #03542c;
+  --accent-solid: var(--accent-primary);
+  --accent-on-solid: #ffffff;
+  --accent-gradient: linear-gradient(135deg, var(--brand-green), var(--brand-blue));
+  --accent-soft: color-mix(in srgb, var(--accent-primary) 12%, transparent);
+  --accent-shadow: color-mix(in srgb, var(--accent-primary) 26%, transparent);
+  --accent-ring: color-mix(in srgb, var(--accent-primary) 34%, transparent);
+  --info-accent: var(--brand-sky);
+  --highlight-accent: var(--brand-canola);
 
   --border-color: hsla(var(--hue-slate), 25%, 80%, 0.4);
+  --border-primary: var(--border-color);
   --border-glass: rgba(255, 255, 255, 0.5);
 
   /* Shadows - Layered for depth */
@@ -50,20 +69,30 @@
   /* Dark Mode Palette (Slate-950 base) */
   --bg-primary: hsl(var(--hue-slate), 40%, 7%);
   --bg-secondary: hsl(var(--hue-slate), 35%, 11%);
+  --bg-tertiary: hsl(var(--hue-slate), 30%, 16%);
   --bg-card: hsl(var(--hue-slate), 30%, 14%);
 
   --bg-glass: hsla(var(--hue-slate), 30%, 14%, 0.6);
   --bg-glass-heavy: hsla(var(--hue-slate), 30%, 14%, 0.85);
 
   --text-primary: hsl(var(--hue-slate), 20%, 96%);
-  --text-secondary: hsl(var(--hue-slate), 15%, 70%);
-  --text-tertiary: hsl(var(--hue-slate), 15%, 50%);
+  --text-secondary: hsl(var(--hue-slate), 16%, 74%);
+  --text-tertiary: hsl(var(--hue-slate), 15%, 58%);
 
-  /* Accents pop more in dark mode */
-  --accent-primary: hsl(var(--hue-indigo), 85%, 65%);
-  --accent-hover: hsl(var(--hue-indigo), 85%, 75%);
+  /* Split accent tokens for contrast:
+     - --accent-primary: readable as text/border on dark surfaces
+     - --accent-solid: readable with inverse text on filled controls */
+  --accent-primary: #66c997;
+  --accent-secondary: #3b84ad;
+  --accent-hover: #7ed7ab;
+  --accent-solid: #2f7f59;
+  --accent-on-solid: #f4fff8;
+  --accent-gradient: linear-gradient(135deg, #2f7f59, #2a6483);
+  --accent-soft: color-mix(in srgb, var(--accent-primary) 10%, transparent);
+  --accent-shadow: color-mix(in srgb, var(--accent-primary) 22%, transparent);
+  --accent-ring: color-mix(in srgb, var(--accent-primary) 34%, transparent);
 
-  --border-color: hsla(var(--hue-slate), 20%, 80%, 0.08);
+  --border-color: hsla(var(--hue-slate), 20%, 80%, 0.12);
   --border-glass: hsla(255, 100%, 100%, 0.08);
 
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);

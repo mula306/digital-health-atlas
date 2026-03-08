@@ -209,3 +209,14 @@ button.my-work-list-item:hover {
         align-items: flex-start;
     }
 }
+
+@media (max-width: 576px) {
+    .my-work-metrics {
+        grid-template-columns: 1fr;
+    }
+
+    .my-work-header-actions {
+        width: 100%;
+        flex-wrap: wrap;
+    }
+}

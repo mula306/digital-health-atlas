@@ -281,7 +281,7 @@ export function AuditLogView() {
                         onClick={() => setAdvancedFiltersOpen(!advancedFiltersOpen)}
                     >
                         <Filter size={16} /> Filters
-                        {hasActiveFilters && !filters.search && <span className="filter-badge" style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--primary-color)', display: 'inline-block', marginLeft: '0.25rem' }}></span>}
+                                        {hasActiveFilters && !filters.search && <span className="filter-badge" style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--accent-primary)', display: 'inline-block', marginLeft: '0.25rem' }}></span>}
                     </button>
                 </div>
 

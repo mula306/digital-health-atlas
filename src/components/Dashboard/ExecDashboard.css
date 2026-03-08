@@ -31,7 +31,7 @@
 }
 
 .search-bar input {
-    width: 220px;
+    width: clamp(10rem, 18vw, 14rem);
     padding: 0.6rem 0.75rem 0.6rem 2.5rem;
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
@@ -46,7 +46,7 @@
     outline: none;
     border-color: var(--accent-primary);
     background: var(--bg-card);
-    width: 280px;
+    width: clamp(12rem, 24vw, 18rem);
 }
 
 .search-bar input::placeholder {
@@ -80,7 +80,7 @@
 
 .exec-tag-toggle.has-selection {
     border-color: var(--accent-primary);
-    background: hsla(var(--hue-indigo), 60%, 60%, 0.1);
+    background: color-mix(in srgb, var(--accent-primary) 10%, transparent);
 }
 
 .exec-tag-count {
@@ -90,8 +90,8 @@
     min-width: 18px;
     height: 18px;
     border-radius: 99px;
-    background: var(--accent-primary);
-    color: white;
+    background: var(--accent-solid);
+    color: var(--accent-on-solid);
     font-size: 0.65rem;
     font-weight: 700;
     margin-left: 0.25rem;
@@ -231,7 +231,7 @@
 }
 
 .exec-table tr:hover {
-    background-color: rgba(255, 255, 255, 0.03);
+    background-color: var(--bg-secondary);
 }
 
 .clickable-row {
@@ -304,4 +304,38 @@
 .table-container::-webkit-scrollbar-thumb {
     background: var(--border-color);
     border-radius: 4px;
+}
+
+@media (max-width: 768px) {
+    .exec-dashboard {
+        gap: 1rem;
+        padding: 0.5rem;
+    }
+
+    .search-bar {
+        width: 100%;
+    }
+
+    .search-bar input,
+    .search-bar input:focus {
+        width: 100%;
+    }
+
+    .exec-filter-row {
+        align-items: stretch;
+    }
+
+    .exec-tag-group {
+        flex-direction: column;
+        gap: 0.4rem;
+    }
+
+    .exec-tag-group-label {
+        min-width: 0;
+        padding-top: 0;
+    }
+
+    .exec-clear-btn {
+        margin-left: 0;
+    }
 }

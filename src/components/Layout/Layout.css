@@ -47,17 +47,32 @@
 }
 
 .logo-icon {
-    width: 36px;
+    width: auto;
+    min-width: 36px;
     height: 36px;
+    padding: 0 0.62rem;
     display: flex;
     align-items: center;
     justify-content: center;
     border-radius: 10px;
     background: var(--accent-gradient);
     color: white;
-    font-size: 0.9rem;
+    font-size: 0.82rem;
     font-weight: 800;
-    box-shadow: 0 4px 10px hsla(var(--hue-indigo), 50%, 50%, 0.3);
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+    box-shadow: 0 4px 10px var(--accent-shadow);
+}
+
+.logo-icon.compact {
+    width: 36px;
+    min-width: 36px;
+    padding: 0;
+    font-size: 0.76rem;
+}
+
+.logo-icon.expanded {
+    min-width: 106px;
 }
 
 .toggle-sidebar-btn {
@@ -127,16 +142,16 @@
     position: relative;
     /* Premium subtle gradient background */
     background-image:
-        radial-gradient(at 0% 0%, hsla(var(--hue-indigo), 40%, 90%, 0.5) 0px, transparent 50%),
-        radial-gradient(at 100% 0%, hsla(var(--hue-violet), 40%, 90%, 0.5) 0px, transparent 50%),
+        radial-gradient(at 0% 0%, hsla(var(--hue-indigo), 34%, 90%, 0.34) 0px, transparent 50%),
+        radial-gradient(at 100% 0%, hsla(var(--hue-violet), 32%, 88%, 0.28) 0px, transparent 50%),
         radial-gradient(at 100% 100%, hsla(var(--hue-slate), 40%, 90%, 0.5) 0px, transparent 50%);
     background-size: 100% 100%;
 }
 
 [data-theme='dark'] .main-content {
     background-image:
-        radial-gradient(at 0% 0%, hsla(var(--hue-indigo), 40%, 10%, 0.3) 0px, transparent 50%),
-        radial-gradient(at 100% 0%, hsla(var(--hue-violet), 40%, 10%, 0.3) 0px, transparent 50%);
+        radial-gradient(at 0% 0%, hsla(var(--hue-indigo), 45%, 20%, 0.18) 0px, transparent 50%),
+        radial-gradient(at 100% 0%, hsla(var(--hue-violet), 42%, 20%, 0.16) 0px, transparent 50%);
 }
 
 .top-header {
@@ -207,7 +222,7 @@
 
 .command-launch-btn:hover {
     color: var(--text-primary);
-    border-color: hsla(var(--hue-indigo), 70%, 70%, 0.45);
+    border-color: color-mix(in srgb, var(--accent-primary) 45%, var(--border-color));
     transform: translateY(-1px);
 }
 
@@ -267,8 +282,8 @@
     width: 32px;
     height: 32px;
     border-radius: 50%;
-    background: var(--accent-primary);
-    color: white;
+    background: var(--accent-solid);
+    color: var(--accent-on-solid);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -291,7 +306,7 @@
 }
 
 .search-input {
-    width: 220px;
+    width: clamp(10rem, 18vw, 14rem);
     padding: 0.6rem 0.75rem 0.6rem 2.5rem;
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
@@ -305,7 +320,7 @@
     outline: none;
     border-color: var(--accent-primary);
     background: var(--bg-card);
-    width: 280px;
+    width: clamp(12rem, 24vw, 18rem);
 }
 
 .search-input::placeholder {
@@ -439,8 +454,8 @@
 
 .command-item:hover,
 .command-item.active {
-    background: hsla(var(--hue-indigo), 55%, 58%, 0.1);
-    border-color: hsla(var(--hue-indigo), 55%, 58%, 0.26);
+    background: color-mix(in srgb, var(--accent-primary) 11%, transparent);
+    border-color: color-mix(in srgb, var(--accent-primary) 26%, transparent);
 }
 
 .command-item-icon {
@@ -591,6 +606,15 @@
         padding: 1rem 1.1rem 1.5rem;
     }
 
+    .search-form {
+        width: min(100%, 13.5rem);
+    }
+
+    .search-input,
+    .search-input:focus {
+        width: 100%;
+    }
+
     .header-actions {
         flex: 0 0 auto;
         justify-content: flex-end;
@@ -698,4 +722,11 @@
 
 .sidebar.closed .toggle-sidebar-btn {
     display: block;
+}
+
+.sidebar.closed .logo-icon {
+    width: 36px;
+    min-width: 36px;
+    padding: 0;
+    font-size: 0.76rem;
 }

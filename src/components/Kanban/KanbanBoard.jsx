@@ -24,7 +24,7 @@ const COLUMNS = [
     { id: 'todo', title: 'To Do', color: 'var(--text-secondary)' },
     { id: 'in-progress', title: 'In Progress', color: '#3b82f6' },
     { id: 'blocked', title: 'Blocked', color: '#ef4444' },
-    { id: 'review', title: 'Review', color: '#8b5cf6' },
+    { id: 'review', title: 'Review', color: '#00558c' },
     { id: 'done', title: 'Done', color: '#10b981' }
 ];
 

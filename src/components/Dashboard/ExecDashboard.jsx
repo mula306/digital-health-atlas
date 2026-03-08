@@ -773,7 +773,10 @@ export function ExecDashboard({ onViewChange }) {
                     <div style={{ maxHeight: '80vh', overflowY: 'auto' }}>
                         {loadingReport ? (
                             <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
-                                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600" style={{ margin: '0 auto 1rem' }}></div>
+                                <div
+                                    className="animate-spin rounded-full h-8 w-8 border-b-2"
+                                    style={{ margin: '0 auto 1rem', borderBottomColor: 'var(--accent-primary)' }}
+                                ></div>
                                 Loading full report...
                             </div>
                         ) : fullReport ? (

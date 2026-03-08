@@ -11,13 +11,13 @@
     align-items: center;
     gap: 0.5rem;
     transition: all 0.2s ease;
-    box-shadow: 0 4px 12px hsla(var(--hue-indigo), 60%, 50%, 0.25);
+    box-shadow: 0 4px 12px var(--accent-shadow);
 }
 
 .btn-primary:hover {
     transform: translateY(-1px);
-    box-shadow: 0 6px 16px hsla(var(--hue-indigo), 60%, 50%, 0.35);
-    filter: brightness(110%);
+    box-shadow: 0 6px 16px color-mix(in srgb, var(--accent-primary) 32%, transparent);
+    filter: brightness(103%);
 }
 
 .btn-secondary {

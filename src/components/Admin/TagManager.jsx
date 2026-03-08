@@ -8,15 +8,16 @@ import {
 import { Modal } from '../UI/Modal'; // Import Modal
 import './TagManager.css';
 
-// Predefined accessible, brand-aligned color palette
+// Predefined accessible, Saskatchewan-aligned color palette
 const TAG_COLORS = [
-    '#6366f1', // Indigo
+    '#046a38', // Saskatchewan Football Green
+    '#00558c', // Saskatchewan Midnight Sky
+    '#41b6e6', // Saskatchewan Living Skies
+    '#fbdd40', // Saskatchewan Canola
     '#10b981', // Emerald
     '#f59e0b', // Amber
     '#ef4444', // Rose
     '#06b6d4', // Cyan
-    '#8b5cf6', // Violet
-    '#ec4899', // Pink
     '#64748b'  // Slate
 ];
 
@@ -64,7 +65,7 @@ export function TagManager() {
     // Group form state
     const [groupForm, setGroupForm] = useState({ name: '', slug: '', requirePrimary: false });
     // Tag form state
-    const [tagForm, setTagForm] = useState({ name: '', slug: '', status: 'active', color: '#6366f1', aliases: '' });
+    const [tagForm, setTagForm] = useState({ name: '', slug: '', status: 'active', color: '#046a38', aliases: '' });
 
     const toggleGroup = (groupId) => {
         setExpandedGroups(prev => ({ ...prev, [groupId]: !prev[groupId] }));
@@ -130,7 +131,7 @@ export function TagManager() {
 
     const startAddTag = (groupId) => {
         setEditingTag(`new-${groupId}`);
-        setTagForm({ name: '', slug: '', status: 'active', color: '#6366f1', aliases: '' });
+        setTagForm({ name: '', slug: '', status: 'active', color: '#046a38', aliases: '' });
         // Expand the group
         setExpandedGroups(prev => ({ ...prev, [groupId]: true }));
     };
@@ -148,7 +149,7 @@ export function TagManager() {
 
     const cancelTagEdit = () => {
         setEditingTag(null);
-        setTagForm({ name: '', slug: '', status: 'active', color: '#6366f1', aliases: '' });
+        setTagForm({ name: '', slug: '', status: 'active', color: '#046a38', aliases: '' });
     };
 
     const saveTag = async () => {

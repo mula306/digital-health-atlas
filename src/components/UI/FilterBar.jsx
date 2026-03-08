@@ -163,9 +163,9 @@ export function FilterBar({
                                                 key={tag.id}
                                                 className={`exec-tag-pill ${selectedTags.includes(String(tag.id)) ? 'selected' : ''}`}
                                                 onClick={() => toggleTag(String(tag.id))}
-                                                style={{ '--tag-color': tag.color || '#6366f1' }}
+                                                style={{ '--tag-color': tag.color || 'var(--accent-primary)' }}
                                             >
-                                                <span className="exec-tag-dot" style={{ background: tag.color || '#6366f1' }}></span>
+                                                <span className="exec-tag-dot" style={{ background: tag.color || 'var(--accent-primary)' }}></span>
                                                 {tag.name}
                                             </button>
                                         ))}
@@ -187,9 +187,9 @@ export function FilterBar({
                                         key={status.id}
                                         className={`exec-tag-pill ${selectedStatuses.includes(String(status.id).toLowerCase()) ? 'selected' : ''}`}
                                         onClick={() => toggleStatus(status.id)}
-                                        style={{ '--tag-color': status.color || '#6366f1' }}
+                                        style={{ '--tag-color': status.color || 'var(--accent-primary)' }}
                                     >
-                                        <span className="exec-tag-dot" style={{ background: status.color || '#6366f1' }}></span>
+                                        <span className="exec-tag-dot" style={{ background: status.color || 'var(--accent-primary)' }}></span>
                                         {status.label}
                                     </button>
                                 ))}
@@ -243,9 +243,9 @@ export function FilterBar({
                                                 key={option.id}
                                                 className={`exec-tag-pill ${isSelected ? 'selected' : ''}`}
                                                 onClick={() => toggleExtraOption(group, option.id)}
-                                                style={{ '--tag-color': option.color || '#6366f1' }}
+                                                style={{ '--tag-color': option.color || 'var(--accent-primary)' }}
                                             >
-                                                <span className="exec-tag-dot" style={{ background: option.color || '#6366f1' }}></span>
+                                                <span className="exec-tag-dot" style={{ background: option.color || 'var(--accent-primary)' }}></span>
                                                 {option.label}
                                             </button>
                                         );

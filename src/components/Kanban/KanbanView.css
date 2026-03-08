@@ -47,7 +47,7 @@
 }
 
 .kanban-view .search-bar input {
-    width: 240px;
+    width: clamp(11rem, 20vw, 15rem);
     padding: 0.6rem 0.75rem 0.6rem 2.5rem;
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
@@ -61,7 +61,7 @@
     outline: none;
     border-color: var(--accent-primary);
     background: var(--bg-card);
-    width: 300px;
+    width: clamp(12rem, 24vw, 18rem);
 }
 
 .kanban-view .search-bar input::placeholder {
@@ -314,7 +314,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background: hsla(var(--hue-indigo), 70%, 60%, 0.1);
+    background: color-mix(in srgb, var(--accent-primary) 12%, transparent);
     color: var(--accent-primary);
     border-radius: var(--radius-md);
 }
@@ -496,6 +496,99 @@
 
     .projects-grid {
         grid-template-columns: 1fr;
+    }
+
+    .projects-table-wrap {
+        overflow: visible;
+        border: none;
+        box-shadow: none;
+        background: transparent;
+    }
+
+    .projects-table {
+        min-width: 0;
+        display: block;
+    }
+
+    .projects-table thead {
+        display: none;
+    }
+
+    .projects-table tbody {
+        display: grid;
+        gap: 0.75rem;
+    }
+
+    .projects-table tbody tr {
+        display: block;
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-md);
+        background: var(--bg-card);
+        padding: 0.75rem;
+    }
+
+    .projects-table tbody td {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 0.7rem;
+        border: none;
+        padding: 0.3rem 0;
+    }
+
+    .projects-table tbody td::before {
+        font-size: 0.66rem;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: var(--text-tertiary);
+        flex-shrink: 0;
+    }
+
+    .projects-table tbody td:nth-child(1)::before {
+        content: 'Project';
+    }
+
+    .projects-table tbody td:nth-child(2)::before {
+        content: 'Goals';
+    }
+
+    .projects-table tbody td:nth-child(3)::before {
+        content: 'Status';
+    }
+
+    .projects-table tbody td:nth-child(4)::before {
+        content: 'Tasks';
+    }
+
+    .projects-table tbody td:nth-child(5)::before {
+        content: 'Progress';
+    }
+
+    .projects-table tbody td:nth-child(6)::before {
+        content: 'Tags';
+    }
+
+    .project-cell-primary {
+        width: 100%;
+        min-width: 0;
+    }
+
+    .project-cell-desc {
+        max-width: none;
+        white-space: normal;
+        overflow: visible;
+        text-overflow: initial;
+    }
+
+    .project-goals-cell {
+        justify-content: flex-end;
+        max-width: none;
+    }
+
+    .project-table-progress {
+        min-width: 0;
+        width: min(100%, 180px);
     }
 }
 /* Pagination Controls */

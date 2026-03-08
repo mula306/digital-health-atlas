@@ -6,7 +6,7 @@ const STATUS_COLORS = {
     'todo': '#6b7280',
     'in-progress': '#3b82f6',
     'blocked': '#ef4444',
-    'review': '#8b5cf6',
+    'review': '#00558c',
     'done': '#059669'
 };
 

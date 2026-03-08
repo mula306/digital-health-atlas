@@ -508,8 +508,12 @@ export function Layout({ children, currentView, onViewChange }) {
             <aside className={`sidebar ${isSidebarOpen ? 'open' : 'closed'}`}>
                 <div className="sidebar-header">
                     <div className="logo">
-                        <div className="logo-icon">DHA</div>
-                        {/* Text removed as requested, keeping only logo icon */}
+                        <div
+                            className={`logo-icon ${isSidebarOpen ? 'expanded' : 'compact'}`}
+                            aria-label={isSidebarOpen ? 'DH Atlas' : 'DHA'}
+                        >
+                            {isSidebarOpen ? 'DH Atlas' : 'DHA'}
+                        </div>
                     </div>
                     <button
                         className="toggle-sidebar-btn"

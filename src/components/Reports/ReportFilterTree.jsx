@@ -320,7 +320,7 @@ export function ReportFilterTree({ onSelectionChange, allProjects = [] }) {
                     >
                         <Filter size={16} /> Filters
                         {(selectedTags.length > 0 || selectedStatuses.length > 0) && (
-                            <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--primary-color)', display: 'inline-block', marginLeft: '0.25rem' }} />
+                            <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--accent-primary)', display: 'inline-block', marginLeft: '0.25rem' }} />
                         )}
                     </button>
                     <button
@@ -364,9 +364,9 @@ export function ReportFilterTree({ onSelectionChange, allProjects = [] }) {
                                                 key={tag.id}
                                                 className={`exec-tag-pill ${selectedTags.includes(String(tag.id)) ? 'selected' : ''}`}
                                                 onClick={() => toggleTag(String(tag.id))}
-                                                style={{ '--tag-color': tag.color || '#6366f1', padding: '2px 8px', fontSize: '0.75rem' }}
+                                                style={{ '--tag-color': tag.color || 'var(--accent-primary)', padding: '2px 8px', fontSize: '0.75rem' }}
                                             >
-                                                <span className="exec-tag-dot" style={{ background: tag.color || '#6366f1' }}></span>
+                                                <span className="exec-tag-dot" style={{ background: tag.color || 'var(--accent-primary)' }}></span>
                                                 {tag.name}
                                             </button>
                                         ))}
@@ -388,9 +388,9 @@ export function ReportFilterTree({ onSelectionChange, allProjects = [] }) {
                                         key={status.id}
                                         className={`exec-tag-pill ${selectedStatuses.includes(String(status.id).toLowerCase()) ? 'selected' : ''}`}
                                         onClick={() => toggleStatus(status.id)}
-                                        style={{ '--tag-color': status.color || '#6366f1', padding: '2px 8px', fontSize: '0.75rem' }}
+                                        style={{ '--tag-color': status.color || 'var(--accent-primary)', padding: '2px 8px', fontSize: '0.75rem' }}
                                     >
-                                        <span className="exec-tag-dot" style={{ background: status.color || '#6366f1' }}></span>
+                                        <span className="exec-tag-dot" style={{ background: status.color || 'var(--accent-primary)' }}></span>
                                         {status.label}
                                     </button>
                                 ))}
