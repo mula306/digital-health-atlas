@@ -31,6 +31,7 @@ export function FilterBar({
     statusOptions = [],
     watchedOnly = false,
     onWatchedOnlyChange = null,
+    extraOptionGroups = [],
     countLabel,
     children
 }) {
@@ -65,28 +66,54 @@ export function FilterBar({
         onStatusesChange(next);
     };
 
+    const toggleExtraOption = (group, optionId) => {
+        if (!group || typeof group.onChange !== 'function') return;
+        const normalized = String(optionId).toLowerCase();
+        const selected = Array.isArray(group.selectedValues)
+            ? group.selectedValues.map((value) => String(value).toLowerCase())
+            : [];
+        const next = selected.includes(normalized)
+            ? selected.filter((value) => value !== normalized)
+            : [...selected, normalized];
+        group.onChange(next);
+    };
+
+    const visibleExtraOptionGroups = Array.isArray(extraOptionGroups)
+        ? extraOptionGroups.filter((group) => Array.isArray(group?.options) && group.options.length > 0)
+        : [];
+
     const clearAll = () => {
         onGoalFilterChange('');
         if (onTagsChange) onTagsChange([]);
         if (onStatusesChange) onStatusesChange([]);
         if (onWatchedOnlyChange) onWatchedOnlyChange(false);
+        if (Array.isArray(extraOptionGroups)) {
+            extraOptionGroups.forEach((group) => {
+                if (typeof group?.onChange === 'function') {
+                    group.onChange([]);
+                }
+            });
+        }
     };
 
-    const hasAnyFilter = goalFilter || selectedTags.length > 0 || selectedStatuses.length > 0 || watchedOnly;
+    const extraSelectionCount = Array.isArray(extraOptionGroups)
+        ? extraOptionGroups.reduce((total, group) => total + (Array.isArray(group?.selectedValues) ? group.selectedValues.length : 0), 0)
+        : 0;
+    const hasAnyFilter = goalFilter || selectedTags.length > 0 || selectedStatuses.length > 0 || watchedOnly || extraSelectionCount > 0;
 
     return (
         <div className="shared-filter-bar glass">
             <div className="shared-filter-row">
                 <CascadingGoalFilter value={goalFilter} onChange={onGoalFilterChange} />
 
-                {(activeTags.length > 0 || (statusOptions && statusOptions.length > 0)) && (
+                {(activeTags.length > 0 || (statusOptions && statusOptions.length > 0) || visibleExtraOptionGroups.length > 0) && (
                     <button
                         className={`btn-secondary btn-sm shared-tag-toggle ${showAdvancedFilters ? 'active' : ''}`}
                         onClick={() => setShowAdvancedFilters(!showAdvancedFilters)}
                         title="Advanced Filters"
                     >
                         <Filter size={14} /> Filters
-                        {(selectedTags.length > 0 || selectedStatuses.length > 0) && (
+                        {(selectedTags.length > 0 || selectedStatuses.length > 0 || extraSelectionCount > 0) && (
                             <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--accent-primary)', display: 'inline-block', marginLeft: '0.25rem' }} />
                         )}
                     </button>
@@ -169,6 +196,64 @@ export function FilterBar({
                             </div>
                         </div>
                     )}
+
+                    {visibleExtraOptionGroups.map((group, groupIndex) => {
+                        const options = group.options;
+                        const selected = Array.isArray(group?.selectedValues)
+                            ? group.selectedValues.map((value) => String(value).toLowerCase())
+                            : [];
+                        const GroupIcon = group?.icon || Activity;
+                        const sectionStyle = {
+                            borderTop: 'none',
+                            paddingTop: 0,
+                            borderBottom: 'none',
+                            marginBottom: 0
+                        };
+                        const hasPriorSection = activeTags.length > 0 || statusOptions.length > 0;
+                        if (groupIndex === 0 && hasPriorSection) {
+                            sectionStyle.paddingTop = '1rem';
+                            sectionStyle.borderTop = '1px solid var(--border-color)';
+                            sectionStyle.marginTop = '1rem';
+                        }
+                        if (groupIndex < visibleExtraOptionGroups.length - 1) {
+                            sectionStyle.paddingBottom = '1rem';
+                            sectionStyle.borderBottom = '1px solid var(--border-color)';
+                            sectionStyle.marginBottom = '1rem';
+                        }
+
+                        return (
+                            <div key={group?.key || group?.label || `extra-group-${groupIndex}`} className="shared-tag-panel" style={sectionStyle}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+                                    <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                                        <GroupIcon size={12} style={{ marginRight: 4, display: 'inline-flex', verticalAlign: 'middle', marginBottom: '2px' }} />
+                                        {group?.label || 'Filter'}
+                                    </span>
+                                    {selected.length > 0 && (
+                                        <button className="shared-clear-link" onClick={() => group.onChange && group.onChange([])}>
+                                            {group?.clearLabel || `Clear ${group?.label || 'Filter'}`}
+                                        </button>
+                                    )}
+                                </div>
+                                <div className="exec-tag-options">
+                                    {options.map((option) => {
+                                        const optionId = String(option.id).toLowerCase();
+                                        const isSelected = selected.includes(optionId);
+                                        return (
+                                            <button
+                                                key={option.id}
+                                                className={`exec-tag-pill ${isSelected ? 'selected' : ''}`}
+                                                onClick={() => toggleExtraOption(group, option.id)}
+                                                style={{ '--tag-color': option.color || '#6366f1' }}
+                                            >
+                                                <span className="exec-tag-dot" style={{ background: option.color || '#6366f1' }}></span>
+                                                {option.label}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        );
+                    })}
                 </div>
             )}
         </div>

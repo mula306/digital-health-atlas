@@ -1,9 +1,10 @@
 import express from 'express';
 import { getPool, sql } from '../db.js';
-import { checkPermission, checkRole, getAuthUser, hasPermission, invalidatePermissionCache, requireAuth } from '../middleware/authMiddleware.js';
+import { checkPermission, getAuthUser, hasPermission, invalidatePermissionCache, requireAuth } from '../middleware/authMiddleware.js';
 import { handleError } from '../utils/errorHandler.js';
 import { logAudit } from '../utils/auditLogger.js';
 import { invalidateTagCache, invalidateProjectCache } from '../utils/cache.js';
+import { getRbacCatalogResponse, isKnownPermission, isKnownRole } from '../utils/rbacCatalog.js';
 
 const router = express.Router();
 
@@ -200,10 +201,20 @@ router.get('/permissions', requireAuth, async (req, res) => {
     }
 });
 
+router.get('/permission-catalog', requireAuth, async (_req, res) => {
+    res.json(getRbacCatalogResponse());
+});
+
 // Update a single permission
-router.post('/permissions', checkRole('Admin'), async (req, res) => {
+router.post('/permissions', checkPermission('can_manage_role_permissions'), async (req, res) => {
     try {
         const { role, permission, isAllowed } = req.body;
+        if (!isKnownRole(role)) {
+            return res.status(400).json({ error: `Unknown role '${role}'` });
+        }
+        if (!isKnownPermission(permission)) {
+            return res.status(400).json({ error: `Unknown permission '${permission}'` });
+        }
         const pool = await getPool();
 
         await pool.request()
@@ -230,11 +241,19 @@ router.post('/permissions', checkRole('Admin'), async (req, res) => {
 });
 
 // Bulk update permissions
-router.post('/permissions/bulk', checkRole('Admin'), async (req, res) => {
+router.post('/permissions/bulk', checkPermission('can_manage_role_permissions'), async (req, res) => {
     try {
         const { updates } = req.body; // Array of { role, permission, isAllowed }
         if (!Array.isArray(updates)) {
             return res.status(400).json({ error: 'updates must be an array' });
+        }
+        for (const update of updates) {
+            if (!isKnownRole(update?.role)) {
+                return res.status(400).json({ error: `Unknown role '${update?.role}'` });
+            }
+            if (!isKnownPermission(update?.permission)) {
+                return res.status(400).json({ error: `Unknown permission '${update?.permission}'` });
+            }
         }
 
         const pool = await getPool();
@@ -275,7 +294,7 @@ router.post('/permissions/bulk', checkRole('Admin'), async (req, res) => {
 // ==================== AUDIT LOG (ADMIN) ====================
 
 // Get audit log entries with filtering and pagination (Admin only)
-router.get('/audit-log', checkRole('Admin'), async (req, res) => {
+router.get('/audit-log', checkPermission('can_view_audit_log'), async (req, res) => {
     try {
         const pool = await getPool();
         const page = parseInt(req.query.page) || 1;
@@ -375,7 +394,7 @@ router.get('/audit-log', checkRole('Admin'), async (req, res) => {
 });
 
 // Get audit log summary statistics (Admin only)
-router.get('/audit-log/stats', checkRole('Admin'), async (req, res) => {
+router.get('/audit-log/stats', checkPermission('can_view_audit_log'), async (req, res) => {
     try {
         const pool = await getPool();
 
@@ -424,7 +443,7 @@ router.get('/audit-log/stats', checkRole('Admin'), async (req, res) => {
 // ==================== ALL USERS (for member assignment) ====================
 
 // Returns all users with org info for admin member assignment panel
-router.get('/all-users', checkRole('Admin'), async (req, res) => {
+router.get('/all-users', checkPermission(['can_manage_organizations', 'can_manage_governance']), async (req, res) => {
     try {
         const pool = await getPool();
         const result = await pool.request().query(`
@@ -451,7 +470,7 @@ router.get('/all-users', checkRole('Admin'), async (req, res) => {
 // ==================== ORGANIZATIONS ====================
 
 // List all organizations
-router.get('/organizations', checkRole('Admin'), async (req, res) => {
+router.get('/organizations', checkPermission(['can_manage_organizations', 'can_manage_sharing_requests']), async (req, res) => {
     try {
         const pool = await getPool();
         const result = await pool.request().query(`
@@ -474,7 +493,7 @@ router.get('/organizations', checkRole('Admin'), async (req, res) => {
 });
 
 // Create organization
-router.post('/organizations', checkRole('Admin'), async (req, res) => {
+router.post('/organizations', checkPermission('can_manage_organizations'), async (req, res) => {
     try {
         const { name, slug, isActive } = req.body;
         if (!name || !slug) return res.status(400).json({ error: 'name and slug are required' });
@@ -496,7 +515,7 @@ router.post('/organizations', checkRole('Admin'), async (req, res) => {
 });
 
 // Update organization
-router.put('/organizations/:id', checkRole('Admin'), async (req, res) => {
+router.put('/organizations/:id', checkPermission('can_manage_organizations'), async (req, res) => {
     try {
         const { name, slug, isActive } = req.body;
         const id = parseInt(req.params.id);
@@ -519,7 +538,7 @@ router.put('/organizations/:id', checkRole('Admin'), async (req, res) => {
 });
 
 // Assign user to organization
-router.put('/users/:oid/organization', checkRole('Admin'), async (req, res) => {
+router.put('/users/:oid/organization', checkPermission('can_manage_organizations'), async (req, res) => {
     try {
         const { orgId } = req.body;
         const oid = req.params.oid;
@@ -540,7 +559,7 @@ router.put('/users/:oid/organization', checkRole('Admin'), async (req, res) => {
 // ==================== PROJECT SHARING ====================
 
 // Get organizations a project is shared with
-router.get('/projects/:projectId/sharing', checkRole('Admin'), async (req, res) => {
+router.get('/projects/:projectId/sharing', checkPermission('can_manage_sharing_requests'), async (req, res) => {
     try {
         const projectId = parseInt(req.params.projectId);
         const pool = await getPool();
@@ -568,7 +587,7 @@ router.get('/projects/:projectId/sharing', checkRole('Admin'), async (req, res) 
 });
 
 // Share project with organization
-router.post('/projects/:projectId/sharing', checkRole('Admin'), async (req, res) => {
+router.post('/projects/:projectId/sharing', checkPermission('can_manage_sharing_requests'), async (req, res) => {
     try {
         const projectId = parseInt(req.params.projectId);
         const { orgId, accessLevel, expiresAt } = req.body;
@@ -604,7 +623,7 @@ router.post('/projects/:projectId/sharing', checkRole('Admin'), async (req, res)
 });
 
 // Remove project sharing
-router.delete('/projects/:projectId/sharing/:orgId', checkRole('Admin'), async (req, res) => {
+router.delete('/projects/:projectId/sharing/:orgId', checkPermission('can_manage_sharing_requests'), async (req, res) => {
     try {
         const projectId = parseInt(req.params.projectId);
         const orgId = parseInt(req.params.orgId);
@@ -625,7 +644,7 @@ router.delete('/projects/:projectId/sharing/:orgId', checkRole('Admin'), async (
 // ==================== SHARING PICKER DATA (ALL ITEMS, LIGHTWEIGHT) ====================
 
 // Returns all projects and goals for the sharing panel (admin only, no pagination)
-router.get('/sharing-picker-data', checkRole('Admin'), async (req, res) => {
+router.get('/sharing-picker-data', checkPermission('can_manage_sharing_requests'), async (req, res) => {
     try {
         const pool = await getPool();
 
@@ -673,7 +692,7 @@ router.get('/sharing-picker-data', checkRole('Admin'), async (req, res) => {
 // ==================== ORG SHARING SUMMARY ====================
 
 // Get everything shared with a specific org (projects + goals)
-router.get('/organizations/:orgId/sharing-summary', checkRole('Admin'), async (req, res) => {
+router.get('/organizations/:orgId/sharing-summary', checkPermission('can_manage_sharing_requests'), async (req, res) => {
     try {
         const orgId = parseInt(req.params.orgId);
         const pool = await getPool();
@@ -784,7 +803,7 @@ router.get('/sharing-requests', requireAuth, async (req, res) => {
         const status = typeof req.query.status === 'string' ? req.query.status.trim().toLowerCase() : '';
         const entityType = typeof req.query.entityType === 'string' ? req.query.entityType.trim().toLowerCase() : '';
         const targetOrgId = Number.parseInt(req.query.targetOrgId, 10);
-        const isAdmin = Array.isArray(user.roles) && user.roles.includes('Admin');
+        const canManageSharingRequests = await hasPermission(user, 'can_manage_sharing_requests');
 
         const request = pool.request();
         const filters = [];
@@ -806,7 +825,7 @@ router.get('/sharing-requests', requireAuth, async (req, res) => {
             filters.push('sr.targetOrgId = @targetOrgId');
             request.input('targetOrgId', sql.Int, targetOrgId);
         }
-        if (!isAdmin) {
+        if (!canManageSharingRequests) {
             filters.push('sr.requestedByOid = @requestedByOid');
             request.input('requestedByOid', sql.NVarChar(100), user.oid || '');
         }
@@ -960,7 +979,7 @@ router.post('/sharing-requests', requireAuth, async (req, res) => {
     }
 });
 
-router.post('/sharing-requests/:id/approve', checkRole('Admin'), async (req, res) => {
+router.post('/sharing-requests/:id/approve', checkPermission('can_manage_sharing_requests'), async (req, res) => {
     try {
         const requestId = Number.parseInt(req.params.id, 10);
         if (Number.isNaN(requestId)) return res.status(400).json({ error: 'Invalid request id' });
@@ -1065,7 +1084,7 @@ router.post('/sharing-requests/:id/approve', checkRole('Admin'), async (req, res
     }
 });
 
-router.post('/sharing-requests/:id/reject', checkRole('Admin'), async (req, res) => {
+router.post('/sharing-requests/:id/reject', checkPermission('can_manage_sharing_requests'), async (req, res) => {
     try {
         const requestId = Number.parseInt(req.params.id, 10);
         if (Number.isNaN(requestId)) return res.status(400).json({ error: 'Invalid request id' });
@@ -1119,7 +1138,7 @@ router.post('/sharing-requests/:id/revoke', requireAuth, async (req, res) => {
 
         const actor = getAuthUser(req);
         if (!actor) return res.status(401).json({ error: 'Unauthorized' });
-        const isAdmin = Array.isArray(actor.roles) && actor.roles.includes('Admin');
+        const canManageSharingRequests = await hasPermission(actor, 'can_manage_sharing_requests');
 
         const pool = await getPool();
         const requestResult = await pool.request()
@@ -1128,7 +1147,7 @@ router.post('/sharing-requests/:id/revoke', requireAuth, async (req, res) => {
         if (requestResult.recordset.length === 0) return res.status(404).json({ error: 'Sharing request not found' });
         const sharingRequest = requestResult.recordset[0];
 
-        if (!isAdmin && sharingRequest.requestedByOid !== actor.oid) {
+        if (!canManageSharingRequests && sharingRequest.requestedByOid !== actor.oid) {
             return res.status(403).json({ error: 'Forbidden' });
         }
         if (!['pending', 'approved'].includes(sharingRequest.status)) {
@@ -1193,7 +1212,7 @@ router.post('/sharing-requests/:id/revoke', requireAuth, async (req, res) => {
 // ==================== BULK PROJECT SHARING ====================
 
 // Bulk share projects with an org
-router.post('/projects/bulk-share', checkRole('Admin'), async (req, res) => {
+router.post('/projects/bulk-share', checkPermission('can_manage_sharing_requests'), async (req, res) => {
     try {
         const { projectIds, orgId, accessLevel, expiresAt } = req.body;
         if (!Array.isArray(projectIds) || !orgId) {
@@ -1240,7 +1259,7 @@ router.post('/projects/bulk-share', checkRole('Admin'), async (req, res) => {
 });
 
 // Bulk unshare projects from an org
-router.post('/projects/bulk-unshare', checkRole('Admin'), async (req, res) => {
+router.post('/projects/bulk-unshare', checkPermission('can_manage_sharing_requests'), async (req, res) => {
     try {
         const { projectIds, orgId } = req.body;
         if (!Array.isArray(projectIds) || !orgId) {
@@ -1274,7 +1293,7 @@ router.post('/projects/bulk-unshare', checkRole('Admin'), async (req, res) => {
 // ==================== GOAL SHARING ====================
 
 // Get organizations a goal is shared with
-router.get('/goals/:goalId/sharing', checkRole('Admin'), async (req, res) => {
+router.get('/goals/:goalId/sharing', checkPermission('can_manage_sharing_requests'), async (req, res) => {
     try {
         const goalId = parseInt(req.params.goalId);
         const pool = await getPool();
@@ -1302,7 +1321,7 @@ router.get('/goals/:goalId/sharing', checkRole('Admin'), async (req, res) => {
 });
 
 // Share goal with organization (includes descendant goals automatically)
-router.post('/goals/:goalId/sharing', checkRole('Admin'), async (req, res) => {
+router.post('/goals/:goalId/sharing', checkPermission('can_manage_sharing_requests'), async (req, res) => {
     try {
         const goalId = parseInt(req.params.goalId);
         const { orgId, accessLevel, includeDescendants, expiresAt } = req.body;
@@ -1367,7 +1386,7 @@ router.post('/goals/:goalId/sharing', checkRole('Admin'), async (req, res) => {
 });
 
 // Remove goal sharing
-router.delete('/goals/:goalId/sharing/:orgId', checkRole('Admin'), async (req, res) => {
+router.delete('/goals/:goalId/sharing/:orgId', checkPermission('can_manage_sharing_requests'), async (req, res) => {
     try {
         const goalId = parseInt(req.params.goalId);
         const orgId = parseInt(req.params.orgId);
@@ -1386,7 +1405,7 @@ router.delete('/goals/:goalId/sharing/:orgId', checkRole('Admin'), async (req, r
 });
 
 // Bulk share goals with an org
-router.post('/goals/bulk-share', checkRole('Admin'), async (req, res) => {
+router.post('/goals/bulk-share', checkPermission('can_manage_sharing_requests'), async (req, res) => {
     try {
         const { goalIds, orgId, accessLevel, includeDescendants, expiresAt } = req.body;
         if (!Array.isArray(goalIds) || !orgId) {
@@ -1452,7 +1471,7 @@ router.post('/goals/bulk-share', checkRole('Admin'), async (req, res) => {
 });
 
 // Bulk unshare goals from an org
-router.post('/goals/bulk-unshare', checkRole('Admin'), async (req, res) => {
+router.post('/goals/bulk-unshare', checkPermission('can_manage_sharing_requests'), async (req, res) => {
     try {
         const { goalIds, orgId } = req.body;
         if (!Array.isArray(goalIds) || !orgId) {

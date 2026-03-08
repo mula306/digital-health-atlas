@@ -4,19 +4,22 @@
    ============================ */
 
 .shared-filter-bar {
+    --filter-row-gap: 0.65rem;
+    --filter-block-gap: 0.8rem;
     display: flex;
     flex-shrink: 0;
     flex-direction: column;
-    gap: 0.75rem;
-    padding: 1rem;
+    gap: var(--filter-block-gap);
+    padding: 0.9rem 1rem;
     border-radius: 8px;
-    margin-bottom: 1.5rem;
+    margin-bottom: 1rem;
 }
 
 .shared-filter-row {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
+    gap: var(--filter-row-gap);
+    row-gap: 0.55rem;
     flex-wrap: wrap;
 }
 
@@ -77,12 +80,14 @@
     font-size: 0.9rem;
     color: #6b7280;
     font-weight: 600;
+    line-height: 1.2;
+    align-self: center;
 }
 
 /* Tag panel (expandable) */
 .shared-advanced-filters {
-    margin-top: 1rem;
-    padding: 1rem;
+    margin-top: 0.4rem;
+    padding: 0.85rem 0.95rem;
     background-color: var(--bg-card);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
@@ -91,7 +96,7 @@
 .shared-tag-panel {
     display: flex;
     flex-direction: column;
-    gap: 0.75rem;
+    gap: 0.6rem;
 }
 
 /* Responsive */

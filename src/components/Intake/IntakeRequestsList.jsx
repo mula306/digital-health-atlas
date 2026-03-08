@@ -181,8 +181,8 @@ export function IntakeRequestsList({ initialFilter = 'all', showFilterTabs = tru
     const canViewGovernanceQueue = hasPermission('can_view_governance_queue');
     const canVoteGovernance = hasPermission('can_vote_governance');
     const canDecideGovernance = hasPermission('can_decide_governance');
-    const canManageSla = hasPermission('can_manage_intake') || hasPermission('can_manage_governance');
-    const canManageGovernanceSession = canDecideGovernance || hasPermission('can_manage_governance');
+    const canManageSla = hasPermission('can_manage_workflow_sla') || hasPermission('can_manage_intake') || hasPermission('can_manage_governance');
+    const canManageGovernanceSession = hasPermission('can_manage_governance_sessions') || canDecideGovernance || hasPermission('can_manage_governance');
     const canRouteGovernance = canRouteGovernanceSubmission({ hasPermission, currentUser });
 
     // Auto-scroll to bottom of conversation

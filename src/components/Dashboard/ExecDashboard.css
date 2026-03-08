@@ -9,7 +9,11 @@
 .exec-dashboard .view-header.actions-only {
     display: flex;
     justify-content: flex-end;
-    margin-bottom: 0.5rem;
+    margin-bottom: 0;
+}
+
+.exec-dashboard .shared-filter-bar {
+    margin-top: 0.35rem;
 }
 
 /* Search Bar - Matches Layout.css */
@@ -193,6 +197,17 @@
     vertical-align: top;
 }
 
+.exec-risk-header {
+    cursor: pointer;
+    user-select: none;
+}
+
+.exec-risk-sort-indicator {
+    margin-left: 0.25rem;
+    color: var(--text-tertiary);
+    font-size: 0.75rem;
+}
+
 .org-header-row td {
     background-color: var(--bg-tertiary);
     color: var(--text-primary);
@@ -230,6 +245,50 @@
     border-radius: 50%;
     display: inline-block;
     box-shadow: 0 0 4px rgba(0, 0, 0, 0.2);
+}
+
+.exec-risk-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 94px;
+    padding: 0.2rem 0.55rem;
+    border-radius: 999px;
+    font-size: 0.74rem;
+    font-weight: 700;
+    border: 1px solid transparent;
+    white-space: nowrap;
+}
+
+.exec-risk-badge.clickable {
+    cursor: pointer;
+    font: inherit;
+    line-height: 1.2;
+    appearance: none;
+}
+
+.exec-risk-badge.risk-critical {
+    color: #7f1d1d;
+    background: rgba(254, 226, 226, 0.95);
+    border-color: rgba(248, 113, 113, 0.45);
+}
+
+.exec-risk-badge.risk-high {
+    color: #991b1b;
+    background: rgba(254, 242, 242, 0.95);
+    border-color: rgba(248, 113, 113, 0.35);
+}
+
+.exec-risk-badge.risk-medium {
+    color: #92400e;
+    background: rgba(254, 243, 199, 0.95);
+    border-color: rgba(251, 191, 36, 0.4);
+}
+
+.exec-risk-badge.risk-low {
+    color: #1e3a8a;
+    background: rgba(219, 234, 254, 0.95);
+    border-color: rgba(96, 165, 250, 0.4);
 }
 
 /* Scrollbar styling */

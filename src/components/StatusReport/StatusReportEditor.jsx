@@ -260,13 +260,13 @@ export function StatusReportEditor({ projectId, projectTitle: _projectTitle, pre
                 )}
             </div>
 
-            {/* Executive Summary - Current State Section */}
+            {/* Executive Summary Section */}
             <div className="editor-section">
-                {renderSectionHeader("Executive Summary - Current State", "executiveSummary", FileText)}
+                {renderSectionHeader("Executive Summary", "executiveSummary", FileText)}
                 {expandedSections.executiveSummary && (
                     <div className="section-content">
                         <div className="form-group">
-                            <label>Current State Summary</label>
+                            <label>Executive Summary</label>
                             <textarea
                                 value={executiveSummary}
                                 onChange={(e) => setExecutiveSummary(e.target.value)}

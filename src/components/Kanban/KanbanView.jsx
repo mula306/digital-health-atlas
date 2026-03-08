@@ -396,18 +396,13 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
                 selectedStatuses={selectedStatuses}
                 onStatusesChange={setSelectedStatuses}
                 statusOptions={STATUS_OPTIONS}
+                watchedOnly={watchedOnly}
+                onWatchedOnlyChange={setWatchedOnly}
                 countLabel={hasActiveFilters
                     ? `${displayProjects.length} of ${filteredPagination?.total || displayProjects.length} project(s)`
                     : `${displayProjects.length} project(s)`
                 }
             >
-                <button
-                    className={`btn-secondary btn-sm project-watch-filter-btn ${watchedOnly ? 'active' : ''}`}
-                    onClick={() => setWatchedOnly((prev) => !prev)}
-                    title="Show only projects in my watchlist"
-                >
-                    <Star size={14} fill={watchedOnly ? 'currentColor' : 'none'} /> My Watched
-                </button>
                 {exactProjectFilterId && (
                     <button
                         className="btn-secondary btn-sm shared-clear-btn"

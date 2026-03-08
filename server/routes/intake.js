@@ -13,18 +13,14 @@ import { logAudit } from '../utils/auditLogger.js';
 
 const router = express.Router();
 
-const isIntakeManager = (user) => {
-    return !!(user?.roles && (
-        user.roles.includes('Admin') ||
-        user.roles.includes('IntakeManager') ||
-        user.permissions?.includes('can_manage_intake')
-    ));
+const canManageIntakeSubmissions = async (user) => {
+    if (!user) return false;
+    return hasPermission(user, ['can_manage_intake', 'can_manage_governance']);
 };
 
 const canRouteGovernanceSubmission = async (user) => {
     if (!user) return false;
-    if (isIntakeManager(user)) return true;
-    return hasPermission(user, ['can_manage_governance', 'can_manage_intake']);
+    return canManageIntakeSubmissions(user);
 };
 
 const hasGovernanceSchema = async (pool) => {
@@ -1081,7 +1077,8 @@ router.get('/sla/policies', requireAuth, async (req, res) => {
             'can_view_incoming_requests',
             'can_view_governance_queue',
             'can_manage_intake',
-            'can_manage_governance'
+            'can_manage_governance',
+            'can_manage_workflow_sla'
         ]);
         if (!canView) return res.status(403).json({ error: 'Forbidden' });
 
@@ -1100,7 +1097,7 @@ router.put('/sla/policies', requireAuth, async (req, res) => {
     try {
         const user = getAuthUser(req);
         if (!user) return res.status(401).json({ error: 'Unauthorized' });
-        const canManage = await hasPermission(user, ['can_manage_intake', 'can_manage_governance']);
+        const canManage = await hasPermission(user, ['can_manage_workflow_sla', 'can_manage_intake', 'can_manage_governance']);
         if (!canManage) return res.status(403).json({ error: 'Forbidden' });
 
         const payload = Array.isArray(req.body?.policies) ? req.body.policies : null;
@@ -1294,7 +1291,7 @@ router.post('/submissions/:id/sla/nudge', requireAuth, async (req, res) => {
     try {
         const user = getAuthUser(req);
         if (!user) return res.status(401).json({ error: 'Unauthorized' });
-        const canManage = await hasPermission(user, ['can_manage_intake', 'can_manage_governance']);
+        const canManage = await hasPermission(user, ['can_manage_workflow_sla', 'can_manage_intake', 'can_manage_governance']);
         if (!canManage) return res.status(403).json({ error: 'Forbidden' });
 
         const submissionId = Number.parseInt(req.params.id, 10);
@@ -1400,8 +1397,7 @@ router.get('/submissions', requireAuth, async (req, res) => {
         if (!user) return res.status(401).json({ error: 'Unauthorized' });
 
         const canViewAllSubmissions =
-            isIntakeManager(user) ||
-            await hasPermission(user, ['can_manage_intake', 'can_manage_governance']);
+            await canManageIntakeSubmissions(user);
         if (!canViewAllSubmissions) {
             return res.status(403).json({ error: 'Forbidden' });
         }
@@ -1636,7 +1632,7 @@ router.put('/submissions/:id', requireAuth, async (req, res) => {
         const prev = prevResult.recordset[0];
 
         // 2. Determine Permissions
-        const isManager = isIntakeManager(user);
+        const isManager = await canManageIntakeSubmissions(user);
         const isOwner = prev.submitterId === user.oid;
 
         if (!isManager && !isOwner) {
@@ -2153,7 +2149,8 @@ router.get('/submissions/:id/governance', requireAuth, async (req, res) => {
             'can_decide_governance'
         ]);
         const isOwner = submission.submitterId === user.oid;
-        if (!canViewGovernance && !isIntakeManager(user) && !isOwner) {
+        const canManageGovernanceFlow = await canRouteGovernanceSubmission(user);
+        if (!canViewGovernance && !canManageGovernanceFlow && !isOwner) {
             return res.status(403).json({ error: 'Forbidden' });
         }
 

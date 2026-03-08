@@ -1,6 +1,6 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useCallback } from 'react';
 import { useData } from '../../context/DataContext';
-import { Search, Download, X } from 'lucide-react';
+import { Search, Download, X, AlertTriangle } from 'lucide-react';
 import { Modal } from '../UI/Modal';
 import { StatusReportView } from '../StatusReport/StatusReportView';
 
@@ -13,6 +13,44 @@ import { EmptyState } from '../UI/EmptyState';
 import { API_BASE } from '../../apiClient';
 
 import { getDescendantGoalIds } from '../../utils/goalHelpers';
+
+const EXEC_PROJECT_VIEW_PREFERENCE_STORAGE_KEY = 'dha_project_view_preference';
+
+const RISK_LEVEL_CONFIG = {
+    critical: { label: 'Critical', color: '#b91c1c', sort: 0 },
+    high: { label: 'High', color: '#dc2626', sort: 1 },
+    medium: { label: 'Medium', color: '#d97706', sort: 2 },
+    low: { label: 'Low', color: '#2563eb', sort: 3 }
+};
+
+const RISK_LEVEL_ORDER = Object.keys(RISK_LEVEL_CONFIG);
+
+const normalizeRiskSignal = (project, reportStatus = 'unknown') => {
+    const incoming = project?.riskSignal || {};
+    const normalizedLevel = String(incoming.level || '').trim().toLowerCase();
+    const resolvedLevel = RISK_LEVEL_CONFIG[normalizedLevel] ? normalizedLevel : 'low';
+
+    const parsedScore = Number(incoming.score);
+    const fallbackStatus = String(reportStatus || 'unknown').trim().toLowerCase();
+    const fallbackScore = fallbackStatus === 'red'
+        ? 25
+        : fallbackStatus === 'yellow'
+            ? 12
+            : fallbackStatus === 'unknown'
+                ? 6
+                : 0;
+    const resolvedScore = Number.isFinite(parsedScore)
+        ? Math.max(0, Math.min(100, Math.round(parsedScore)))
+        : fallbackScore;
+
+    return {
+        score: resolvedScore,
+        level: resolvedLevel,
+        label: RISK_LEVEL_CONFIG[resolvedLevel].label,
+        color: RISK_LEVEL_CONFIG[resolvedLevel].color,
+        sortIndex: RISK_LEVEL_CONFIG[resolvedLevel].sort
+    };
+};
 
 // Helper to get hierarchy for a project
 const getProjectHierarchy = (goals, goalId) => {
@@ -45,15 +83,53 @@ const getProjectHierarchy = (goals, goalId) => {
     return hierarchy;
 };
 
-export function ExecDashboard() {
+export function ExecDashboard({ onViewChange }) {
     const { projects, goals, getLatestStatusReport, fetchExecSummaryProjects, authFetch } = useData();
     const [searchTerm, setSearchTerm] = useState('');
     const [selectedGoalId, setSelectedGoalId] = useState('');
     const [selectedTags, setSelectedTags] = useState([]);
     const [selectedStatuses, setSelectedStatuses] = useState([]);
+    const [selectedRiskLevels, setSelectedRiskLevels] = useState([]);
     const [watchedOnly, setWatchedOnly] = useState(false);
+    const [riskSort, setRiskSort] = useState('none');
     const [selectedProject, setSelectedProject] = useState(null);
     const tableRef = useRef(null);
+
+    const riskOptions = useMemo(() => RISK_LEVEL_ORDER.map((level) => ({
+        id: level,
+        label: RISK_LEVEL_CONFIG[level].label,
+        color: RISK_LEVEL_CONFIG[level].color
+    })), []);
+
+    const cycleRiskSort = useCallback(() => {
+        setRiskSort((previous) => {
+            if (previous === 'none') return 'high-low';
+            if (previous === 'high-low') return 'low-high';
+            return 'none';
+        });
+    }, []);
+
+    const handleRiskHeaderKeyDown = useCallback((event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            cycleRiskSort();
+        }
+    }, [cycleRiskSort]);
+
+    const navigateToProjectBenefits = useCallback((event, projectId) => {
+        if (!onViewChange) return;
+        event.stopPropagation();
+        const payload = {
+            projectId: String(projectId),
+            viewMode: 'benefits',
+            requestedAt: Date.now()
+        };
+        localStorage.setItem(EXEC_PROJECT_VIEW_PREFERENCE_STORAGE_KEY, JSON.stringify(payload));
+        onViewChange('projects', {
+            preserveSelectedProject: true,
+            selectedProjectId: String(projectId)
+        });
+    }, [onViewChange]);
 
     // Export to PDF
     const handleExportPDF = () => {
@@ -138,9 +214,11 @@ export function ExecDashboard() {
             }
 
             /* Layout specific column widths based on table headers */
-            th:nth-child(1), td:nth-child(1) { width: 25%; }
-            th:nth-child(2), td:nth-child(2) { width: 10%; text-align: center; }
-            th:nth-child(3), td:nth-child(3) { width: 65%; }
+            th:nth-child(1), td:nth-child(1) { width: 24%; }
+            th:nth-child(2), td:nth-child(2) { width: 8%; text-align: center; }
+            th:nth-child(3), td:nth-child(3) { width: 14%; }
+            th:nth-child(4), td:nth-child(4) { width: 44%; }
+            th:nth-child(5), td:nth-child(5) { width: 10%; }
 
             /* Organization Header Row */
             .org-header-row td { 
@@ -383,25 +461,31 @@ export function ExecDashboard() {
 
             const h = getProjectHierarchy(goals, displayGoalId);
             const report = p.report || getLatestStatusReport(p.id);
+            const normalizedStatus = report?.overallStatus ? String(report.overallStatus).toLowerCase() : 'unknown';
+            const riskSignal = normalizeRiskSignal(p, normalizedStatus);
             return {
                 id: p.id,
                 title: p.title,
                 ...h,
-                overallStatus: report?.overallStatus ? String(report.overallStatus).toLowerCase() : 'unknown',
+                overallStatus: normalizedStatus,
                 execSummary: report ? report.executiveSummary : 'No report filed',
                 report: report,
-                reportCount: p.reportCount || 0
+                reportCount: p.reportCount || 0,
+                riskSignal
             };
         });
 
         // 3. Apply Search Filter
-        const finalFiltered = mapped.filter(item => {
+        const finalFiltered = mapped.filter((item) => {
             const matchesSearch = item.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
                 item.execSummary?.toLowerCase().includes(searchTerm.toLowerCase());
             const matchesStatus = selectedStatuses.length === 0
                 ? true
                 : selectedStatuses.includes(item.overallStatus || 'unknown');
-            return matchesSearch && matchesStatus;
+            const matchesRisk = selectedRiskLevels.length === 0
+                ? true
+                : selectedRiskLevels.includes(item.riskSignal.level);
+            return matchesSearch && matchesStatus && matchesRisk;
         });
 
         // Group by Organization -> Division
@@ -418,14 +502,38 @@ export function ExecDashboard() {
         });
 
         // Sort items within divisions
-        Object.keys(groups).forEach(org => {
-            Object.keys(groups[org]).forEach(div => {
-                groups[org][div].sort((a, b) => a.title.localeCompare(b.title));
+        Object.keys(groups).forEach((org) => {
+            Object.keys(groups[org]).forEach((div) => {
+                groups[org][div].sort((a, b) => {
+                    if (riskSort !== 'none') {
+                        const riskLevelDiff = (a.riskSignal.sortIndex || 0) - (b.riskSignal.sortIndex || 0);
+                        if (riskLevelDiff !== 0) {
+                            return riskSort === 'high-low' ? riskLevelDiff : -riskLevelDiff;
+                        }
+                        const riskScoreDiff = (a.riskSignal.score || 0) - (b.riskSignal.score || 0);
+                        if (riskScoreDiff !== 0) {
+                            return riskSort === 'high-low' ? -riskScoreDiff : riskScoreDiff;
+                        }
+                    }
+                    return a.title.localeCompare(b.title);
+                });
             });
         });
 
         return groups;
-    }, [projects, allProjects, goals, getLatestStatusReport, searchTerm, selectedGoalId, selectedTags, selectedStatuses, watchedOnly]);
+    }, [
+        projects,
+        allProjects,
+        goals,
+        getLatestStatusReport,
+        searchTerm,
+        selectedGoalId,
+        selectedTags,
+        selectedStatuses,
+        selectedRiskLevels,
+        watchedOnly,
+        riskSort
+    ]);
 
     function getStatusColor(status) {
         switch (status) {
@@ -435,6 +543,17 @@ export function ExecDashboard() {
             default: return '#9ca3af';
         }
     }
+
+    const riskSortIndicator = riskSort === 'high-low'
+        ? 'v'
+        : riskSort === 'low-high'
+            ? '^'
+            : '<>';
+    const riskSortTitle = riskSort === 'high-low'
+        ? 'Risk sorted high to low'
+        : riskSort === 'low-high'
+            ? 'Risk sorted low to high'
+            : 'Click to sort by risk';
 
     return (
         <div className="exec-dashboard">
@@ -467,6 +586,17 @@ export function ExecDashboard() {
                 statusOptions={statusOptions}
                 watchedOnly={watchedOnly}
                 onWatchedOnlyChange={setWatchedOnly}
+                extraOptionGroups={[
+                    {
+                        key: 'risk-level',
+                        label: 'Risk Signal',
+                        icon: AlertTriangle,
+                        options: riskOptions,
+                        selectedValues: selectedRiskLevels,
+                        onChange: setSelectedRiskLevels,
+                        clearLabel: 'Clear Risk'
+                    }
+                ]}
                 countLabel={`${Object.values(groupedData).reduce((acc, org) => acc + Object.values(org).reduce((acc2, div) => acc2 + div.length, 0), 0)} project(s)`}
             >
                 {searchTerm && (
@@ -499,9 +629,20 @@ export function ExecDashboard() {
                 <table className="exec-table" ref={tableRef}>
                     <thead>
                         <tr>
-                            <th style={{ width: '25%' }}>Project Name</th>
-                            <th style={{ width: '10%' }} className="text-center">Status</th>
-                            <th style={{ width: '55%' }}>Exec Current Status</th>
+                            <th style={{ width: '24%' }}>Project Name</th>
+                            <th style={{ width: '8%' }} className="text-center">Status</th>
+                            <th
+                                style={{ width: '14%' }}
+                                className="exec-risk-header"
+                                title={riskSortTitle}
+                                onClick={cycleRiskSort}
+                                onKeyDown={handleRiskHeaderKeyDown}
+                                role="button"
+                                tabIndex={0}
+                            >
+                                Risk Signal <span className="exec-risk-sort-indicator">{riskSortIndicator}</span>
+                            </th>
+                            <th style={{ width: '44%' }}>Executive Summary</th>
                             <th style={{ width: '10%' }}>Last Report</th>
                         </tr>
                     </thead>
@@ -518,6 +659,9 @@ export function ExecDashboard() {
                                         <div className="h-6 w-20 bg-gray-200 rounded mx-auto animate-pulse"></div>
                                     </td>
                                     <td style={{ padding: '1rem' }}>
+                                        <div className="h-5 w-24 bg-gray-200 rounded animate-pulse"></div>
+                                    </td>
+                                    <td style={{ padding: '1rem' }}>
                                         <div className="space-y-2">
                                             <div className="h-3 bg-gray-200 rounded w-full animate-pulse"></div>
                                             <div className="h-3 bg-gray-200 rounded w-5/6 animate-pulse"></div>
@@ -530,7 +674,7 @@ export function ExecDashboard() {
                             ))
                         ) : Object.keys(groupedData).length === 0 ? (
                             <tr>
-                                <td colSpan={4} style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-tertiary)' }}>
+                                <td colSpan={5} style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-tertiary)' }}>
                                     <EmptyState
                                         title="No projects found"
                                         message="No projects found matching your filters."
@@ -544,7 +688,7 @@ export function ExecDashboard() {
                                     <React.Fragment key={orgName}>
                                         {/* Organization Header */}
                                         <tr className="org-header-row">
-                                            <td colSpan={4}>{orgName}</td>
+                                            <td colSpan={5}>{orgName}</td>
                                         </tr>
                                         {/* Divisions */}
                                         {Object.entries(divisions)
@@ -552,7 +696,7 @@ export function ExecDashboard() {
                                             .map(([divName, projects]) => (
                                                 <React.Fragment key={`${orgName}-${divName}`}>
                                                     <tr className="div-header-row">
-                                                        <td colSpan={4}>{divName}</td>
+                                                        <td colSpan={5}>{divName}</td>
                                                     </tr>
                                                     {/* Projects */}
                                                     {projects.map(project => {
@@ -562,6 +706,8 @@ export function ExecDashboard() {
                                                         const statusLabel = report
                                                             ? (normalizedStatus.charAt(0).toUpperCase() + normalizedStatus.slice(1))
                                                             : 'No Report';
+                                                        const riskSignal = project.riskSignal || normalizeRiskSignal(project, normalizedStatus);
+                                                        const riskBadgeClass = `exec-risk-badge risk-${riskSignal.level}`;
 
                                                         return (
                                                             <tr
@@ -579,6 +725,22 @@ export function ExecDashboard() {
                                                                         style={{ backgroundColor: statusColor }}
                                                                         title={statusLabel}
                                                                     />
+                                                                </td>
+                                                                <td className="text-sm text-gray-500">
+                                                                    {onViewChange ? (
+                                                                        <button
+                                                                            type="button"
+                                                                            className={`${riskBadgeClass} clickable`}
+                                                                            onClick={(event) => navigateToProjectBenefits(event, project.id)}
+                                                                            title="Open project benefits and risk panel"
+                                                                        >
+                                                                            {riskSignal.label} ({riskSignal.score})
+                                                                        </button>
+                                                                    ) : (
+                                                                        <span className={riskBadgeClass}>
+                                                                            {riskSignal.label} ({riskSignal.score})
+                                                                        </span>
+                                                                    )}
                                                                 </td>
                                                                 <td className="text-sm text-gray-600 max-w-md truncate-cell">
                                                                     {report?.executiveSummary || (

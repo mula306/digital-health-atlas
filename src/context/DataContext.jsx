@@ -26,6 +26,7 @@ export function DataProvider({ children }) {
     const [intakeSubmissions, setIntakeSubmissions] = useState([]);
     const [tagGroups, setTagGroups] = useState([]);
     const [permissions, setPermissions] = useState([]);
+    const [permissionCatalog, setPermissionCatalog] = useState(null);
     const [currentUser, setCurrentUser] = useState(null);
     const { instance } = useMsal();
     const [loading, setLoading] = useState(true);
@@ -116,9 +117,10 @@ export function DataProvider({ children }) {
                 let userProfile = null;
                 const account = instance.getActiveAccount();
 
-                const [permsResult, userResult] = await Promise.allSettled([
+                const [permsResult, userResult, catalogResult] = await Promise.allSettled([
                     authFetch(`${API_BASE}/admin/permissions`),
-                    authFetch(`${API_BASE}/users/me`)
+                    authFetch(`${API_BASE}/users/me`),
+                    authFetch(`${API_BASE}/admin/permission-catalog`)
                 ]);
 
                 try {
@@ -133,6 +135,12 @@ export function DataProvider({ children }) {
                         setCurrentUser(userProfile);
                     } else {
                         console.warn("DataContext: Failed to load user profile", userResult.reason);
+                    }
+                    if (catalogResult && catalogResult.status === 'fulfilled') {
+                        const catalog = await catalogResult.value.json();
+                        setPermissionCatalog(catalog || null);
+                    } else if (catalogResult?.status === 'rejected') {
+                        console.warn("DataContext: Failed to load permission catalog", catalogResult.reason);
                     }
                 } catch (err) {
                     console.warn("DataContext: Failed to parse permissions or user payload", err);
@@ -1794,7 +1802,7 @@ export function DataProvider({ children }) {
             fetchExecutiveReportPackRuns, runExecutiveReportPackNow, fetchExecutivePackSchedulerStatus, runDueExecutivePacks,
             authFetch, fetchExecSummaryProjects,
 
-            permissions, hasPermission, hasRole, hasAnyRole, userRoles: effectiveRoles, updatePermissionsBulk,
+            permissionCatalog, permissions, hasPermission, hasRole, hasAnyRole, userRoles: effectiveRoles, updatePermissionsBulk,
 
             fetchOrganizations, createOrganization, updateOrganization,
             assignUserToOrg, fetchProjectSharing, shareProject, unshareProject,

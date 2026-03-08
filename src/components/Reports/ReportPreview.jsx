@@ -306,7 +306,7 @@ export function ReportPreview({ selectedProjectIds, allProjects = [] }) {
                         {/* Executive Summary */}
                         {report.executiveSummary && (
                             <div style={flexRowStyle}>
-                                <div style={labelColStyle}>Executive Summary - Current State:</div>
+                                <div style={labelColStyle}>Executive Summary:</div>
                                 <div style={{ ...flexColStyle, flex: 1, borderRight: 'none' }}>{report.executiveSummary}</div>
                             </div>
                         )}

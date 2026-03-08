@@ -1,15 +1,5 @@
-const getRoles = (currentUser) => {
-    return Array.isArray(currentUser?.roles) ? currentUser.roles : [];
-};
-
-export const canRouteGovernanceSubmission = ({ hasPermission, currentUser }) => {
-    const roles = getRoles(currentUser);
-    return (
-        hasPermission('can_manage_governance') ||
-        hasPermission('can_manage_intake') ||
-        roles.includes('Admin') ||
-        roles.includes('IntakeManager')
-    );
+export const canRouteGovernanceSubmission = ({ hasPermission }) => {
+    return hasPermission('can_manage_governance') || hasPermission('can_manage_intake');
 };
 
 export const getGovernanceReviewPermissions = ({ review, currentUser, hasPermission }) => {

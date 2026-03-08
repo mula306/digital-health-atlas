@@ -1,6 +1,6 @@
 import express from 'express';
 import { getPool, sql } from '../db.js';
-import { checkPermission, getAuthUser } from '../middleware/authMiddleware.js';
+import { checkPermission, getAuthUser, hasPermission } from '../middleware/authMiddleware.js';
 import { withSharedScope } from '../middleware/orgScope.js';
 import { handleError } from '../utils/errorHandler.js';
 import { logAudit } from '../utils/auditLogger.js';
@@ -16,9 +16,8 @@ let schedulerRunning = false;
 let lastSchedulerSweepAt = null;
 let lastSchedulerResult = null;
 
-const isAdmin = (user) => {
-    const roles = Array.isArray(user?.roles) ? user.roles : [];
-    return roles.includes('Admin');
+const canManageAllPacks = async (user) => {
+    return hasPermission(user, ['can_run_exec_pack_scheduler']);
 };
 
 const parseJsonSafe = (raw, fallback) => {
@@ -531,10 +530,10 @@ router.get('/packs', checkPermission(['can_view_reports', 'can_view_exec_dashboa
         const user = getAuthUser(req);
         const pool = await getPool();
         const request = pool.request();
-        const adminUser = isAdmin(user);
+        const canManageAll = await canManageAllPacks(user);
 
         let where = '';
-        if (!adminUser) {
+        if (!canManageAll) {
             where = 'WHERE p.ownerOid = @ownerOid';
             request.input('ownerOid', sql.NVarChar(100), user?.oid || '');
         }
@@ -652,7 +651,8 @@ router.put('/packs/:id', checkPermission(['can_create_reports', 'can_view_exec_d
         if (existing.recordset.length === 0) return res.status(404).json({ error: 'Pack not found' });
 
         const previous = existing.recordset[0];
-        if (!isAdmin(user) && previous.ownerOid !== user?.oid) {
+        const canManageAll = await canManageAllPacks(user);
+        if (!canManageAll && previous.ownerOid !== user?.oid) {
             return res.status(403).json({ error: 'Forbidden' });
         }
 
@@ -678,8 +678,8 @@ router.put('/packs/:id', checkPermission(['can_create_reports', 'can_view_exec_d
         if (Object.prototype.hasOwnProperty.call(req.body || {}, 'scopeOrgId')) {
             const requested = req.body?.scopeOrgId;
             if (requested === null || requested === '') {
-                if (!isAdmin(user)) {
-                    return res.status(403).json({ error: 'Only admins can set pack scope outside their organization.' });
+                if (!canManageAll) {
+                    return res.status(403).json({ error: 'You do not have permission to set pack scope outside your organization.' });
                 }
                 scopeOrgId = null;
             } else {
@@ -687,7 +687,7 @@ router.put('/packs/:id', checkPermission(['can_create_reports', 'can_view_exec_d
                 if (Number.isNaN(parsedScope)) {
                     return res.status(400).json({ error: 'scopeOrgId must be null or a valid organization id' });
                 }
-                if (!isAdmin(user) && req.orgId !== null && req.orgId !== undefined && Number(req.orgId) !== parsedScope) {
+                if (!canManageAll && req.orgId !== null && req.orgId !== undefined && Number(req.orgId) !== parsedScope) {
                     return res.status(403).json({ error: 'scopeOrgId must match your organization.' });
                 }
                 scopeOrgId = parsedScope;
@@ -788,7 +788,8 @@ router.get('/packs/:id/runs', checkPermission(['can_view_reports', 'can_view_exe
             .input('id', sql.Int, packId)
             .query('SELECT id, ownerOid FROM ExecutiveReportPack WHERE id = @id');
         if (packResult.recordset.length === 0) return res.status(404).json({ error: 'Pack not found' });
-        if (!isAdmin(user) && packResult.recordset[0].ownerOid !== user?.oid) {
+        const canManageAll = await canManageAllPacks(user);
+        if (!canManageAll && packResult.recordset[0].ownerOid !== user?.oid) {
             return res.status(403).json({ error: 'Forbidden' });
         }
 
@@ -831,7 +832,8 @@ router.post('/packs/:id/run-now', checkPermission(['can_create_reports', 'can_vi
         if (packResult.recordset.length === 0) return res.status(404).json({ error: 'Pack not found' });
 
         const packRow = packResult.recordset[0];
-        if (!isAdmin(user) && packRow.ownerOid !== user?.oid) {
+        const canManageAll = await canManageAllPacks(user);
+        if (!canManageAll && packRow.ownerOid !== user?.oid) {
             return res.status(403).json({ error: 'Forbidden' });
         }
 
@@ -840,7 +842,7 @@ router.post('/packs/:id/run-now', checkPermission(['can_create_reports', 'can_vi
             packRow,
             runType: 'manual',
             initiatedByOid: user?.oid || null,
-            fallbackOrgId: req.orgId === undefined ? null : req.orgId
+            fallbackOrgId: canManageAll ? null : (req.orgId === undefined ? null : req.orgId)
         });
         if (!runResult.ok) {
             return res.status(500).json({ error: runResult.error || 'Failed to run executive pack' });
@@ -885,13 +887,8 @@ router.get('/scheduler/status', checkPermission(['can_view_reports', 'can_view_e
 });
 
 // Trigger due scheduled runs immediately
-router.post('/scheduler/run-due', checkPermission(['can_create_reports', 'can_view_exec_dashboard']), async (req, res) => {
+router.post('/scheduler/run-due', checkPermission('can_run_exec_pack_scheduler'), async (req, res) => {
     try {
-        const user = getAuthUser(req);
-        if (!isAdmin(user)) {
-            return res.status(403).json({ error: 'Only Admin users can run due executive packs.' });
-        }
-
         const maxRuns = Number.parseInt(req.body?.maxRuns, 10);
         const result = await runDueExecutiveReportPacks({
             maxRuns: Number.isNaN(maxRuns) ? 10 : maxRuns

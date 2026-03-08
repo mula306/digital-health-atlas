@@ -212,7 +212,7 @@ export function AppContent() {
     const [projectFilter, setProjectFilter] = useState(null);
     const [metricsFilter, setMetricsFilter] = useState(null);
     const [intakeParams, setIntakeParams] = useState(null);
-    const { hasPermission, hasRole, error } = useData();
+    const { hasPermission, error } = useData();
     const toast = useToast();
     const canAccessIntakeWorkspace =
         hasPermission('can_view_intake') ||
@@ -221,9 +221,12 @@ export function AppContent() {
         hasPermission('can_view_incoming_requests') ||
         hasPermission('can_view_governance_queue');
     const canAccessAdminPanel =
-        hasRole('Admin') ||
+        hasPermission('can_manage_role_permissions') ||
+        hasPermission('can_view_audit_log') ||
         hasPermission('can_manage_tags') ||
-        hasPermission('can_manage_governance');
+        hasPermission('can_manage_governance') ||
+        hasPermission('can_manage_organizations') ||
+        hasPermission('can_manage_sharing_requests');
     const accessibleViews = useMemo(() => {
         const views = ['my-work'];
         if (hasPermission('can_view_exec_dashboard')) views.push('exec-dashboard');
@@ -433,7 +436,7 @@ export function AppContent() {
                                 <div className="p-4">Access Denied</div>;
                         case 'exec-dashboard':
                             return hasPermission('can_view_exec_dashboard') ?
-                                <ExecDashboard /> :
+                                <ExecDashboard onViewChange={handleViewChange} /> :
                                 <div className="p-4">Access Denied</div>;
                         case 'goals':
                             return hasPermission('can_view_goals') ?

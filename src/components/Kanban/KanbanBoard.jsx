@@ -16,6 +16,9 @@ import './Kanban.css';
 
 const PROJECT_TASK_FOCUS_STORAGE_KEY = 'dha_project_focus_task_payload';
 const PROJECT_TASK_FOCUS_TTL_MS = 2 * 60 * 1000;
+const PROJECT_VIEW_PREFERENCE_STORAGE_KEY = 'dha_project_view_preference';
+const PROJECT_VIEW_PREFERENCE_TTL_MS = 2 * 60 * 1000;
+const PROJECT_VIEW_MODES = new Set(['table', 'calendar', 'gantt', 'kanban', 'reports', 'benefits', 'activity']);
 
 const COLUMNS = [
     { id: 'todo', title: 'To Do', color: 'var(--text-secondary)' },
@@ -199,6 +202,39 @@ export function KanbanBoard({ project, onBack, goalTitle }) {
         setSelectedTask(matchedTask);
         localStorage.removeItem(PROJECT_TASK_FOCUS_STORAGE_KEY);
     }, [project.id, project.tasks]);
+
+    useEffect(() => {
+        const rawPayload = localStorage.getItem(PROJECT_VIEW_PREFERENCE_STORAGE_KEY);
+        if (!rawPayload) return;
+
+        let payload = null;
+        try {
+            payload = JSON.parse(rawPayload);
+        } catch {
+            localStorage.removeItem(PROJECT_VIEW_PREFERENCE_STORAGE_KEY);
+            return;
+        }
+
+        const payloadProjectId = String(payload?.projectId || '').trim();
+        const requestedMode = String(payload?.viewMode || '').trim().toLowerCase();
+        const requestedAt = Number(payload?.requestedAt || 0);
+        const isFresh = requestedAt > 0 && (Date.now() - requestedAt) <= PROJECT_VIEW_PREFERENCE_TTL_MS;
+
+        if (!isFresh) {
+            localStorage.removeItem(PROJECT_VIEW_PREFERENCE_STORAGE_KEY);
+            return;
+        }
+
+        if (!payloadProjectId || payloadProjectId !== String(project.id)) {
+            return;
+        }
+
+        if (PROJECT_VIEW_MODES.has(requestedMode)) {
+            setViewMode(requestedMode);
+        }
+
+        localStorage.removeItem(PROJECT_VIEW_PREFERENCE_STORAGE_KEY);
+    }, [project.id]);
 
     return (
         <div className="kanban-board-container">

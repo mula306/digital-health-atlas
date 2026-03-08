@@ -40,8 +40,89 @@
     box-shadow: var(--shadow-md);
 }
 
-.permissions-table {
+.permissions-table-wrap {
     width: 100%;
+    overflow-x: auto;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+}
+
+.permissions-view-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-bottom: 0.75rem;
+}
+
+.permissions-view-modes {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.2rem;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--bg-secondary);
+}
+
+.permissions-view-mode-btn {
+    min-height: 32px;
+    padding: 0.35rem 0.7rem;
+    font-size: 0.78rem;
+    border-radius: var(--radius-sm);
+}
+
+.permissions-view-mode-btn.active {
+    background: var(--bg-card);
+    border-color: var(--accent-primary);
+    color: var(--accent-primary);
+}
+
+.permissions-role-picker {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+    margin-bottom: 0.75rem;
+}
+
+.permissions-role-pill {
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
+    padding: 0.3rem 0.65rem;
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    background: var(--bg-secondary);
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.permissions-role-pill:hover {
+    border-color: var(--accent-primary);
+    color: var(--text-primary);
+}
+
+.permissions-role-pill.active {
+    border-color: var(--accent-primary);
+    color: var(--accent-primary);
+    background: hsla(var(--hue-indigo), 60%, 50%, 0.1);
+}
+
+.permissions-focused-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-bottom: 0.6rem;
+}
+
+.permissions-focused-header strong {
+    color: var(--text-primary);
+    font-size: 0.9rem;
+}
+
+.permissions-table {
+    width: max-content;
+    min-width: 100%;
     border-collapse: separate;
     border-spacing: 0;
 }
@@ -53,11 +134,23 @@
     font-weight: 600;
     border-bottom: 2px solid var(--border-color);
     vertical-align: bottom;
+    background: var(--bg-card);
+    position: sticky;
+    top: 0;
+    z-index: 2;
+}
+
+.permissions-table th:first-child {
+    min-width: 260px;
+    position: sticky;
+    left: 0;
+    z-index: 3;
 }
 
 .permissions-table th:not(:first-child) {
     text-align: center;
-    width: 120px;
+    min-width: 148px;
+    width: 148px;
 }
 
 .role-header-cell {
@@ -65,12 +158,12 @@
     flex-direction: column;
     align-items: center;
     justify-content: flex-end;
-    gap: 0.25rem;
-    min-height: 62px;
+    gap: 0.3rem;
+    min-height: 80px;
 }
 
 .role-header-label {
-    min-height: 2.3em;
+    min-height: 2.8em;
     display: flex;
     align-items: flex-end;
     justify-content: center;
@@ -82,12 +175,22 @@
     font-size: 0.7rem;
     padding: 0.1rem 0.4rem;
     color: var(--text-tertiary);
+    width: 100%;
+    max-width: 112px;
 }
 
 .permissions-table td {
     padding: 1rem;
     border-bottom: 1px solid var(--border-color);
     color: var(--text-primary);
+    vertical-align: middle;
+}
+
+.permissions-table td:first-child {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    background: var(--bg-card);
 }
 
 .permission-item-row {
@@ -108,8 +211,58 @@
     padding: 0.75rem 1rem;
 }
 
+.category-row td:first-child {
+    z-index: 2;
+    background: var(--bg-secondary);
+}
+
+.category-cell {
+    min-width: 260px;
+}
+
+.category-title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+}
+
+.category-toggle-btn {
+    font-size: 0.7rem;
+    padding: 0.1rem 0.4rem;
+    color: var(--text-tertiary);
+    text-transform: none;
+    letter-spacing: normal;
+}
+
 .perm-label {
     font-weight: 500;
+    min-width: 260px;
+}
+
+.permissions-focused-table {
+    width: 100%;
+    min-width: 0;
+}
+
+.permissions-focused-table th,
+.permissions-focused-table td {
+    position: static;
+}
+
+.permissions-focused-table th:first-child,
+.permissions-focused-table td:first-child {
+    position: static;
+    min-width: 0;
+}
+
+.permissions-focused-table th:not(:first-child) {
+    min-width: 160px;
+    width: 160px;
+}
+
+.permissions-focused-table .category-action-cell {
+    background: var(--bg-secondary);
 }
 
 .chk-cell {

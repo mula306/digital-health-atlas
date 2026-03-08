@@ -106,55 +106,39 @@ const computeRiskLevel = (score) => {
     return 'low';
 };
 
-const buildProjectRiskSignal = async ({ pool, projectId }) => {
-    const taskStatsResult = await pool.request()
-        .input('projectId', sql.Int, projectId)
-        .query(`
-            SELECT
-                COUNT(*) AS totalTasks,
-                SUM(CASE WHEN status = 'blocked' THEN 1 ELSE 0 END) AS blockedTasks,
-                SUM(CASE WHEN status <> 'done' AND endDate < CAST(GETDATE() AS DATE) THEN 1 ELSE 0 END) AS overdueTasks,
-                SUM(CASE WHEN status IN ('in-progress', 'review') THEN 1 ELSE 0 END) AS inFlightTasks
-            FROM Tasks
-            WHERE projectId = @projectId
-        `);
-    const taskStats = taskStatsResult.recordset[0] || {};
+const toRiskDate = (value) => {
+    if (!value) return null;
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
 
-    const reportResult = await pool.request()
-        .input('projectId', sql.Int, projectId)
-        .query(`
-            SELECT TOP 1
-                createdAt,
-                COALESCE(NULLIF(LOWER(JSON_VALUE(reportData, '$.overallStatus')), ''), 'unknown') AS overallStatus
-            FROM StatusReports
-            WHERE projectId = @projectId
-            ORDER BY createdAt DESC, version DESC
-        `);
-    const latestReport = reportResult.recordset[0] || null;
+const normalizeRiskCount = (value) => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return 0;
+    return Math.max(0, Math.round(parsed));
+};
 
-    const activityResult = await pool.request()
-        .input('projectId', sql.NVarChar(20), String(projectId))
-        .query(`
-            SELECT MAX(createdAt) AS lastTaskActivityAt
-            FROM AuditLog
-            WHERE entityType = 'task'
-              AND JSON_VALUE(metadata, '$.projectId') = @projectId
-        `);
-    const lastTaskActivityAt = activityResult.recordset[0]?.lastTaskActivityAt || null;
-
-    const totalTasks = Number(taskStats.totalTasks || 0);
-    const blockedTasks = Number(taskStats.blockedTasks || 0);
-    const overdueTasks = Number(taskStats.overdueTasks || 0);
-    const inFlightTasks = Number(taskStats.inFlightTasks || 0);
+const buildRiskSignalFromInputs = ({
+    taskStats = {},
+    reportStatus = 'unknown',
+    latestReportAt = null,
+    lastTaskActivityAt = null,
+    nowMs = Date.now()
+}) => {
+    const totalTasks = normalizeRiskCount(taskStats.totalTasks);
+    const blockedTasks = normalizeRiskCount(taskStats.blockedTasks);
+    const overdueTasks = normalizeRiskCount(taskStats.overdueTasks);
+    const inFlightTasks = normalizeRiskCount(taskStats.inFlightTasks);
     const overdueRatio = totalTasks > 0 ? overdueTasks / totalTasks : 0;
-    const reportStatus = latestReport?.overallStatus || 'unknown';
+    const normalizedReportStatus = String(reportStatus || 'unknown').trim().toLowerCase() || 'unknown';
 
-    const now = Date.now();
-    const daysSinceLastReport = latestReport?.createdAt
-        ? Math.floor((now - new Date(latestReport.createdAt).getTime()) / 86400000)
+    const latestReportDate = toRiskDate(latestReportAt);
+    const lastTaskActivityDate = toRiskDate(lastTaskActivityAt);
+    const daysSinceLastReport = latestReportDate
+        ? Math.floor((nowMs - latestReportDate.getTime()) / 86400000)
         : null;
-    const daysSinceTaskActivity = lastTaskActivityAt
-        ? Math.floor((now - new Date(lastTaskActivityAt).getTime()) / 86400000)
+    const daysSinceTaskActivity = lastTaskActivityDate
+        ? Math.floor((nowMs - lastTaskActivityDate.getTime()) / 86400000)
         : null;
 
     let score = 0;
@@ -182,7 +166,7 @@ const buildProjectRiskSignal = async ({ pool, projectId }) => {
         });
     }
 
-    if (reportStatus === 'red') {
+    if (normalizedReportStatus === 'red') {
         score += 25;
         signals.push({
             key: 'status_report_red',
@@ -190,7 +174,7 @@ const buildProjectRiskSignal = async ({ pool, projectId }) => {
             points: 25,
             message: 'Latest status report is red.'
         });
-    } else if (reportStatus === 'yellow') {
+    } else if (normalizedReportStatus === 'yellow') {
         score += 12;
         signals.push({
             key: 'status_report_yellow',
@@ -198,7 +182,7 @@ const buildProjectRiskSignal = async ({ pool, projectId }) => {
             points: 12,
             message: 'Latest status report is yellow.'
         });
-    } else if (reportStatus === 'unknown') {
+    } else if (normalizedReportStatus === 'unknown') {
         score += 6;
         signals.push({
             key: 'status_report_unknown',
@@ -260,12 +244,56 @@ const buildProjectRiskSignal = async ({ pool, projectId }) => {
             blockedTasks,
             overdueTasks,
             overdueRatio: Math.round(overdueRatio * 1000) / 1000,
-            reportStatus,
+            reportStatus: normalizedReportStatus,
             daysSinceLastReport,
             daysSinceTaskActivity
         },
         signals
     };
+};
+
+const buildProjectRiskSignal = async ({ pool, projectId }) => {
+    const taskStatsResult = await pool.request()
+        .input('projectId', sql.Int, projectId)
+        .query(`
+            SELECT
+                COUNT(*) AS totalTasks,
+                SUM(CASE WHEN status = 'blocked' THEN 1 ELSE 0 END) AS blockedTasks,
+                SUM(CASE WHEN status <> 'done' AND endDate < CAST(GETDATE() AS DATE) THEN 1 ELSE 0 END) AS overdueTasks,
+                SUM(CASE WHEN status IN ('in-progress', 'review') THEN 1 ELSE 0 END) AS inFlightTasks
+            FROM Tasks
+            WHERE projectId = @projectId
+        `);
+    const taskStats = taskStatsResult.recordset[0] || {};
+
+    const reportResult = await pool.request()
+        .input('projectId', sql.Int, projectId)
+        .query(`
+            SELECT TOP 1
+                createdAt,
+                COALESCE(NULLIF(LOWER(JSON_VALUE(reportData, '$.overallStatus')), ''), 'unknown') AS overallStatus
+            FROM StatusReports
+            WHERE projectId = @projectId
+            ORDER BY createdAt DESC, version DESC
+        `);
+    const latestReport = reportResult.recordset[0] || null;
+
+    const activityResult = await pool.request()
+        .input('projectId', sql.NVarChar(20), String(projectId))
+        .query(`
+            SELECT MAX(createdAt) AS lastTaskActivityAt
+            FROM AuditLog
+            WHERE entityType = 'task'
+              AND JSON_VALUE(metadata, '$.projectId') = @projectId
+        `);
+    const lastTaskActivityAt = activityResult.recordset[0]?.lastTaskActivityAt || null;
+
+    return buildRiskSignalFromInputs({
+        taskStats,
+        reportStatus: latestReport?.overallStatus || 'unknown',
+        latestReportAt: latestReport?.createdAt || null,
+        lastTaskActivityAt
+    });
 };
 
 const mapBenefitRow = (row) => ({
@@ -344,19 +372,62 @@ router.get('/exec-summary', checkPermission(['can_view_exec_dashboard', 'can_vie
             goalsByProject[pg.projectId].push(pg.goalId.toString());
         });
 
-        // 2c. Fetch task completion stats
-        const taskStatsResult = await pool.request().query(`
-            SELECT projectId, COUNT(*) AS taskCount, SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) AS doneCount
-            FROM Tasks
-            GROUP BY projectId
-        `);
+        const projectIds = projectsResult.recordset
+            .map((project) => Number.parseInt(project.id, 10))
+            .filter((id) => !Number.isNaN(id));
+        const projectIdsAsStrings = projectIds.map((id) => String(id));
         const taskStatsByProject = new Map();
-        taskStatsResult.recordset.forEach((row) => {
-            taskStatsByProject.set(row.projectId, {
-                taskCount: Number(row.taskCount || 0),
-                doneCount: Number(row.doneCount || 0)
+        const taskActivityByProject = new Map();
+
+        if (projectIds.length > 0) {
+            const { text: projectIdText, params: projectIdParams } = buildInClause('execProjectId', projectIds);
+
+            // 2c. Fetch task completion + risk stats for only scoped projects
+            const taskStatsRequest = pool.request();
+            addParams(taskStatsRequest, projectIdParams);
+            const taskStatsResult = await taskStatsRequest.query(`
+                SELECT
+                    projectId,
+                    COUNT(*) AS taskCount,
+                    SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) AS doneCount,
+                    SUM(CASE WHEN status = 'blocked' THEN 1 ELSE 0 END) AS blockedTasks,
+                    SUM(CASE WHEN status <> 'done' AND endDate < CAST(GETDATE() AS DATE) THEN 1 ELSE 0 END) AS overdueTasks,
+                    SUM(CASE WHEN status IN ('in-progress', 'review') THEN 1 ELSE 0 END) AS inFlightTasks
+                FROM Tasks
+                WHERE projectId IN (${projectIdText})
+                GROUP BY projectId
+            `);
+
+            taskStatsResult.recordset.forEach((row) => {
+                taskStatsByProject.set(row.projectId, {
+                    taskCount: normalizeRiskCount(row.taskCount),
+                    doneCount: normalizeRiskCount(row.doneCount),
+                    blockedTasks: normalizeRiskCount(row.blockedTasks),
+                    overdueTasks: normalizeRiskCount(row.overdueTasks),
+                    inFlightTasks: normalizeRiskCount(row.inFlightTasks)
+                });
             });
-        });
+
+            // 2d. Fetch latest task activity timestamp by project for risk staleness signal
+            const { text: taskActivityProjectIdText, params: taskActivityProjectIdParams } = buildInClause('execProjectIdStr', projectIdsAsStrings);
+            const taskActivityRequest = pool.request();
+            addParams(taskActivityRequest, taskActivityProjectIdParams);
+            const taskActivityResult = await taskActivityRequest.query(`
+                SELECT
+                    JSON_VALUE(metadata, '$.projectId') AS projectId,
+                    MAX(createdAt) AS lastTaskActivityAt
+                FROM AuditLog
+                WHERE entityType = 'task'
+                  AND JSON_VALUE(metadata, '$.projectId') IN (${taskActivityProjectIdText})
+                GROUP BY JSON_VALUE(metadata, '$.projectId')
+            `);
+
+            taskActivityResult.recordset.forEach((row) => {
+                const normalizedProjectId = String(row.projectId || '').trim();
+                if (!normalizedProjectId) return;
+                taskActivityByProject.set(normalizedProjectId, row.lastTaskActivityAt || null);
+            });
+        }
 
         // 3. Map Data and Parse JSON
         const summary = projectsResult.recordset.map(p => {
@@ -379,10 +450,27 @@ router.get('/exec-summary', checkPermission(['can_view_exec_dashboard', 'can_vie
                 }
             }
 
-            const taskStats = taskStatsByProject.get(p.id) || { taskCount: 0, doneCount: 0 };
+            const taskStats = taskStatsByProject.get(p.id) || {
+                taskCount: 0,
+                doneCount: 0,
+                blockedTasks: 0,
+                overdueTasks: 0,
+                inFlightTasks: 0
+            };
             const completion = taskStats.taskCount > 0
                 ? Math.round((taskStats.doneCount / taskStats.taskCount) * 100)
                 : 0;
+            const riskSignal = buildRiskSignalFromInputs({
+                taskStats: {
+                    totalTasks: taskStats.taskCount,
+                    blockedTasks: taskStats.blockedTasks,
+                    overdueTasks: taskStats.overdueTasks,
+                    inFlightTasks: taskStats.inFlightTasks
+                },
+                reportStatus: reportDetails?.overallStatus || 'unknown',
+                latestReportAt: p.reportDate || null,
+                lastTaskActivityAt: taskActivityByProject.get(String(p.id)) || null
+            });
 
             return {
                 id: p.id.toString(),
@@ -395,6 +483,7 @@ router.get('/exec-summary', checkPermission(['can_view_exec_dashboard', 'can_vie
                 completion,
                 reportCount: p.reportCount || 0,
                 report: reportDetails,
+                riskSignal,
                 isWatched: !!p.isWatched
             };
         });

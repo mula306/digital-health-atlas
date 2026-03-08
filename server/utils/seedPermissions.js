@@ -1,86 +1,11 @@
 import { getPool, sql } from '../db.js';
-
-const rolePermissionDefaults = {
-    Viewer: {
-        can_view_goals: 1,
-        can_view_projects: 1,
-        can_view_dashboard: 1,
-        can_view_reports: 1,
-        can_view_metrics: 1
-    },
-    Editor: {
-        can_view_goals: 1,
-        can_create_goal: 1,
-        can_edit_goal: 1,
-        can_delete_goal: 0,
-        can_manage_kpis: 1,
-        can_view_projects: 1,
-        can_create_project: 1,
-        can_edit_project: 1,
-        can_delete_project: 0,
-        can_create_reports: 1,
-        can_view_dashboard: 1,
-        can_view_reports: 1,
-        can_view_metrics: 1
-    },
-    IntakeManager: {
-        can_view_intake: 1,
-        can_view_incoming_requests: 1,
-        can_manage_intake_forms: 1,
-        can_manage_intake: 1,
-        can_view_dashboard: 1,
-        can_view_metrics: 1,
-        can_view_governance_queue: 1,
-        can_manage_governance: 1
-    },
-    ExecView: {
-        can_view_dashboard: 1,
-        can_view_exec_dashboard: 1,
-        can_view_reports: 1,
-        can_view_metrics: 1,
-        can_view_governance_queue: 1
-    },
-    IntakeSubmit: {
-        can_view_intake: 1,
-        can_view_incoming_requests: 0,
-        can_manage_intake_forms: 0,
-        can_manage_intake: 0
-    },
-    GovernanceMember: {
-        can_view_governance_queue: 1,
-        can_vote_governance: 1,
-        can_decide_governance: 0,
-        can_manage_governance: 0
-    },
-    GovernanceChair: {
-        can_view_governance_queue: 1,
-        can_vote_governance: 1,
-        can_decide_governance: 1,
-        can_manage_governance: 0
-    },
-    GovernanceAdmin: {
-        can_view_governance_queue: 1,
-        can_vote_governance: 1,
-        can_decide_governance: 1,
-        can_manage_governance: 1
-    }
-};
-
-const buildDefaultEntries = () => {
-    const entries = [];
-    for (const [role, permissions] of Object.entries(rolePermissionDefaults)) {
-        for (const [permission, isAllowed] of Object.entries(permissions)) {
-            entries.push({ role, permission, isAllowed });
-        }
-    }
-    return entries;
-};
+import { buildDefaultPermissionEntries } from './rbacCatalog.js';
 
 export async function seedPermissions() {
     try {
         console.log('Seeding default permissions...');
         const pool = await getPool();
-        const permissions = buildDefaultEntries();
+        const permissions = buildDefaultPermissionEntries();
         const overwriteExisting = process.env.SEED_PERMISSIONS_FORCE === 'true';
 
         const mergeSql = overwriteExisting

@@ -1,6 +1,6 @@
 import express from 'express';
 import { getPool, sql } from '../db.js';
-import { checkPermission, requireAuth, getAuthUser } from '../middleware/authMiddleware.js';
+import { checkPermission, requireAuth, getAuthUser, hasPermission } from '../middleware/authMiddleware.js';
 import { governanceConfigWriteLimiter } from '../middleware/rateLimiters.js';
 import { handleError } from '../utils/errorHandler.js';
 import { logAudit } from '../utils/auditLogger.js';
@@ -532,9 +532,10 @@ const toSessionResponse = (row) => ({
     updatedAt: row.updatedAt
 });
 
-const isBoardChairOrAdmin = async ({ pool, boardId, user }) => {
-    const roles = Array.isArray(user?.roles) ? user.roles : [];
-    if (roles.includes('Admin')) return true;
+const canManageBoardSession = async ({ pool, boardId, user }) => {
+    if (await hasPermission(user, ['can_manage_governance_sessions', 'can_manage_governance'])) {
+        return true;
+    }
     const chairResult = await pool.request()
         .input('boardId', sql.Int, boardId)
         .input('userOid', sql.NVarChar(100), user?.oid || '')
@@ -1813,7 +1814,7 @@ router.get('/boards/:id/sessions/active', checkPermission('can_view_governance_q
     }
 });
 
-router.post('/boards/:id/sessions', checkPermission(['can_decide_governance', 'can_manage_governance']), governanceConfigWriteLimiter, async (req, res) => {
+router.post('/boards/:id/sessions', checkPermission(['can_manage_governance_sessions', 'can_decide_governance', 'can_manage_governance']), governanceConfigWriteLimiter, async (req, res) => {
     try {
         const boardId = Number.parseInt(req.params.id, 10);
         if (Number.isNaN(boardId)) return res.status(400).json({ error: 'Invalid board id' });
@@ -1829,9 +1830,9 @@ router.post('/boards/:id/sessions', checkPermission(['can_decide_governance', 'c
         if (boardResult.recordset.length === 0) return res.status(404).json({ error: 'Board not found' });
 
         const user = getAuthUser(req);
-        const canManageSession = await isBoardChairOrAdmin({ pool, boardId, user });
+        const canManageSession = await canManageBoardSession({ pool, boardId, user });
         if (!canManageSession) {
-            return res.status(403).json({ error: 'Only board chairs (or admins) can create governance sessions.' });
+            return res.status(403).json({ error: 'Only board chairs or users with governance session management permission can create governance sessions.' });
         }
 
         const titleInput = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
@@ -1886,7 +1887,7 @@ router.post('/boards/:id/sessions', checkPermission(['can_decide_governance', 'c
     }
 });
 
-router.put('/sessions/:id/agenda', checkPermission(['can_decide_governance', 'can_manage_governance']), governanceConfigWriteLimiter, async (req, res) => {
+router.put('/sessions/:id/agenda', checkPermission(['can_manage_governance_sessions', 'can_decide_governance', 'can_manage_governance']), governanceConfigWriteLimiter, async (req, res) => {
     try {
         const sessionId = Number.parseInt(req.params.id, 10);
         if (Number.isNaN(sessionId)) return res.status(400).json({ error: 'Invalid session id' });
@@ -1903,9 +1904,9 @@ router.put('/sessions/:id/agenda', checkPermission(['can_decide_governance', 'ca
         const currentSession = sessionResult.recordset[0];
 
         const user = getAuthUser(req);
-        const canManageSession = await isBoardChairOrAdmin({ pool, boardId: currentSession.boardId, user });
+        const canManageSession = await canManageBoardSession({ pool, boardId: currentSession.boardId, user });
         if (!canManageSession) {
-            return res.status(403).json({ error: 'Only board chairs (or admins) can update session agendas.' });
+            return res.status(403).json({ error: 'Only board chairs or users with governance session management permission can update session agendas.' });
         }
         if (currentSession.agendaLocked) {
             return res.status(409).json({ error: 'Agenda is locked for this session.' });
@@ -1941,7 +1942,7 @@ router.put('/sessions/:id/agenda', checkPermission(['can_decide_governance', 'ca
     }
 });
 
-router.post('/sessions/:id/start', checkPermission(['can_decide_governance', 'can_manage_governance']), governanceConfigWriteLimiter, async (req, res) => {
+router.post('/sessions/:id/start', checkPermission(['can_manage_governance_sessions', 'can_decide_governance', 'can_manage_governance']), governanceConfigWriteLimiter, async (req, res) => {
     try {
         const sessionId = Number.parseInt(req.params.id, 10);
         if (Number.isNaN(sessionId)) return res.status(400).json({ error: 'Invalid session id' });
@@ -1961,9 +1962,9 @@ router.post('/sessions/:id/start', checkPermission(['can_decide_governance', 'ca
         }
 
         const user = getAuthUser(req);
-        const canManageSession = await isBoardChairOrAdmin({ pool, boardId: currentSession.boardId, user });
+        const canManageSession = await canManageBoardSession({ pool, boardId: currentSession.boardId, user });
         if (!canManageSession) {
-            return res.status(403).json({ error: 'Only board chairs (or admins) can start sessions.' });
+            return res.status(403).json({ error: 'Only board chairs or users with governance session management permission can start sessions.' });
         }
 
         await pool.request()
@@ -2011,7 +2012,7 @@ router.post('/sessions/:id/start', checkPermission(['can_decide_governance', 'ca
     }
 });
 
-router.post('/sessions/:id/close', checkPermission(['can_decide_governance', 'can_manage_governance']), governanceConfigWriteLimiter, async (req, res) => {
+router.post('/sessions/:id/close', checkPermission(['can_manage_governance_sessions', 'can_decide_governance', 'can_manage_governance']), governanceConfigWriteLimiter, async (req, res) => {
     try {
         const sessionId = Number.parseInt(req.params.id, 10);
         if (Number.isNaN(sessionId)) return res.status(400).json({ error: 'Invalid session id' });
@@ -2028,9 +2029,9 @@ router.post('/sessions/:id/close', checkPermission(['can_decide_governance', 'ca
         const currentSession = sessionResult.recordset[0];
 
         const user = getAuthUser(req);
-        const canManageSession = await isBoardChairOrAdmin({ pool, boardId: currentSession.boardId, user });
+        const canManageSession = await canManageBoardSession({ pool, boardId: currentSession.boardId, user });
         if (!canManageSession) {
-            return res.status(403).json({ error: 'Only board chairs (or admins) can close sessions.' });
+            return res.status(403).json({ error: 'Only board chairs or users with governance session management permission can close sessions.' });
         }
 
         await pool.request()

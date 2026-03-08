@@ -25,7 +25,7 @@ export function OrganizationManager({
         fetchOrgSharingSummary, bulkShareProjects, bulkUnshareProjects,
         bulkShareGoals, bulkUnshareGoals,
         fetchSharingRequests, createSharingRequest, approveSharingRequest, rejectSharingRequest, revokeSharingRequest,
-        authFetch, currentUser
+        authFetch, currentUser, hasPermission
     } = useData();
     const { success, error: showError } = useToast();
 
@@ -73,33 +73,48 @@ export function OrganizationManager({
     const [allProjects, setAllProjects] = useState([]);
     const [allGoals, setAllGoals] = useState([]);
     const [pickerDataLoaded, setPickerDataLoaded] = useState(false);
+    const canManageOrganizations = hasPermission('can_manage_organizations');
+    const canManageSharingRequests = hasPermission('can_manage_sharing_requests');
     const isSectionControlled = typeof onSectionChange === 'function';
     const isSharingTabControlled = typeof onSharingTabChange === 'function';
+    const availableSections = useMemo(() => {
+        const sections = [];
+        if (canManageOrganizations) {
+            sections.push('orgs', 'members');
+        }
+        if (canManageSharingRequests) {
+            sections.push('sharing');
+        }
+        return sections;
+    }, [canManageOrganizations, canManageSharingRequests]);
     const normalizedInitialSection = (
         typeof initialSection === 'string' &&
-        ORG_SECTIONS.has(initialSection)
-    ) ? initialSection : 'orgs';
+        ORG_SECTIONS.has(initialSection) &&
+        availableSections.includes(initialSection)
+    ) ? initialSection : (availableSections[0] || 'orgs');
     const normalizedInitialSharingTab = (
         typeof initialSharingTab === 'string' &&
         ORG_SHARING_TABS.has(initialSharingTab)
     ) ? initialSharingTab : 'projects';
     const activeSection = isSectionControlled
         ? normalizedInitialSection
-        : (ORG_SECTIONS.has(activeSectionState) ? activeSectionState : normalizedInitialSection);
+        : (
+            ORG_SECTIONS.has(activeSectionState) && availableSections.includes(activeSectionState)
+                ? activeSectionState
+                : normalizedInitialSection
+        );
     const sharingSubTab = isSharingTabControlled
         ? normalizedInitialSharingTab
         : (ORG_SHARING_TABS.has(sharingSubTabState) ? sharingSubTabState : normalizedInitialSharingTab);
-    const currentUserRoles = Array.isArray(currentUser?.roles) ? currentUser.roles : [];
-    const isCurrentUserAdmin = currentUserRoles.includes('Admin');
 
     const openSection = useCallback((nextSection) => {
-        if (!ORG_SECTIONS.has(nextSection)) return;
+        if (!ORG_SECTIONS.has(nextSection) || !availableSections.includes(nextSection)) return;
         if (isSectionControlled) {
             onSectionChange?.(nextSection);
             return;
         }
         setActiveSectionState(nextSection);
-    }, [isSectionControlled, onSectionChange]);
+    }, [availableSections, isSectionControlled, onSectionChange]);
 
     const openSharingSubTab = useCallback((nextTab) => {
         if (!ORG_SHARING_TABS.has(nextTab)) return;
@@ -345,7 +360,7 @@ export function OrganizationManager({
 
     // ─── Data Sharing Logic ───
 
-    // Load all projects + goals for the sharing picker (admin-only, no pagination)
+        // Load all projects + goals for the sharing picker (permission-scoped, no pagination)
     const loadPickerData = useCallback(async () => {
         if (pickerDataLoaded) return;
         try {
@@ -693,10 +708,12 @@ export function OrganizationManager({
             label: 'Organizations',
             icon: Building2,
             description: 'Create organizations and set active/inactive status.',
-            ready: true,
+            ready: canManageOrganizations,
             complete: activeOrgs > 0,
             counter: `${activeOrgs}/${organizations.length} active`,
-            blocker: organizations.length === 0 ? 'Create your first organization to continue.' : ''
+            blocker: !canManageOrganizations
+                ? 'Requires organization management permission.'
+                : (organizations.length === 0 ? 'Create your first organization to continue.' : '')
         },
         {
             id: 'members',
@@ -704,10 +721,12 @@ export function OrganizationManager({
             label: 'Members',
             icon: Users,
             description: 'Assign users to active organizations.',
-            ready: activeOrgs > 0,
+            ready: canManageOrganizations && activeOrgs > 0,
             complete: activeOrgs > 0 && orgsWithMembersCount === activeOrgs,
             counter: `${orgsWithMembersCount}/${activeOrgs || 0} staffed`,
-            blocker: activeOrgs > 0 ? '' : 'Activate at least one organization in Step 1.'
+            blocker: !canManageOrganizations
+                ? 'Requires organization management permission.'
+                : (activeOrgs > 0 ? '' : 'Activate at least one organization in Step 1.')
         },
         {
             id: 'sharing',
@@ -715,12 +734,19 @@ export function OrganizationManager({
             label: 'Sharing',
             icon: Share2,
             description: 'Configure cross-organization project and goal sharing.',
-            ready: activeOrgs > 1,
+            ready: canManageSharingRequests && activeOrgs > 1,
             complete: activeOrgs > 1 && selectedOrgSharedCount > 0,
             counter: selectedOrgId ? `${selectedOrgSharedCount} shared` : 'Select org',
-            blocker: activeOrgs > 1 ? '' : 'Activate at least two organizations to enable sharing.'
+            blocker: !canManageSharingRequests
+                ? 'Requires sharing request management permission.'
+                : (activeOrgs > 1 ? '' : 'Activate at least two organizations to enable sharing.')
         }
-    ]), [activeOrgs, organizations.length, orgsWithMembersCount, selectedOrgId, selectedOrgSharedCount]);
+    ]), [activeOrgs, canManageOrganizations, canManageSharingRequests, organizations.length, orgsWithMembersCount, selectedOrgId, selectedOrgSharedCount]);
+
+    const visibleWorkflowSteps = useMemo(
+        () => workflowSteps.filter((step) => availableSections.includes(step.id)),
+        [availableSections, workflowSteps]
+    );
 
     const getStepState = useCallback((step) => {
         if (!step.ready) return 'not-ready';
@@ -770,6 +796,14 @@ export function OrganizationManager({
         return <div className="org-loading"><div className="org-loading-spinner" /><span>Loading organizations...</span></div>;
     }
 
+    if (visibleWorkflowSteps.length === 0) {
+        return (
+            <div className="org-loading">
+                <span>No organization administration actions are available for your account.</span>
+            </div>
+        );
+    }
+
     return (
         <div className="org-manager">
             {/* Overview Bar */}
@@ -801,7 +835,7 @@ export function OrganizationManager({
 
             {/* Guided Workflow Navigation */}
             <div className="org-workflow-nav">
-                {workflowSteps.map((step) => {
+                {visibleWorkflowSteps.map((step) => {
                     const StepIcon = step.icon;
                     const state = getStepState(step);
                     return (
@@ -937,7 +971,7 @@ export function OrganizationManager({
 
                     <div className="org-info-note">
                         <Shield size={14} />
-                        <span><strong>Admin users</strong> can see all data across every organization. Other users only see data belonging to their assigned organization.</span>
+                                <span>Visibility follows your assigned permissions and organization access scope.</span>
                     </div>
                 </div>
             )}
@@ -1283,7 +1317,7 @@ export function OrganizationManager({
                                                             <span className={`org-sharing-request-status ${request.status || 'pending'}`}>
                                                                 {request.status || 'pending'}
                                                             </span>
-                                                            {request.status === 'pending' && isCurrentUserAdmin && (
+                                                            {request.status === 'pending' && canManageSharingRequests && (
                                                                 <>
                                                                     <button className="org-action-btn success" onClick={() => handleApproveRequest(request.id)} disabled={requestActionLoading}>
                                                                         Approve
@@ -1294,7 +1328,7 @@ export function OrganizationManager({
                                                                 </>
                                                             )}
                                                             {(request.status === 'pending' || request.status === 'approved') &&
-                                                                (isCurrentUserAdmin || request.requestedByOid === currentUser?.oid) && (
+                                                                (canManageSharingRequests || request.requestedByOid === currentUser?.oid) && (
                                                                     <button className="org-action-btn danger" onClick={() => handleRevokeRequest(request.id)} disabled={requestActionLoading}>
                                                                         {request.status === 'pending' ? 'Withdraw' : 'Revoke'}
                                                                     </button>

@@ -9,6 +9,7 @@ import jwksRsa from 'jwks-rsa'; // Added for Azure AD
 import 'dotenv/config';
 import { getPool, sql } from './db.js';
 import { seedPermissions } from './utils/seedPermissions.js';
+import { normalizeRoleList } from './utils/rbacCatalog.js';
 
 // Import Routers
 import dashboardRouter from './routes/dashboard.js';
@@ -162,19 +163,19 @@ passport.use(new JwtStrategy(jwtOptions, async (jwt_payload, done) => {
         // Parse DB roles
         let dbRoles = [];
         try {
-            dbRoles = JSON.parse(user.roles || '[]');
+            dbRoles = normalizeRoleList(JSON.parse(user.roles || '[]'));
         } catch {
             dbRoles = [];
         }
 
         const tokenRolesClaim = jwt_payload.roles;
         const normalizedTokenRoles = Array.isArray(tokenRolesClaim)
-            ? tokenRolesClaim.filter((role) => typeof role === 'string' && role.trim()).map((role) => role.trim())
+            ? normalizeRoleList(tokenRolesClaim)
             : null;
         // If token role claims are missing/empty, use explicit env fallback roles (default: none).
         const effectiveTokenRoles = normalizedTokenRoles === null
-            ? AUTH_FALLBACK_ROLES
-            : (normalizedTokenRoles.length > 0 ? normalizedTokenRoles : AUTH_FALLBACK_ROLES);
+            ? normalizeRoleList(AUTH_FALLBACK_ROLES)
+            : (normalizedTokenRoles.length > 0 ? normalizedTokenRoles : normalizeRoleList(AUTH_FALLBACK_ROLES));
 
         const dbRolesSorted = [...dbRoles].sort().join(',');
         const tokenRolesSorted = [...effectiveTokenRoles].sort().join(',');

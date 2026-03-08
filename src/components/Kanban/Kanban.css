@@ -569,6 +569,23 @@
     display: flex;
     flex-direction: column;
     gap: 0.9rem;
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding-right: 0.35rem;
+}
+
+.project-benefits-panel::-webkit-scrollbar {
+    width: 8px;
+}
+
+.project-benefits-panel::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 999px;
+}
+
+.project-benefits-panel::-webkit-scrollbar-thumb:hover {
+    background: var(--text-tertiary);
 }
 
 .project-benefits-grid {
@@ -583,8 +600,9 @@
 .project-benefit-list {
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
-    background: var(--bg-card);
+    background: linear-gradient(150deg, color-mix(in srgb, var(--bg-card) 92%, transparent), var(--bg-secondary));
     padding: 0.8rem;
+    box-shadow: 0 10px 20px color-mix(in srgb, var(--accent-primary) 4%, transparent);
 }
 
 .project-risk-head {
@@ -685,6 +703,42 @@
     margin-bottom: 0.55rem;
 }
 
+.project-benefit-editor .form-group label {
+    display: block;
+    margin-bottom: 0.3rem;
+    font-size: 0.76rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+.project-benefit-editor input,
+.project-benefit-editor select,
+.project-benefit-editor textarea {
+    width: 100%;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-size: 0.84rem;
+    padding: 0.52rem 0.62rem;
+    transition: border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.project-benefit-editor textarea {
+    min-height: 96px;
+    resize: vertical;
+}
+
+.project-benefit-editor input:focus,
+.project-benefit-editor select:focus,
+.project-benefit-editor textarea:focus {
+    outline: none;
+    border-color: var(--accent-primary);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 18%, transparent);
+}
+
 .project-benefit-editor-actions {
     display: flex;
     justify-content: flex-end;
@@ -699,6 +753,37 @@
     margin-bottom: 0.55rem;
 }
 
+.project-benefits-panel .status-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    border: 1px solid transparent;
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 0.18rem 0.55rem;
+    line-height: 1.2;
+    white-space: nowrap;
+}
+
+.project-benefits-panel .status-badge.approved {
+    background: rgba(16, 185, 129, 0.16);
+    color: #166534;
+    border-color: rgba(16, 185, 129, 0.28);
+}
+
+.project-benefits-panel .status-badge.pending {
+    background: rgba(245, 158, 11, 0.16);
+    color: #92400e;
+    border-color: rgba(245, 158, 11, 0.3);
+}
+
+.project-benefits-panel .status-badge.rejected {
+    background: rgba(239, 68, 68, 0.16);
+    color: #991b1b;
+    border-color: rgba(239, 68, 68, 0.28);
+}
+
 .project-benefit-list-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
@@ -708,11 +793,19 @@
 .project-benefit-card {
     border: 1px solid var(--border-color);
     border-radius: var(--radius-sm);
-    background: var(--bg-secondary);
-    padding: 0.6rem;
+    background: var(--bg-primary);
+    padding: 0.65rem;
     display: flex;
     flex-direction: column;
-    gap: 0.4rem;
+    gap: 0.48rem;
+    box-shadow: 0 8px 16px color-mix(in srgb, var(--accent-primary) 4%, transparent);
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.project-benefit-card:hover {
+    border-color: color-mix(in srgb, var(--accent-primary) 45%, var(--border-color));
+    box-shadow: 0 12px 20px color-mix(in srgb, var(--accent-primary) 8%, transparent);
+    transform: translateY(-1px);
 }
 
 .project-benefit-card-head {
@@ -725,19 +818,47 @@
 .project-benefit-card-head strong {
     font-size: 0.83rem;
     color: var(--text-primary);
+    line-height: 1.3;
 }
 
 .project-benefit-card-metrics {
-    display: grid;
-    gap: 0.18rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
     font-size: 0.74rem;
     color: var(--text-secondary);
+}
+
+.project-benefit-card-metrics span {
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
+    padding: 0.12rem 0.45rem;
+    background: var(--bg-secondary);
+    width: auto;
+    max-width: 100%;
 }
 
 .project-benefit-card-actions {
     display: flex;
     justify-content: flex-end;
     gap: 0.35rem;
+    padding-top: 0.15rem;
+}
+
+.project-benefit-card-actions .btn-secondary.btn-sm {
+    min-height: 30px;
+    font-size: 0.75rem;
+    padding: 0.25rem 0.55rem;
+}
+
+.project-benefit-card .project-benefits-muted {
+    margin-top: 0;
+    padding: 0.38rem 0.5rem;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-color);
+    background: color-mix(in srgb, var(--bg-secondary) 88%, transparent);
 }
 
 @media (max-width: 960px) {

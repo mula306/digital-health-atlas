@@ -34,7 +34,7 @@ export function ReportsView() {
         runDueExecutivePacks,
         goals,
         tagGroups,
-        hasRole
+        hasPermission
     } = useData();
     const toast = useToast();
     const [selectedProjectIds, setSelectedProjectIds] = useState([]);
@@ -62,7 +62,7 @@ export function ReportsView() {
         isActive: true,
         filters: { ...DEFAULT_PACK_FILTERS }
     });
-    const canRunDuePacks = hasRole('Admin');
+    const canRunDuePacks = hasPermission('can_run_exec_pack_scheduler');
 
     const availableGoals = useMemo(
         () => (Array.isArray(goals) ? goals : [])

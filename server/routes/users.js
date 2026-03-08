@@ -1,6 +1,6 @@
 import express from 'express';
 import { getPool, sql } from '../db.js';
-import { requireAuth, checkPermission } from '../middleware/authMiddleware.js';
+import { requireAuth, checkPermission, hasPermission } from '../middleware/authMiddleware.js';
 
 const router = express.Router();
 
@@ -38,8 +38,10 @@ router.get('/assignable', checkPermission(['can_view_projects', 'can_edit_projec
             ? 100
             : Math.max(1, Math.min(300, requestedLimit));
 
-        const roles = Array.isArray(req.user?.roles) ? req.user.roles : [];
-        const isAdmin = roles.includes('Admin');
+        const canViewAllOrganizations = await hasPermission(req.user, [
+            'can_manage_organizations',
+            'can_manage_sharing_requests'
+        ]);
         const orgId = req.user?.orgId || null;
 
         const pool = await getPool();
@@ -48,7 +50,7 @@ router.get('/assignable', checkPermission(['can_view_projects', 'can_edit_projec
 
         const whereConditions = [];
 
-        if (!isAdmin) {
+        if (!canViewAllOrganizations) {
             if (!orgId) {
                 whereConditions.push('u.oid = @currentOid');
                 request.input('currentOid', sql.NVarChar(100), String(req.user?.oid || ''));

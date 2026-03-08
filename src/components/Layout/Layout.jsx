@@ -81,7 +81,6 @@ export function Layout({ children, currentView, onViewChange }) {
     });
 
     const {
-        hasRole,
         hasPermission,
         goals = [],
         projects = [],
@@ -96,9 +95,12 @@ export function Layout({ children, currentView, onViewChange }) {
         hasPermission('can_view_incoming_requests') ||
         hasPermission('can_view_governance_queue');
     const canAccessAdminPanel =
-        hasRole('Admin') ||
+        hasPermission('can_manage_role_permissions') ||
+        hasPermission('can_view_audit_log') ||
         hasPermission('can_manage_tags') ||
-        hasPermission('can_manage_governance');
+        hasPermission('can_manage_governance') ||
+        hasPermission('can_manage_organizations') ||
+        hasPermission('can_manage_sharing_requests');
 
     const allNavItems = [
         { id: 'my-work', label: 'My Work', icon: Briefcase },

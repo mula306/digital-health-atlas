@@ -400,12 +400,12 @@ export const StatusReportView = memo(function StatusReportView({ report, project
                     </table>
                 )}
 
-                {/* Executive Summary - Current State */}
+                {/* Executive Summary */}
                 {report.executiveSummary && (
                     <table style={styles.infoTable}>
                         <tbody>
                             <tr>
-                                <td style={{ ...styles.labelCell, width: '15%' }}>Executive Summary - Current State:</td>
+                                <td style={{ ...styles.labelCell, width: '15%' }}>Executive Summary:</td>
                                 <td style={styles.infoTd}>{report.executiveSummary}</td>
                             </tr>
                         </tbody>
