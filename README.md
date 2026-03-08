@@ -124,14 +124,15 @@ Update `server/.env` so `DB_PASSWORD` matches `MSSQL_SA_PASSWORD`.
 
 ```bash
 cd server
-npm run setup-db
+npm run setup-db:full
 ```
 
-`setup-db` does all of the following:
+`setup-db:full` does all of the following:
 
 - Waits for SQL Server readiness with retries
 - Creates the database if missing
 - Applies canonical `schema.sql`
+- Seeds current role-permission defaults
 
 Recent onboarding and permission-seeding updates do not require extra SQL migration for fresh installs.
 
@@ -145,6 +146,8 @@ Use this only when upgrading an existing database created from older versions:
 cd server
 npm run upgrade-db
 ```
+
+`npm run migrate:all` is an alias for `upgrade-db`.
 
 ### 6. Seed fake data (optional)
 
@@ -210,7 +213,10 @@ docker compose -f docker-compose.sqlserver.yml down -v
 ```bash
 cd server
 npm run setup-db
+npm run setup-db:full
 npm run upgrade-db
+npm run migrate:all
+npm run seed:permissions
 npm run setup-db:with-faker
 npm run seed:faker
 npm run migrate:governance:phase3

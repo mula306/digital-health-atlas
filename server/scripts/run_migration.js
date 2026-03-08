@@ -3,15 +3,18 @@
 //   node scripts/run_migration.js <migration-file.sql>
 // Example:
 //   node scripts/run_migration.js migrate_project_watchlist.sql
-import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { getPool } from '../db.js';
+import {
+    assertSafeDbName,
+    connectMasterWithRetry,
+    runSqlFile
+} from './sql_script_runner.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-const splitSqlBatches = (script) =>
-    script.split(/^\s*GO\s*$/gim).filter((batch) => batch.trim());
+const DB_NAME = process.env.DB_NAME || 'DHAtlas';
+const CONNECT_RETRIES = Number.parseInt(process.env.DB_CONNECT_RETRIES || '30', 10);
+const CONNECT_DELAY_MS = Number.parseInt(process.env.DB_CONNECT_DELAY_MS || '2000', 10);
 
 async function runMigration() {
     let pool;
@@ -21,35 +24,18 @@ async function runMigration() {
             throw new Error('Missing migration file argument. Example: node scripts/run_migration.js migrate_project_watchlist.sql');
         }
 
-        const scriptPath = path.join(__dirname, scriptName);
-        if (!fs.existsSync(scriptPath)) {
-            throw new Error(`Migration file not found: ${scriptName}`);
-        }
+        assertSafeDbName(DB_NAME, 'single migration scripts');
+        pool = await connectMasterWithRetry({
+            connectRetries: CONNECT_RETRIES,
+            connectDelayMs: CONNECT_DELAY_MS
+        });
 
-        console.log(`Connecting to database for migration: ${scriptName}`);
-        pool = await getPool();
-
-        console.log('Reading migration script...');
-        const sqlScript = fs.readFileSync(scriptPath, 'utf8');
-        const batches = splitSqlBatches(sqlScript);
-        console.log(`Found ${batches.length} batch(es) to execute.`);
-
-        for (let i = 0; i < batches.length; i += 1) {
-            const batch = batches[i].trim();
-            if (!batch) continue;
-
-            console.log(`Executing batch ${i + 1}/${batches.length}...`);
-            try {
-                await pool.request().query(batch);
-                console.log(`  OK: batch ${i + 1}`);
-            } catch (err) {
-                const snippet = batch.split('\n').slice(0, 3).join(' ').slice(0, 200);
-                throw new Error(
-                    `Batch ${i + 1}/${batches.length} failed in ${scriptName}: ${err.message}\n` +
-                    `Batch snippet: ${snippet}`
-                );
-            }
-        }
+        await runSqlFile({
+            pool,
+            baseDir: __dirname,
+            filename: scriptName,
+            dbName: DB_NAME
+        });
 
         console.log('\nMigration completed successfully.');
         process.exit(0);

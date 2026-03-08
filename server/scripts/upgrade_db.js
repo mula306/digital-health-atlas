@@ -10,25 +10,14 @@ import {
     connectMasterWithRetry,
     runSqlFile
 } from './sql_script_runner.js';
+import { ORDERED_MIGRATION_FILES } from './migration_manifest.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DB_NAME = process.env.DB_NAME || 'DHAtlas';
 const CONNECT_RETRIES = Number.parseInt(process.env.DB_CONNECT_RETRIES || '30', 10);
 const CONNECT_DELAY_MS = Number.parseInt(process.env.DB_CONNECT_DELAY_MS || '2000', 10);
 
-const MIGRATION_FILES_IN_ORDER = [
-    'migrate_governance_phase0.sql',
-    'migrate_governance_phase1.sql',
-    'migrate_governance_phase2.sql',
-    'migrate_governance_phase3.sql',
-    'migrate_multi_org.sql',
-    'migrate_org_sharing_v2.sql',
-    'migrate_project_goals.sql',
-    'migrate_project_watchlist.sql',
-    'migrate_task_tracking_phase1.sql',
-    'migrate_wave2.sql',
-    'migrate_wave3.sql'
-];
+const MIGRATION_FILES_IN_ORDER = ORDERED_MIGRATION_FILES;
 
 async function upgradeDatabase() {
     let pool;

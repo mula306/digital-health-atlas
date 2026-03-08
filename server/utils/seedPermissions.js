@@ -1,7 +1,8 @@
 import { getPool, sql } from '../db.js';
 import { buildDefaultPermissionEntries } from './rbacCatalog.js';
 
-export async function seedPermissions() {
+export async function seedPermissions(options = {}) {
+    const throwOnError = options.throwOnError === true;
     try {
         console.log('Seeding default permissions...');
         const pool = await getPool();
@@ -42,7 +43,19 @@ export async function seedPermissions() {
         }
 
         console.log(`Default permissions seeded successfully (${overwriteExisting ? 'overwrite mode' : 'insert-only mode'}).`);
+        return {
+            ok: true,
+            totalEntries: permissions.length,
+            mode: overwriteExisting ? 'overwrite' : 'insert-only'
+        };
     } catch (err) {
         console.error('Error seeding permissions:', err);
+        if (throwOnError) {
+            throw err;
+        }
+        return {
+            ok: false,
+            error: err
+        };
     }
 }

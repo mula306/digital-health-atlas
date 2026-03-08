@@ -33,3 +33,25 @@ test('canonical schema contains wave3 objects', () => {
     assert.match(schema, /defaultSubmissionEffortHours/);
     assert.match(schema, /IX_ExecutiveReportPack_ScopeOrg/);
 });
+
+test('migration manifest stays aligned with upgrade runner coverage', () => {
+    const manifest = readScript('migration_manifest.js');
+    assert.match(manifest, /migrate_governance_phase0\.sql/);
+    assert.match(manifest, /migrate_governance_phase1\.sql/);
+    assert.match(manifest, /migrate_governance_phase2\.sql/);
+    assert.match(manifest, /migrate_governance_phase3\.sql/);
+    assert.match(manifest, /migrate_multi_org\.sql/);
+    assert.match(manifest, /migrate_org_sharing_v2\.sql/);
+    assert.match(manifest, /migrate_project_goals\.sql/);
+    assert.match(manifest, /migrate_project_watchlist\.sql/);
+    assert.match(manifest, /migrate_task_tracking_phase1\.sql/);
+    assert.match(manifest, /migrate_wave2\.sql/);
+    assert.match(manifest, /migrate_wave3\.sql/);
+});
+
+test('single migration runner supports DB_NAME-safe execution path', () => {
+    const runner = readScript('run_migration.js');
+    assert.match(runner, /assertSafeDbName/);
+    assert.match(runner, /connectMasterWithRetry/);
+    assert.match(runner, /runSqlFile/);
+});
