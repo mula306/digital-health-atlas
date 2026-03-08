@@ -2,11 +2,12 @@ import { useState, memo } from 'react';
 import { useData } from '../../context/DataContext';
 import { KanbanCard } from './KanbanCard';
 
-export const KanbanColumn = memo(function KanbanColumn({ column, tasks, projectId, onTaskClick }) {
+export const KanbanColumn = memo(function KanbanColumn({ column, tasks, projectId, onTaskClick, canEditTask = false }) {
     const { moveTask } = useData();
     const [isDragOver, setIsDragOver] = useState(false);
 
     const handleDragOver = (e) => {
+        if (!canEditTask) return;
         e.preventDefault();
         e.dataTransfer.dropEffect = 'move';
         setIsDragOver(true);
@@ -19,6 +20,7 @@ export const KanbanColumn = memo(function KanbanColumn({ column, tasks, projectI
     };
 
     const handleDrop = (e) => {
+        if (!canEditTask) return;
         e.preventDefault();
         setIsDragOver(false);
 
@@ -50,6 +52,7 @@ export const KanbanColumn = memo(function KanbanColumn({ column, tasks, projectI
                         task={task}
                         projectId={projectId}
                         onClick={onTaskClick}
+                        canEditTask={canEditTask}
                     />
                 ))}
             </div>

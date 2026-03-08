@@ -9,8 +9,6 @@ import { KPIManager } from './KPIManager';
 import './KPI.css';
 import { getDescendantGoalIds } from '../../utils/goalHelpers';
 
-import { useAuth } from '../../hooks/useAuth';
-
 export function GoalItem({
     goal,
     level = 0,
@@ -22,8 +20,11 @@ export function GoalItem({
     watchedOnly = false,
     projectsSource = []
 }) {
-    const { goals, deleteGoal, projects } = useData();
-    const { canEdit, canDelete } = useAuth();
+    const { goals, deleteGoal, projects, hasPermission } = useData();
+    const canCreateGoal = hasPermission('can_create_goal');
+    const canEditGoal = hasPermission('can_edit_goal');
+    const canDeleteGoal = hasPermission('can_delete_goal');
+    const canManageKpis = hasPermission('can_manage_kpis');
     const toast = useToast();
     const [isExpanded, setIsExpanded] = useState(level === 0);
     const [childrenCollapsed, setChildrenCollapsed] = useState(null);
@@ -237,14 +238,14 @@ export function GoalItem({
                                     <Folder size={14} />
                                     <span>{projectCount}</span>
                                 </button>
-                                {canEdit && goal.type !== 'branch' && (
+                                {canCreateGoal && goal.type !== 'branch' && (
                                     <button className="icon-btn" onClick={() => setShowAddModal(true)} title="Add Sub-goal">
                                         <Plus size={16} />
                                     </button>
                                 )}
 
                                 {/* Dropdown Menu - only show if canEdit or canDelete */}
-                                {(canEdit || canDelete) && (
+                                {(canEditGoal || canDeleteGoal) && (
                                     <div className="goal-menu-container" ref={menuRef}>
                                         <button className="icon-btn" onClick={handleMenuToggle}>
                                             <MoreHorizontal size={16} />
@@ -252,13 +253,13 @@ export function GoalItem({
 
                                         {showMenu && (
                                             <div className="goal-dropdown-menu">
-                                                {canEdit && (
+                                                {canEditGoal && (
                                                     <button className="menu-item" onClick={handleEdit}>
                                                         <Edit size={14} />
                                                         Edit Goal
                                                     </button>
                                                 )}
-                                                {canDelete && (
+                                                {canDeleteGoal && (
                                                     <button
                                                         className={`menu-item danger ${confirmDelete ? 'confirm' : ''}`}
                                                         onClick={handleDelete}
@@ -325,7 +326,13 @@ export function GoalItem({
                 closeOnOverlayClick={false}
             >
                 <EditGoalForm goal={goal} onClose={() => setShowEditModal(false)} />
-                <KPIManager goalId={goal.id} kpis={goal.kpis || []} />
+                {canManageKpis ? (
+                    <KPIManager goalId={goal.id} kpis={goal.kpis || []} />
+                ) : (
+                    <p style={{ marginTop: '0.75rem', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                        KPI editing is restricted for your role.
+                    </p>
+                )}
             </Modal>
         </div>
     );

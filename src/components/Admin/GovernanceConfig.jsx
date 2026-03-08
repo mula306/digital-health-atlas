@@ -34,7 +34,9 @@ const normalizeCriteriaForSave = (criteria) => {
     }));
 };
 
-export function GovernanceConfig() {
+const GOVERNANCE_CONFIG_TABS = new Set(['settings', 'boards', 'members', 'criteria']);
+
+export function GovernanceConfig({ initialTab = null, onTabChange = null }) {
     const {
         getGovernanceSettings,
         updateGovernanceSettings,
@@ -65,6 +67,7 @@ export function GovernanceConfig() {
     const [voteWindowDays, setVoteWindowDays] = useState('');
     const [phase3Ready, setPhase3Ready] = useState(false);
     const [boardPolicyReady, setBoardPolicyReady] = useState(false);
+    const [boardCapacityReady, setBoardCapacityReady] = useState(false);
     const [boards, setBoards] = useState([]);
     const [selectedBoardId, setSelectedBoardId] = useState('');
     const [selectedBoardName, setSelectedBoardName] = useState('');
@@ -74,6 +77,9 @@ export function GovernanceConfig() {
     const [selectedBoardQuorumMinCount, setSelectedBoardQuorumMinCount] = useState(1);
     const [selectedBoardDecisionRequiresQuorum, setSelectedBoardDecisionRequiresQuorum] = useState(true);
     const [selectedBoardVoteWindowDays, setSelectedBoardVoteWindowDays] = useState('');
+    const [selectedBoardWeeklyCapacityHours, setSelectedBoardWeeklyCapacityHours] = useState('');
+    const [selectedBoardWipLimit, setSelectedBoardWipLimit] = useState('');
+    const [selectedBoardDefaultSubmissionEffortHours, setSelectedBoardDefaultSubmissionEffortHours] = useState('40');
     const [newBoardName, setNewBoardName] = useState('');
     const [newBoardActive, setNewBoardActive] = useState(true);
     const [boardSearch, setBoardSearch] = useState('');
@@ -89,10 +95,18 @@ export function GovernanceConfig() {
     const [criteriaVersions, setCriteriaVersions] = useState([]);
     const [selectedVersionId, setSelectedVersionId] = useState('');
     const [criteriaDraft, setCriteriaDraft] = useState(cloneCriteria([]));
-    const [configTab, setConfigTab] = useState('settings');
+    const [configTabState, setConfigTabState] = useState('settings');
     const [settingsDirty, setSettingsDirty] = useState(false);
     const [boardDirty, setBoardDirty] = useState(false);
     const [criteriaDirty, setCriteriaDirty] = useState(false);
+    const isConfigTabControlled = typeof onTabChange === 'function';
+    const normalizedInitialConfigTab = (
+        typeof initialTab === 'string' &&
+        GOVERNANCE_CONFIG_TABS.has(initialTab)
+    ) ? initialTab : 'settings';
+    const configTab = isConfigTabControlled
+        ? normalizedInitialConfigTab
+        : (GOVERNANCE_CONFIG_TABS.has(configTabState) ? configTabState : normalizedInitialConfigTab);
 
     const selectedBoard = useMemo(() => {
         return boards.find(board => String(board.id) === String(selectedBoardId)) || null;
@@ -157,6 +171,20 @@ export function GovernanceConfig() {
                 : Number(fromBoard.voteWindowDays)
         };
     }, [selectedBoard, quorumPercent, quorumMinCount, decisionRequiresQuorum]);
+    const selectedBoardCapacity = useMemo(() => {
+        const fromBoard = selectedBoard?.boardCapacity || {};
+        return {
+            weeklyCapacityHours: fromBoard.weeklyCapacityHours === null || fromBoard.weeklyCapacityHours === undefined
+                ? null
+                : Number(fromBoard.weeklyCapacityHours),
+            wipLimit: fromBoard.wipLimit === null || fromBoard.wipLimit === undefined
+                ? null
+                : Number(fromBoard.wipLimit),
+            defaultSubmissionEffortHours: fromBoard.defaultSubmissionEffortHours === null || fromBoard.defaultSubmissionEffortHours === undefined
+                ? 40
+                : Number(fromBoard.defaultSubmissionEffortHours)
+        };
+    }, [selectedBoard]);
     const activeMembersCount = useMemo(() => {
         return members.filter(member => member.isActive).length;
     }, [members]);
@@ -366,6 +394,7 @@ export function GovernanceConfig() {
             );
             setPhase3Ready(!!settingsResult?.phase3Ready);
             setBoardPolicyReady(!!settingsResult?.boardPolicyReady);
+            setBoardCapacityReady(!!settingsResult?.boardCapacityReady);
             const nextBoards = Array.isArray(boardResults) ? boardResults : [];
             setBoards(nextBoards);
             await loadBoardReadiness(nextBoards);
@@ -432,6 +461,22 @@ export function GovernanceConfig() {
                     ? ''
                     : String(policy.voteWindowDays)
             );
+            const capacity = selectedBoard.boardCapacity || {};
+            setSelectedBoardWeeklyCapacityHours(
+                capacity.weeklyCapacityHours === null || capacity.weeklyCapacityHours === undefined
+                    ? ''
+                    : String(capacity.weeklyCapacityHours)
+            );
+            setSelectedBoardWipLimit(
+                capacity.wipLimit === null || capacity.wipLimit === undefined
+                    ? ''
+                    : String(capacity.wipLimit)
+            );
+            setSelectedBoardDefaultSubmissionEffortHours(
+                capacity.defaultSubmissionEffortHours === null || capacity.defaultSubmissionEffortHours === undefined
+                    ? '40'
+                    : String(capacity.defaultSubmissionEffortHours)
+            );
         } else {
             setSelectedBoardName('');
             setSelectedBoardActive(true);
@@ -444,6 +489,9 @@ export function GovernanceConfig() {
                     ? ''
                     : String(voteWindowDays)
             );
+            setSelectedBoardWeeklyCapacityHours('');
+            setSelectedBoardWipLimit('');
+            setSelectedBoardDefaultSubmissionEffortHours('40');
         }
     }, [selectedBoard, quorumPercent, quorumMinCount, decisionRequiresQuorum, voteWindowDays]);
 
@@ -478,11 +526,23 @@ export function GovernanceConfig() {
         return window.confirm('You have unsaved changes. Discard them and continue?');
     }, [hasUnsavedChanges]);
 
+    useEffect(() => {
+        if (!isConfigTabControlled) return;
+        if (!GOVERNANCE_CONFIG_TABS.has(configTab)) return;
+        if (initialTab !== configTab) {
+            onTabChange?.(configTab);
+        }
+    }, [isConfigTabControlled, configTab, initialTab, onTabChange]);
+
     const handleConfigTabChange = (nextTab) => {
         if (nextTab === configTab) return;
         if (!confirmDiscardChanges()) return;
         resetDirtyFlags();
-        setConfigTab(nextTab);
+        if (isConfigTabControlled) {
+            onTabChange?.(nextTab);
+        } else {
+            setConfigTabState(nextTab);
+        }
     };
 
     const handleBoardSelectionChange = (nextBoardId) => {
@@ -527,10 +587,18 @@ export function GovernanceConfig() {
         }
         try {
             setBoardSaving(true);
-            const created = await createGovernanceBoard({
+            const createPayload = {
                 name: newBoardName.trim(),
                 isActive: newBoardActive
-            });
+            };
+            if (boardCapacityReady) {
+                createPayload.boardCapacity = {
+                    weeklyCapacityHours: null,
+                    wipLimit: null,
+                    defaultSubmissionEffortHours: 40
+                };
+            }
+            const created = await createGovernanceBoard(createPayload);
             const nextBoards = await fetchGovernanceBoards({ includeInactive: true });
             setBoards(nextBoards);
             await loadBoardReadiness(nextBoards);
@@ -554,7 +622,11 @@ export function GovernanceConfig() {
             return;
         }
         const canEditBoardPolicy = phase3Ready && boardPolicyReady;
+        const canEditBoardCapacity = boardCapacityReady;
         const parsedBoardVoteWindow = selectedBoardVoteWindowDays === '' ? null : Number(selectedBoardVoteWindowDays);
+        const parsedWeeklyCapacity = selectedBoardWeeklyCapacityHours === '' ? null : Number(selectedBoardWeeklyCapacityHours);
+        const parsedWipLimit = selectedBoardWipLimit === '' ? null : Number(selectedBoardWipLimit);
+        const parsedDefaultEffort = Number(selectedBoardDefaultSubmissionEffortHours);
         if (canEditBoardPolicy && !selectedBoardUseGlobalPolicyDefaults) {
             const percent = Number(selectedBoardQuorumPercent);
             const minCount = Number(selectedBoardQuorumMinCount);
@@ -574,6 +646,20 @@ export function GovernanceConfig() {
                 return;
             }
         }
+        if (canEditBoardCapacity) {
+            if (parsedWeeklyCapacity !== null && (!Number.isFinite(parsedWeeklyCapacity) || parsedWeeklyCapacity <= 0)) {
+                toast.error('Weekly capacity hours must be empty or a number greater than 0');
+                return;
+            }
+            if (parsedWipLimit !== null && (!Number.isFinite(parsedWipLimit) || parsedWipLimit < 1)) {
+                toast.error('WIP limit must be empty or an integer greater than or equal to 1');
+                return;
+            }
+            if (!Number.isFinite(parsedDefaultEffort) || parsedDefaultEffort <= 0) {
+                toast.error('Default submission effort must be greater than 0');
+                return;
+            }
+        }
         try {
             setBoardSaving(true);
             const boardUpdatePayload = {
@@ -587,6 +673,13 @@ export function GovernanceConfig() {
                     quorumMinCount: Number(selectedBoardQuorumMinCount),
                     decisionRequiresQuorum: !!selectedBoardDecisionRequiresQuorum,
                     voteWindowDays: parsedBoardVoteWindow
+                };
+            }
+            if (canEditBoardCapacity) {
+                boardUpdatePayload.boardCapacity = {
+                    weeklyCapacityHours: parsedWeeklyCapacity,
+                    wipLimit: parsedWipLimit === null ? null : Math.trunc(parsedWipLimit),
+                    defaultSubmissionEffortHours: parsedDefaultEffort
                 };
             }
 
@@ -1038,6 +1131,13 @@ export function GovernanceConfig() {
                                         const isSelected = String(board.id) === String(selectedBoardId);
                                         const policy = board.effectivePolicy || board.policy?.effective || null;
                                         const usesGlobalPolicy = board.useGlobalPolicyDefaults ?? board.policy?.useGlobalDefaults ?? true;
+                                        const boardCapacity = board.boardCapacity || {};
+                                        const boardWeeklyCapacity = boardCapacity.weeklyCapacityHours === null || boardCapacity.weeklyCapacityHours === undefined
+                                            ? null
+                                            : Number(boardCapacity.weeklyCapacityHours);
+                                        const boardWipLimit = boardCapacity.wipLimit === null || boardCapacity.wipLimit === undefined
+                                            ? null
+                                            : Number(boardCapacity.wipLimit);
 
                                         return (
                                             <button
@@ -1056,6 +1156,12 @@ export function GovernanceConfig() {
                                                     <span>{criteriaMeta.publishedCount || 0} published criteria</span>
                                                     <span>
                                                         Q{Number(policy?.quorumPercent ?? quorumPercent)}% / min {Number(policy?.quorumMinCount ?? quorumMinCount)}
+                                                    </span>
+                                                    <span>
+                                                        {boardWeeklyCapacity === null ? 'Capacity open' : `${boardWeeklyCapacity}h/week`}
+                                                    </span>
+                                                    <span>
+                                                        {boardWipLimit === null ? 'WIP open' : `WIP limit ${boardWipLimit}`}
                                                     </span>
                                                     <span>{usesGlobalPolicy ? 'Global policy' : 'Board policy'}</span>
                                                 </div>
@@ -1100,6 +1206,14 @@ export function GovernanceConfig() {
                                             <span>
                                                 Q{selectedBoardEffectivePolicy.quorumPercent}% / min {selectedBoardEffectivePolicy.quorumMinCount}
                                             </span>
+                                        </div>
+                                        <div className="governance-summary-item">
+                                            <strong>Weekly Capacity</strong>
+                                            <span>{selectedBoardCapacity.weeklyCapacityHours === null ? 'Open' : `${selectedBoardCapacity.weeklyCapacityHours}h`}</span>
+                                        </div>
+                                        <div className="governance-summary-item">
+                                            <strong>WIP Limit</strong>
+                                            <span>{selectedBoardCapacity.wipLimit === null ? 'Open' : selectedBoardCapacity.wipLimit}</span>
                                         </div>
                                         <div className="governance-summary-item">
                                             <strong>Readiness</strong>
@@ -1268,6 +1382,60 @@ export function GovernanceConfig() {
                                             {!boardPolicyReady && phase3Ready && (
                                                 <p className="governance-alert">
                                                     Board override fields are unavailable until `npm run migrate:governance:phase3` is applied in `server`.
+                                                </p>
+                                            )}
+                                        </div>
+                                        <div className="governance-subcard governance-board-policy-card">
+                                            <h5>Capacity Planning</h5>
+                                            <div className="governance-grid">
+                                                <div className="form-group">
+                                                    <label>Weekly Capacity (hours, optional)</label>
+                                                    <input
+                                                        type="number"
+                                                        min="1"
+                                                        value={selectedBoardWeeklyCapacityHours}
+                                                        onChange={(e) => {
+                                                            setSelectedBoardWeeklyCapacityHours(e.target.value);
+                                                            setBoardDirty(true);
+                                                        }}
+                                                        placeholder="No hard cap"
+                                                        disabled={!boardCapacityReady}
+                                                    />
+                                                </div>
+                                                <div className="form-group">
+                                                    <label>WIP Limit (optional)</label>
+                                                    <input
+                                                        type="number"
+                                                        min="1"
+                                                        value={selectedBoardWipLimit}
+                                                        onChange={(e) => {
+                                                            setSelectedBoardWipLimit(e.target.value);
+                                                            setBoardDirty(true);
+                                                        }}
+                                                        placeholder="No hard limit"
+                                                        disabled={!boardCapacityReady}
+                                                    />
+                                                </div>
+                                                <div className="form-group">
+                                                    <label>Default Submission Effort (hours)</label>
+                                                    <input
+                                                        type="number"
+                                                        min="1"
+                                                        value={selectedBoardDefaultSubmissionEffortHours}
+                                                        onChange={(e) => {
+                                                            setSelectedBoardDefaultSubmissionEffortHours(e.target.value);
+                                                            setBoardDirty(true);
+                                                        }}
+                                                        disabled={!boardCapacityReady}
+                                                    />
+                                                </div>
+                                            </div>
+                                            <p className="governance-muted">
+                                                Queue scenario modeling uses these values to estimate approve-now impact.
+                                            </p>
+                                            {!boardCapacityReady && (
+                                                <p className="governance-alert">
+                                                    Capacity fields are unavailable until `npm run migrate:wave3` is applied in `server`.
                                                 </p>
                                             )}
                                         </div>

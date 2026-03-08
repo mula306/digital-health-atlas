@@ -35,7 +35,15 @@ router.get('/stats', checkPermission(['can_view_projects']), withSharedScope, as
 
         // Org scoping
         if (req.orgId) {
-            whereConditions.push('(p.orgId = @orgId OR p.id IN (SELECT projectId FROM ProjectOrgAccess WHERE orgId = @orgId))');
+            whereConditions.push(`(
+                p.orgId = @orgId
+                OR p.id IN (
+                    SELECT projectId
+                    FROM ProjectOrgAccess
+                    WHERE orgId = @orgId
+                      AND (expiresAt IS NULL OR expiresAt > GETDATE())
+                )
+            )`);
             queryParams.orgId = req.orgId;
         }
 

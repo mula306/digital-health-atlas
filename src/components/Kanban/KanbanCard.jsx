@@ -43,10 +43,11 @@ function formatEndDate(task) {
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
-export const KanbanCard = memo(function KanbanCard({ task, projectId, onClick }) {
+export const KanbanCard = memo(function KanbanCard({ task, projectId, onClick, canEditTask = false }) {
     const { moveTask } = useData();
 
     const handleStatusChange = (e) => {
+        if (!canEditTask) return;
         e.stopPropagation();
         moveTask(projectId, task.id, e.target.value);
     };
@@ -58,6 +59,7 @@ export const KanbanCard = memo(function KanbanCard({ task, projectId, onClick })
     };
 
     const handleDragStart = (e) => {
+        if (!canEditTask) return;
         e.dataTransfer.setData('taskId', task.id);
         e.dataTransfer.setData('projectId', projectId);
         e.dataTransfer.effectAllowed = 'move';
@@ -75,7 +77,7 @@ export const KanbanCard = memo(function KanbanCard({ task, projectId, onClick })
     return (
         <div
             className={`kanban-card ${overdue ? 'overdue' : ''} ${dueSoon && !overdue ? 'due-soon' : ''}`}
-            draggable="true"
+            draggable={canEditTask}
             onDragStart={handleDragStart}
             onDragEnd={handleDragEnd}
             onClick={() => onClick && onClick(task)}
@@ -92,6 +94,7 @@ export const KanbanCard = memo(function KanbanCard({ task, projectId, onClick })
                         value={task.status}
                         onChange={handleStatusChange}
                         onClick={e => e.stopPropagation()}
+                        disabled={!canEditTask}
                     >
                         <option value="todo">To Do</option>
                         <option value="in-progress">In Prog</option>

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect, useCallback } from 'react';
 import { Plus, Copy, Check, Edit2, Trash2, FileText, Inbox, Scale, CheckCircle, AlertCircle } from 'lucide-react';
 import { useData } from '../../context/DataContext';
 import { Modal } from '../UI/Modal';
@@ -7,7 +7,9 @@ import { IntakeRequestsList } from './IntakeRequestsList';
 import { MySubmissionsList } from './MySubmissionsList';
 import './Intake.css';
 
-export function IntakePage() {
+const INTAKE_STAGE_IDS = new Set(['my-requests', 'submit', 'triage', 'governance', 'resolution', 'form-admin']);
+
+export function IntakePage({ initialStage = null, onStageChange = null }) {
     const {
         intakeForms,
         deleteIntakeForm,
@@ -24,7 +26,7 @@ export function IntakePage() {
     const canVoteGovernance = hasPermission('can_vote_governance');
     const canDecideGovernance = hasPermission('can_decide_governance');
 
-    const [activeView, setActiveView] = useState(null);
+    const [activeViewState, setActiveViewState] = useState(null);
     const [showFormModal, setShowFormModal] = useState(false);
     const [editingForm, setEditingForm] = useState(null);
     const [copiedId, setCopiedId] = useState('');
@@ -116,7 +118,30 @@ export function IntakePage() {
         return 'my-requests';
     }, [availableViews, governancePersona]);
 
-    const resolvedActiveView = activeView && availableViews.has(activeView) ? activeView : defaultView;
+    const isStageControlled = typeof onStageChange === 'function';
+    const requestedStage = String(initialStage || '').trim();
+    const normalizedRequestedStage = requestedStage && INTAKE_STAGE_IDS.has(requestedStage) && availableViews.has(requestedStage)
+        ? requestedStage
+        : null;
+    const activeView = isStageControlled ? normalizedRequestedStage : activeViewState;
+    const resolvedActiveView = activeView && availableViews.has(activeView)
+        ? activeView
+        : (normalizedRequestedStage || defaultView);
+
+    useEffect(() => {
+        if (!resolvedActiveView || !INTAKE_STAGE_IDS.has(resolvedActiveView)) return;
+        onStageChange?.(resolvedActiveView);
+    }, [onStageChange, resolvedActiveView]);
+
+    const openStage = useCallback((stageId) => {
+        const normalized = String(stageId || '').trim();
+        if (!normalized || !INTAKE_STAGE_IDS.has(normalized)) return;
+        if (isStageControlled) {
+            onStageChange?.(normalized);
+            return;
+        }
+        setActiveViewState(normalized);
+    }, [isStageControlled, onStageChange]);
 
     const workflowViews = useMemo(() => {
         return [
@@ -368,7 +393,7 @@ export function IntakePage() {
                                 <button
                                     key={view.id}
                                     className={`workflow-step-card ${resolvedActiveView === view.id ? 'active' : ''} ${state}`}
-                                    onClick={() => setActiveView(view.id)}
+                                    onClick={() => openStage(view.id)}
                                     disabled={!view.ready}
                                 >
                                     <div className="workflow-step-card-head">
@@ -396,14 +421,14 @@ export function IntakePage() {
                     <div className="intake-utility-nav">
                         <button
                             className={`intake-utility-btn ${resolvedActiveView === 'my-requests' ? 'active' : ''}`}
-                            onClick={() => setActiveView('my-requests')}
+                            onClick={() => openStage('my-requests')}
                         >
                             <FileText size={15} /> My Requests
                         </button>
                         {canManageForms && (
                             <button
                                 className={`intake-utility-btn ${resolvedActiveView === 'form-admin' ? 'active' : ''}`}
-                                onClick={() => setActiveView('form-admin')}
+                                onClick={() => openStage('form-admin')}
                             >
                                 <Plus size={15} /> Form Admin
                             </button>

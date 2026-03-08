@@ -70,6 +70,226 @@ const normalizeTaskString = (value, maxLength = 0) => {
     return trimmed;
 };
 
+const BENEFIT_STATUSES = new Set(['planned', 'in-progress', 'realized', 'at-risk', 'not-realized']);
+
+const toNullableDateOnly = (value) => {
+    if (value === undefined) return undefined;
+    if (value === null || value === '') return null;
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return null;
+    return parsed.toISOString().slice(0, 10);
+};
+
+const toNullableNumber = (value) => {
+    if (value === undefined) return undefined;
+    if (value === null || value === '') return null;
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return null;
+    return Math.round(parsed * 100) / 100;
+};
+
+const hasProjectBenefitSchema = async (pool) => {
+    const result = await pool.request().query(`
+        SELECT
+            CASE WHEN OBJECT_ID('ProjectBenefitRealization', 'U') IS NOT NULL THEN 1 ELSE 0 END AS hasBenefitTable,
+            CASE WHEN COL_LENGTH('ProjectBenefitRealization', 'status') IS NOT NULL THEN 1 ELSE 0 END AS hasStatus,
+            CASE WHEN COL_LENGTH('ProjectBenefitRealization', 'governanceDecision') IS NOT NULL THEN 1 ELSE 0 END AS hasGovernanceDecision
+    `);
+    const row = result.recordset[0] || {};
+    return !!(row.hasBenefitTable && row.hasStatus && row.hasGovernanceDecision);
+};
+
+const computeRiskLevel = (score) => {
+    if (score >= 75) return 'critical';
+    if (score >= 50) return 'high';
+    if (score >= 30) return 'medium';
+    return 'low';
+};
+
+const buildProjectRiskSignal = async ({ pool, projectId }) => {
+    const taskStatsResult = await pool.request()
+        .input('projectId', sql.Int, projectId)
+        .query(`
+            SELECT
+                COUNT(*) AS totalTasks,
+                SUM(CASE WHEN status = 'blocked' THEN 1 ELSE 0 END) AS blockedTasks,
+                SUM(CASE WHEN status <> 'done' AND endDate < CAST(GETDATE() AS DATE) THEN 1 ELSE 0 END) AS overdueTasks,
+                SUM(CASE WHEN status IN ('in-progress', 'review') THEN 1 ELSE 0 END) AS inFlightTasks
+            FROM Tasks
+            WHERE projectId = @projectId
+        `);
+    const taskStats = taskStatsResult.recordset[0] || {};
+
+    const reportResult = await pool.request()
+        .input('projectId', sql.Int, projectId)
+        .query(`
+            SELECT TOP 1
+                createdAt,
+                COALESCE(NULLIF(LOWER(JSON_VALUE(reportData, '$.overallStatus')), ''), 'unknown') AS overallStatus
+            FROM StatusReports
+            WHERE projectId = @projectId
+            ORDER BY createdAt DESC, version DESC
+        `);
+    const latestReport = reportResult.recordset[0] || null;
+
+    const activityResult = await pool.request()
+        .input('projectId', sql.NVarChar(20), String(projectId))
+        .query(`
+            SELECT MAX(createdAt) AS lastTaskActivityAt
+            FROM AuditLog
+            WHERE entityType = 'task'
+              AND JSON_VALUE(metadata, '$.projectId') = @projectId
+        `);
+    const lastTaskActivityAt = activityResult.recordset[0]?.lastTaskActivityAt || null;
+
+    const totalTasks = Number(taskStats.totalTasks || 0);
+    const blockedTasks = Number(taskStats.blockedTasks || 0);
+    const overdueTasks = Number(taskStats.overdueTasks || 0);
+    const inFlightTasks = Number(taskStats.inFlightTasks || 0);
+    const overdueRatio = totalTasks > 0 ? overdueTasks / totalTasks : 0;
+    const reportStatus = latestReport?.overallStatus || 'unknown';
+
+    const now = Date.now();
+    const daysSinceLastReport = latestReport?.createdAt
+        ? Math.floor((now - new Date(latestReport.createdAt).getTime()) / 86400000)
+        : null;
+    const daysSinceTaskActivity = lastTaskActivityAt
+        ? Math.floor((now - new Date(lastTaskActivityAt).getTime()) / 86400000)
+        : null;
+
+    let score = 0;
+    const signals = [];
+
+    if (overdueTasks > 0) {
+        const points = Math.min(30, overdueTasks * 6);
+        score += points;
+        signals.push({
+            key: 'overdue_tasks',
+            severity: overdueTasks >= 4 ? 'high' : 'medium',
+            points,
+            message: `${overdueTasks} overdue task${overdueTasks === 1 ? '' : 's'} are at risk of delaying delivery.`
+        });
+    }
+
+    if (blockedTasks > 0) {
+        const points = Math.min(25, blockedTasks * 8);
+        score += points;
+        signals.push({
+            key: 'blocked_tasks',
+            severity: blockedTasks >= 2 ? 'high' : 'medium',
+            points,
+            message: `${blockedTasks} blocked task${blockedTasks === 1 ? '' : 's'} need dependency resolution.`
+        });
+    }
+
+    if (reportStatus === 'red') {
+        score += 25;
+        signals.push({
+            key: 'status_report_red',
+            severity: 'high',
+            points: 25,
+            message: 'Latest status report is red.'
+        });
+    } else if (reportStatus === 'yellow') {
+        score += 12;
+        signals.push({
+            key: 'status_report_yellow',
+            severity: 'medium',
+            points: 12,
+            message: 'Latest status report is yellow.'
+        });
+    } else if (reportStatus === 'unknown') {
+        score += 6;
+        signals.push({
+            key: 'status_report_unknown',
+            severity: 'low',
+            points: 6,
+            message: 'No current status report is available.'
+        });
+    }
+
+    if (daysSinceLastReport !== null) {
+        if (daysSinceLastReport > 21) {
+            score += 20;
+            signals.push({
+                key: 'stale_report_high',
+                severity: 'high',
+                points: 20,
+                message: `Status report is stale (${daysSinceLastReport} days since last update).`
+            });
+        } else if (daysSinceLastReport > 14) {
+            score += 10;
+            signals.push({
+                key: 'stale_report_medium',
+                severity: 'medium',
+                points: 10,
+                message: `Status report is aging (${daysSinceLastReport} days since last update).`
+            });
+        }
+    }
+
+    if (daysSinceTaskActivity !== null && daysSinceTaskActivity > 14) {
+        score += 8;
+        signals.push({
+            key: 'stale_task_activity',
+            severity: 'medium',
+            points: 8,
+            message: `Task activity appears stalled (${daysSinceTaskActivity} days since last task update).`
+        });
+    }
+
+    if (overdueRatio >= 0.35 && totalTasks >= 3) {
+        score += 10;
+        signals.push({
+            key: 'overdue_ratio',
+            severity: 'medium',
+            points: 10,
+            message: `${Math.round(overdueRatio * 100)}% of tracked tasks are overdue.`
+        });
+    }
+
+    score = Math.min(100, Math.round(score));
+    const level = computeRiskLevel(score);
+
+    return {
+        score,
+        level,
+        metrics: {
+            totalTasks,
+            inFlightTasks,
+            blockedTasks,
+            overdueTasks,
+            overdueRatio: Math.round(overdueRatio * 1000) / 1000,
+            reportStatus,
+            daysSinceLastReport,
+            daysSinceTaskActivity
+        },
+        signals
+    };
+};
+
+const mapBenefitRow = (row) => ({
+    id: String(row.id),
+    projectId: String(row.projectId),
+    title: row.title,
+    description: row.description || null,
+    linkedKpiId: row.linkedKpiId === null || row.linkedKpiId === undefined ? null : String(row.linkedKpiId),
+    linkedKpiName: row.linkedKpiName || null,
+    baselineValue: row.baselineValue === null || row.baselineValue === undefined ? null : Number(row.baselineValue),
+    targetValue: row.targetValue === null || row.targetValue === undefined ? null : Number(row.targetValue),
+    currentValue: row.currentValue === null || row.currentValue === undefined ? null : Number(row.currentValue),
+    unit: row.unit || null,
+    status: row.status || 'planned',
+    dueAt: row.dueAt || null,
+    realizedAt: row.realizedAt || null,
+    governanceReviewId: row.governanceReviewId === null || row.governanceReviewId === undefined ? null : String(row.governanceReviewId),
+    governanceDecision: row.governanceDecision || null,
+    notes: row.notes || null,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    updatedByOid: row.updatedByOid || null
+});
+
 // Get lightweight executive summary of ALL projects
 router.get('/exec-summary', checkPermission(['can_view_exec_dashboard', 'can_view_projects']), withSharedScope, async (req, res) => {
     try {
@@ -91,7 +311,16 @@ router.get('/exec-summary', checkPermission(['can_view_exec_dashboard', 'can_vie
                 ORDER BY sr.createdAt DESC
             ) r
             LEFT JOIN ProjectWatchers pw ON pw.projectId = p.id AND pw.userOid = @viewerOid
-            WHERE (p.orgId = @orgId OR p.id IN (SELECT projectId FROM ProjectOrgAccess WHERE orgId = @orgId) OR @orgId IS NULL)
+            WHERE (
+                p.orgId = @orgId
+                OR p.id IN (
+                    SELECT projectId
+                    FROM ProjectOrgAccess
+                    WHERE orgId = @orgId
+                      AND (expiresAt IS NULL OR expiresAt > GETDATE())
+                )
+                OR @orgId IS NULL
+            )
             ORDER BY p.title ASC
         `;
         const projectsResult = await pool.request()
@@ -224,7 +453,15 @@ router.get('/', checkPermission(['can_view_projects', 'can_view_exec_dashboard']
         // Build WHERE clause for filtering
         const conditions = [];
         if (req.orgId) {
-            conditions.push('(p.orgId = @orgId OR p.id IN (SELECT projectId FROM ProjectOrgAccess WHERE orgId = @orgId))');
+            conditions.push(`(
+                p.orgId = @orgId
+                OR p.id IN (
+                    SELECT projectId
+                    FROM ProjectOrgAccess
+                    WHERE orgId = @orgId
+                      AND (expiresAt IS NULL OR expiresAt > GETDATE())
+                )
+            )`);
             requestParams.orgId = req.orgId;
             countParams.orgId = req.orgId;
         }
@@ -514,7 +751,16 @@ router.get('/watchlist', checkPermission(['can_view_projects', 'can_view_exec_da
                 FROM ProjectWatchers pw
                 INNER JOIN Projects p ON p.id = pw.projectId
                 WHERE pw.userOid = @viewerOid
-                  AND (p.orgId = @orgId OR p.id IN (SELECT projectId FROM ProjectOrgAccess WHERE orgId = @orgId) OR @orgId IS NULL)
+                  AND (
+                    p.orgId = @orgId
+                    OR p.id IN (
+                        SELECT projectId
+                        FROM ProjectOrgAccess
+                        WHERE orgId = @orgId
+                          AND (expiresAt IS NULL OR expiresAt > GETDATE())
+                    )
+                    OR @orgId IS NULL
+                  )
                 ORDER BY p.title ASC
             `);
 
@@ -733,6 +979,429 @@ router.get('/:id', checkPermission('can_view_projects'), withSharedScope, checkP
         });
     } catch (err) {
         handleError(res, 'fetching project details', err);
+    }
+});
+
+// Benefits realization + predictive risk summary
+router.get('/:id/benefits-risk', checkPermission('can_view_projects'), withSharedScope, checkProjectWriteAccess(), async (req, res) => {
+    try {
+        const projectId = Number.parseInt(req.params.id, 10);
+        if (Number.isNaN(projectId)) {
+            return res.status(400).json({ error: 'Invalid project id' });
+        }
+
+        const pool = await getPool();
+        const schemaReady = await hasProjectBenefitSchema(pool);
+        const riskSignal = await buildProjectRiskSignal({ pool, projectId });
+
+        let benefits = [];
+        if (schemaReady) {
+            const benefitResult = await pool.request()
+                .input('projectId', sql.Int, projectId)
+                .query(`
+                    SELECT
+                        b.*,
+                        k.name AS linkedKpiName
+                    FROM ProjectBenefitRealization b
+                    LEFT JOIN KPIs k ON k.id = b.linkedKpiId
+                    WHERE b.projectId = @projectId
+                    ORDER BY
+                        CASE b.status
+                            WHEN 'at-risk' THEN 0
+                            WHEN 'in-progress' THEN 1
+                            WHEN 'planned' THEN 2
+                            WHEN 'realized' THEN 3
+                            ELSE 4
+                        END,
+                        CASE WHEN b.dueAt IS NULL THEN 1 ELSE 0 END,
+                        b.dueAt ASC,
+                        b.id DESC
+                `);
+            benefits = benefitResult.recordset.map(mapBenefitRow);
+        }
+
+        let governanceRationale = null;
+        try {
+            const governanceResult = await pool.request()
+                .input('projectId', sql.Int, projectId)
+                .query(`
+                    SELECT TOP 1
+                        s.id AS submissionId,
+                        s.governanceDecision,
+                        s.governanceReason,
+                        gr.id AS reviewId,
+                        gr.decisionReason AS reviewDecisionReason,
+                        gr.decidedAt
+                    FROM IntakeSubmissions s
+                    LEFT JOIN GovernanceReview gr
+                        ON gr.submissionId = s.id
+                       AND gr.status = 'decided'
+                    WHERE s.convertedProjectId = @projectId
+                    ORDER BY
+                        CASE WHEN gr.decidedAt IS NULL THEN 1 ELSE 0 END,
+                        gr.decidedAt DESC,
+                        s.submittedAt DESC
+                `);
+            const row = governanceResult.recordset[0];
+            if (row) {
+                governanceRationale = {
+                    submissionId: String(row.submissionId),
+                    governanceDecision: row.governanceDecision || null,
+                    governanceReason: row.reviewDecisionReason || row.governanceReason || null,
+                    reviewId: row.reviewId === null || row.reviewId === undefined ? null : String(row.reviewId),
+                    decidedAt: row.decidedAt || null
+                };
+            }
+        } catch {
+            governanceRationale = null;
+        }
+
+        return res.json({
+            schemaReady,
+            benefits,
+            riskSignal,
+            governanceRationale
+        });
+    } catch (err) {
+        handleError(res, 'fetching project benefits and risk summary', err);
+    }
+});
+
+// Add benefit realization item
+router.post('/:id/benefits', checkPermission('can_edit_project'), withSharedScope, checkProjectWriteAccess(), requireProjectWriteAccess, async (req, res) => {
+    try {
+        const projectId = Number.parseInt(req.params.id, 10);
+        if (Number.isNaN(projectId)) {
+            return res.status(400).json({ error: 'Invalid project id' });
+        }
+
+        const title = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
+        if (!title) {
+            return res.status(400).json({ error: 'title is required' });
+        }
+
+        const status = String(req.body?.status || 'planned').trim().toLowerCase();
+        if (!BENEFIT_STATUSES.has(status)) {
+            return res.status(400).json({ error: `Invalid status. Allowed: ${Array.from(BENEFIT_STATUSES).join(', ')}` });
+        }
+
+        const baselineValue = toNullableNumber(req.body?.baselineValue);
+        const targetValue = toNullableNumber(req.body?.targetValue);
+        const currentValue = toNullableNumber(req.body?.currentValue);
+        const dueAt = toNullableDateOnly(req.body?.dueAt);
+        const realizedAt = toNullableDateOnly(req.body?.realizedAt);
+        const linkedKpiIdRaw = req.body?.linkedKpiId;
+        const governanceReviewIdRaw = req.body?.governanceReviewId;
+
+        if (req.body?.baselineValue !== undefined && req.body?.baselineValue !== null && req.body?.baselineValue !== '' && baselineValue === null) {
+            return res.status(400).json({ error: 'baselineValue must be numeric' });
+        }
+        if (req.body?.targetValue !== undefined && req.body?.targetValue !== null && req.body?.targetValue !== '' && targetValue === null) {
+            return res.status(400).json({ error: 'targetValue must be numeric' });
+        }
+        if (req.body?.currentValue !== undefined && req.body?.currentValue !== null && req.body?.currentValue !== '' && currentValue === null) {
+            return res.status(400).json({ error: 'currentValue must be numeric' });
+        }
+        if (req.body?.dueAt !== undefined && req.body?.dueAt && !dueAt) {
+            return res.status(400).json({ error: 'dueAt must be a valid date' });
+        }
+        if (req.body?.realizedAt !== undefined && req.body?.realizedAt && !realizedAt) {
+            return res.status(400).json({ error: 'realizedAt must be a valid date' });
+        }
+
+        const linkedKpiId = linkedKpiIdRaw === undefined || linkedKpiIdRaw === null || linkedKpiIdRaw === ''
+            ? null
+            : Number.parseInt(linkedKpiIdRaw, 10);
+        if (linkedKpiIdRaw !== undefined && linkedKpiIdRaw !== null && linkedKpiIdRaw !== '' && Number.isNaN(linkedKpiId)) {
+            return res.status(400).json({ error: 'linkedKpiId must be numeric' });
+        }
+
+        const governanceReviewId = governanceReviewIdRaw === undefined || governanceReviewIdRaw === null || governanceReviewIdRaw === ''
+            ? null
+            : Number.parseInt(governanceReviewIdRaw, 10);
+        if (governanceReviewIdRaw !== undefined && governanceReviewIdRaw !== null && governanceReviewIdRaw !== '' && Number.isNaN(governanceReviewId)) {
+            return res.status(400).json({ error: 'governanceReviewId must be numeric' });
+        }
+
+        const governanceDecision = req.body?.governanceDecision === undefined || req.body?.governanceDecision === null || req.body?.governanceDecision === ''
+            ? null
+            : String(req.body.governanceDecision).trim().toLowerCase();
+        if (governanceDecision && !['approved-now', 'approved-backlog', 'needs-info', 'rejected'].includes(governanceDecision)) {
+            return res.status(400).json({ error: 'governanceDecision must be one of approved-now, approved-backlog, needs-info, rejected' });
+        }
+
+        const pool = await getPool();
+        const schemaReady = await hasProjectBenefitSchema(pool);
+        if (!schemaReady) {
+            return res.status(409).json({ error: 'Project benefit schema is not installed. Run `npm run migrate:wave3` in `server`.' });
+        }
+
+        const user = getAuthUser(req);
+        const insert = await pool.request()
+            .input('projectId', sql.Int, projectId)
+            .input('title', sql.NVarChar(255), title)
+            .input('description', sql.NVarChar(sql.MAX), req.body?.description || null)
+            .input('linkedKpiId', sql.Int, linkedKpiId)
+            .input('baselineValue', sql.Decimal(18, 2), baselineValue)
+            .input('targetValue', sql.Decimal(18, 2), targetValue)
+            .input('currentValue', sql.Decimal(18, 2), currentValue)
+            .input('unit', sql.NVarChar(50), req.body?.unit || null)
+            .input('status', sql.NVarChar(20), status)
+            .input('dueAt', sql.Date, dueAt)
+            .input('realizedAt', sql.Date, realizedAt)
+            .input('governanceReviewId', sql.Int, governanceReviewId)
+            .input('governanceDecision', sql.NVarChar(30), governanceDecision)
+            .input('notes', sql.NVarChar(sql.MAX), req.body?.notes || null)
+            .input('updatedByOid', sql.NVarChar(100), user?.oid || null)
+            .query(`
+                INSERT INTO ProjectBenefitRealization (
+                    projectId, title, description, linkedKpiId, baselineValue, targetValue, currentValue, unit,
+                    status, dueAt, realizedAt, governanceReviewId, governanceDecision, notes, updatedByOid
+                )
+                OUTPUT INSERTED.*
+                VALUES (
+                    @projectId, @title, @description, @linkedKpiId, @baselineValue, @targetValue, @currentValue, @unit,
+                    @status, @dueAt, @realizedAt, @governanceReviewId, @governanceDecision, @notes, @updatedByOid
+                )
+            `);
+
+        invalidateProjectCache();
+        logAudit({
+            action: 'project_benefit.create',
+            entityType: 'project_benefit',
+            entityId: String(insert.recordset[0].id),
+            entityTitle: title,
+            user,
+            metadata: { projectId },
+            after: { status, targetValue, currentValue, dueAt, governanceDecision },
+            req
+        });
+
+        const row = insert.recordset[0];
+        return res.json(mapBenefitRow({
+            ...row,
+            linkedKpiName: null
+        }));
+    } catch (err) {
+        handleError(res, 'creating project benefit', err);
+    }
+});
+
+// Update benefit realization item
+router.put('/:id/benefits/:benefitId', checkPermission('can_edit_project'), withSharedScope, checkProjectWriteAccess(), requireProjectWriteAccess, async (req, res) => {
+    try {
+        const projectId = Number.parseInt(req.params.id, 10);
+        const benefitId = Number.parseInt(req.params.benefitId, 10);
+        if (Number.isNaN(projectId) || Number.isNaN(benefitId)) {
+            return res.status(400).json({ error: 'Invalid project or benefit id' });
+        }
+
+        const pool = await getPool();
+        const schemaReady = await hasProjectBenefitSchema(pool);
+        if (!schemaReady) {
+            return res.status(409).json({ error: 'Project benefit schema is not installed. Run `npm run migrate:wave3` in `server`.' });
+        }
+
+        const existing = await pool.request()
+            .input('benefitId', sql.Int, benefitId)
+            .input('projectId', sql.Int, projectId)
+            .query(`
+                SELECT *
+                FROM ProjectBenefitRealization
+                WHERE id = @benefitId AND projectId = @projectId
+            `);
+        if (!existing.recordset.length) {
+            return res.status(404).json({ error: 'Benefit item not found' });
+        }
+
+        const updates = [];
+        const request = pool.request()
+            .input('benefitId', sql.Int, benefitId)
+            .input('projectId', sql.Int, projectId);
+
+        if (req.body?.title !== undefined) {
+            const title = String(req.body.title || '').trim();
+            if (!title) {
+                return res.status(400).json({ error: 'title cannot be empty' });
+            }
+            request.input('title', sql.NVarChar(255), title);
+            updates.push('title = @title');
+        }
+        if (req.body?.description !== undefined) {
+            request.input('description', sql.NVarChar(sql.MAX), req.body.description || null);
+            updates.push('description = @description');
+        }
+        if (req.body?.status !== undefined) {
+            const status = String(req.body.status || '').trim().toLowerCase();
+            if (!BENEFIT_STATUSES.has(status)) {
+                return res.status(400).json({ error: `Invalid status. Allowed: ${Array.from(BENEFIT_STATUSES).join(', ')}` });
+            }
+            request.input('status', sql.NVarChar(20), status);
+            updates.push('status = @status');
+        }
+
+        const applyNumericField = (fieldName, sqlName) => {
+            if (req.body?.[fieldName] === undefined) return null;
+            const parsed = toNullableNumber(req.body[fieldName]);
+            if (req.body[fieldName] !== null && req.body[fieldName] !== '' && parsed === null) {
+                throw new Error(`${fieldName} must be numeric`);
+            }
+            request.input(sqlName, sql.Decimal(18, 2), parsed);
+            updates.push(`${fieldName} = @${sqlName}`);
+            return null;
+        };
+
+        const applyDateField = (fieldName, sqlName) => {
+            if (req.body?.[fieldName] === undefined) return null;
+            const parsed = toNullableDateOnly(req.body[fieldName]);
+            if (req.body[fieldName] && !parsed) {
+                throw new Error(`${fieldName} must be a valid date`);
+            }
+            request.input(sqlName, sql.Date, parsed);
+            updates.push(`${fieldName} = @${sqlName}`);
+            return null;
+        };
+
+        try {
+            applyNumericField('baselineValue', 'baselineValue');
+            applyNumericField('targetValue', 'targetValue');
+            applyNumericField('currentValue', 'currentValue');
+            applyDateField('dueAt', 'dueAt');
+            applyDateField('realizedAt', 'realizedAt');
+        } catch (validationErr) {
+            return res.status(400).json({ error: validationErr.message });
+        }
+
+        if (req.body?.linkedKpiId !== undefined) {
+            const linkedKpiId = req.body.linkedKpiId === null || req.body.linkedKpiId === ''
+                ? null
+                : Number.parseInt(req.body.linkedKpiId, 10);
+            if (req.body.linkedKpiId !== null && req.body.linkedKpiId !== '' && Number.isNaN(linkedKpiId)) {
+                return res.status(400).json({ error: 'linkedKpiId must be numeric' });
+            }
+            request.input('linkedKpiId', sql.Int, linkedKpiId);
+            updates.push('linkedKpiId = @linkedKpiId');
+        }
+
+        if (req.body?.governanceReviewId !== undefined) {
+            const governanceReviewId = req.body.governanceReviewId === null || req.body.governanceReviewId === ''
+                ? null
+                : Number.parseInt(req.body.governanceReviewId, 10);
+            if (req.body.governanceReviewId !== null && req.body.governanceReviewId !== '' && Number.isNaN(governanceReviewId)) {
+                return res.status(400).json({ error: 'governanceReviewId must be numeric' });
+            }
+            request.input('governanceReviewId', sql.Int, governanceReviewId);
+            updates.push('governanceReviewId = @governanceReviewId');
+        }
+
+        if (req.body?.governanceDecision !== undefined) {
+            const governanceDecision = req.body.governanceDecision === null || req.body.governanceDecision === ''
+                ? null
+                : String(req.body.governanceDecision).trim().toLowerCase();
+            if (governanceDecision && !['approved-now', 'approved-backlog', 'needs-info', 'rejected'].includes(governanceDecision)) {
+                return res.status(400).json({ error: 'governanceDecision must be one of approved-now, approved-backlog, needs-info, rejected' });
+            }
+            request.input('governanceDecision', sql.NVarChar(30), governanceDecision);
+            updates.push('governanceDecision = @governanceDecision');
+        }
+
+        if (req.body?.notes !== undefined) {
+            request.input('notes', sql.NVarChar(sql.MAX), req.body.notes || null);
+            updates.push('notes = @notes');
+        }
+        if (req.body?.unit !== undefined) {
+            request.input('unit', sql.NVarChar(50), req.body.unit || null);
+            updates.push('unit = @unit');
+        }
+
+        if (updates.length === 0) {
+            return res.status(400).json({ error: 'No changes provided' });
+        }
+
+        const user = getAuthUser(req);
+        request.input('updatedByOid', sql.NVarChar(100), user?.oid || null);
+        updates.push('updatedByOid = @updatedByOid');
+        updates.push('updatedAt = GETDATE()');
+
+        await request.query(`
+            UPDATE ProjectBenefitRealization
+            SET ${updates.join(', ')}
+            WHERE id = @benefitId AND projectId = @projectId
+        `);
+
+        const updated = await pool.request()
+            .input('benefitId', sql.Int, benefitId)
+            .input('projectId', sql.Int, projectId)
+            .query(`
+                SELECT b.*, k.name AS linkedKpiName
+                FROM ProjectBenefitRealization b
+                LEFT JOIN KPIs k ON k.id = b.linkedKpiId
+                WHERE b.id = @benefitId AND b.projectId = @projectId
+            `);
+
+        invalidateProjectCache();
+        logAudit({
+            action: 'project_benefit.update',
+            entityType: 'project_benefit',
+            entityId: String(benefitId),
+            entityTitle: updated.recordset[0]?.title || existing.recordset[0]?.title || 'Benefit',
+            user,
+            metadata: { projectId },
+            req
+        });
+
+        return res.json(mapBenefitRow(updated.recordset[0]));
+    } catch (err) {
+        handleError(res, 'updating project benefit', err);
+    }
+});
+
+// Delete benefit realization item
+router.delete('/:id/benefits/:benefitId', checkPermission('can_edit_project'), withSharedScope, checkProjectWriteAccess(), requireProjectWriteAccess, async (req, res) => {
+    try {
+        const projectId = Number.parseInt(req.params.id, 10);
+        const benefitId = Number.parseInt(req.params.benefitId, 10);
+        if (Number.isNaN(projectId) || Number.isNaN(benefitId)) {
+            return res.status(400).json({ error: 'Invalid project or benefit id' });
+        }
+
+        const pool = await getPool();
+        const schemaReady = await hasProjectBenefitSchema(pool);
+        if (!schemaReady) {
+            return res.status(409).json({ error: 'Project benefit schema is not installed. Run `npm run migrate:wave3` in `server`.' });
+        }
+
+        const existing = await pool.request()
+            .input('benefitId', sql.Int, benefitId)
+            .input('projectId', sql.Int, projectId)
+            .query(`
+                SELECT id, title
+                FROM ProjectBenefitRealization
+                WHERE id = @benefitId AND projectId = @projectId
+            `);
+        if (!existing.recordset.length) {
+            return res.status(404).json({ error: 'Benefit item not found' });
+        }
+
+        await pool.request()
+            .input('benefitId', sql.Int, benefitId)
+            .input('projectId', sql.Int, projectId)
+            .query('DELETE FROM ProjectBenefitRealization WHERE id = @benefitId AND projectId = @projectId');
+
+        invalidateProjectCache();
+        logAudit({
+            action: 'project_benefit.delete',
+            entityType: 'project_benefit',
+            entityId: String(benefitId),
+            entityTitle: existing.recordset[0]?.title || 'Benefit',
+            user: getAuthUser(req),
+            metadata: { projectId },
+            req
+        });
+
+        return res.json({ success: true });
+    } catch (err) {
+        handleError(res, 'deleting project benefit', err);
     }
 });
 

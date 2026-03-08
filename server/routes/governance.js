@@ -4,6 +4,7 @@ import { checkPermission, requireAuth, getAuthUser } from '../middleware/authMid
 import { governanceConfigWriteLimiter } from '../middleware/rateLimiters.js';
 import { handleError } from '../utils/errorHandler.js';
 import { logAudit } from '../utils/auditLogger.js';
+import { addParams, buildInClause } from '../utils/sqlHelpers.js';
 
 const router = express.Router();
 
@@ -247,6 +248,104 @@ const parseBoardPolicyPayload = (rawPolicy) => {
     };
 };
 
+const DEFAULT_BOARD_CAPACITY = Object.freeze({
+    weeklyCapacityHours: null,
+    wipLimit: null,
+    defaultSubmissionEffortHours: 40
+});
+
+const hasGovernanceCapacitySchema = async (pool) => {
+    const result = await pool.request().query(`
+        SELECT
+            CASE WHEN COL_LENGTH('GovernanceBoard', 'weeklyCapacityHours') IS NOT NULL THEN 1 ELSE 0 END AS hasWeeklyCapacityHours,
+            CASE WHEN COL_LENGTH('GovernanceBoard', 'wipLimit') IS NOT NULL THEN 1 ELSE 0 END AS hasWipLimit,
+            CASE WHEN COL_LENGTH('GovernanceBoard', 'defaultSubmissionEffortHours') IS NOT NULL THEN 1 ELSE 0 END AS hasDefaultSubmissionEffortHours
+    `);
+    const row = result.recordset[0] || {};
+    return !!(
+        row.hasWeeklyCapacityHours &&
+        row.hasWipLimit &&
+        row.hasDefaultSubmissionEffortHours
+    );
+};
+
+const toPositiveNumberOrNull = (value) => {
+    if (value === undefined || value === null || value === '') return null;
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed <= 0) return null;
+    return Math.round(parsed * 100) / 100;
+};
+
+const toPositiveIntOrNull = (value) => {
+    if (value === undefined || value === null || value === '') return null;
+    const parsed = Number.parseInt(value, 10);
+    if (Number.isNaN(parsed) || parsed < 1) return null;
+    return parsed;
+};
+
+const normalizeBoardCapacity = (rawCapacity = {}) => {
+    const weeklyCapacityHours = toPositiveNumberOrNull(rawCapacity.weeklyCapacityHours);
+    const wipLimit = toPositiveIntOrNull(rawCapacity.wipLimit);
+    const defaultSubmissionEffortHours = toPositiveNumberOrNull(rawCapacity.defaultSubmissionEffortHours);
+
+    return {
+        weeklyCapacityHours,
+        wipLimit,
+        defaultSubmissionEffortHours: defaultSubmissionEffortHours ?? DEFAULT_BOARD_CAPACITY.defaultSubmissionEffortHours
+    };
+};
+
+const parseBoardCapacityPayload = (rawCapacity) => {
+    if (rawCapacity === undefined) return null;
+    if (!rawCapacity || typeof rawCapacity !== 'object' || Array.isArray(rawCapacity)) {
+        throw new Error('boardCapacity must be an object');
+    }
+
+    const parsedWeeklyCapacity = rawCapacity.weeklyCapacityHours === '' ? null : toPositiveNumberOrNull(rawCapacity.weeklyCapacityHours);
+    if (rawCapacity.weeklyCapacityHours !== undefined && rawCapacity.weeklyCapacityHours !== '' && parsedWeeklyCapacity === null) {
+        throw new Error('boardCapacity.weeklyCapacityHours must be null or a number > 0');
+    }
+
+    const parsedWipLimit = rawCapacity.wipLimit === '' ? null : toPositiveIntOrNull(rawCapacity.wipLimit);
+    if (rawCapacity.wipLimit !== undefined && rawCapacity.wipLimit !== '' && parsedWipLimit === null) {
+        throw new Error('boardCapacity.wipLimit must be null or an integer >= 1');
+    }
+
+    const parsedDefaultEffort = toPositiveNumberOrNull(rawCapacity.defaultSubmissionEffortHours);
+    if (
+        rawCapacity.defaultSubmissionEffortHours !== undefined &&
+        rawCapacity.defaultSubmissionEffortHours !== null &&
+        rawCapacity.defaultSubmissionEffortHours !== '' &&
+        parsedDefaultEffort === null
+    ) {
+        throw new Error('boardCapacity.defaultSubmissionEffortHours must be a number > 0');
+    }
+
+    return {
+        weeklyCapacityHours: parsedWeeklyCapacity,
+        wipLimit: parsedWipLimit,
+        defaultSubmissionEffortHours: parsedDefaultEffort ?? DEFAULT_BOARD_CAPACITY.defaultSubmissionEffortHours
+    };
+};
+
+const buildBoardCapacity = (boardRow, capacityReady) => {
+    if (!capacityReady) {
+        return {
+            ...DEFAULT_BOARD_CAPACITY,
+            schemaReady: false
+        };
+    }
+
+    return {
+        ...normalizeBoardCapacity({
+            weeklyCapacityHours: boardRow.weeklyCapacityHours,
+            wipLimit: boardRow.wipLimit,
+            defaultSubmissionEffortHours: boardRow.defaultSubmissionEffortHours
+        }),
+        schemaReady: true
+    };
+};
+
 const normalizeCriteria = (criteria) => {
     if (!Array.isArray(criteria) || criteria.length === 0) {
         throw new Error('criteria must be a non-empty array');
@@ -287,6 +386,309 @@ const assertPublishedWeightTotal = (criteria) => {
     }
 };
 
+const hasGovernanceSessionSchema = async (pool) => {
+    try {
+        const result = await pool.request().query(`
+            SELECT CASE WHEN OBJECT_ID('GovernanceSession', 'U') IS NOT NULL THEN 1 ELSE 0 END AS hasSession
+        `);
+        return !!result.recordset[0]?.hasSession;
+    } catch {
+        return false;
+    }
+};
+
+const DEFAULT_SESSION_DECISION_TEMPLATES = Object.freeze([
+    {
+        decision: 'approved-now',
+        label: 'Approve Now',
+        reasonTemplate: 'Approved for immediate execution based on governance score, urgency, and available capacity.'
+    },
+    {
+        decision: 'approved-backlog',
+        label: 'Approve Backlog',
+        reasonTemplate: 'Approved in principle and placed in backlog pending capacity and sequencing.'
+    },
+    {
+        decision: 'needs-info',
+        label: 'Needs More Info',
+        reasonTemplate: 'Decision deferred until requested information and dependency clarification are provided.'
+    },
+    {
+        decision: 'rejected',
+        label: 'Reject',
+        reasonTemplate: 'Rejected due to low strategic fit, low impact, or insufficient feasibility at this time.'
+    }
+]);
+
+const parsePolicySnapshot = (rawJson) => {
+    if (!rawJson) return null;
+    try {
+        return normalizeGovernancePolicy(JSON.parse(rawJson));
+    } catch {
+        return null;
+    }
+};
+
+const calculateRequiredVotes = (eligibleVoterCount, policy) => {
+    if (!Number.isFinite(eligibleVoterCount) || eligibleVoterCount <= 0) return 0;
+    const normalized = normalizeGovernancePolicy(policy || {});
+    const byPercent = Math.ceil((eligibleVoterCount * normalized.quorumPercent) / 100);
+    return Math.max(normalized.quorumMinCount, byPercent);
+};
+
+const parseSessionTemplates = (rawValue) => {
+    if (!rawValue) return [...DEFAULT_SESSION_DECISION_TEMPLATES];
+    try {
+        const parsed = JSON.parse(rawValue);
+        if (!Array.isArray(parsed) || parsed.length === 0) return [...DEFAULT_SESSION_DECISION_TEMPLATES];
+        return parsed
+            .map((item) => ({
+                decision: String(item?.decision || '').trim().toLowerCase(),
+                label: String(item?.label || '').trim(),
+                reasonTemplate: String(item?.reasonTemplate || '').trim()
+            }))
+            .filter((item) =>
+                ['approved-now', 'approved-backlog', 'needs-info', 'rejected'].includes(item.decision) &&
+                item.label &&
+                item.reasonTemplate
+            );
+    } catch {
+        return [...DEFAULT_SESSION_DECISION_TEMPLATES];
+    }
+};
+
+const normalizeSessionTemplates = (rawTemplates) => {
+    if (!Array.isArray(rawTemplates) || rawTemplates.length === 0) {
+        return [...DEFAULT_SESSION_DECISION_TEMPLATES];
+    }
+    const normalized = rawTemplates
+        .map((item) => ({
+            decision: String(item?.decision || '').trim().toLowerCase(),
+            label: String(item?.label || '').trim(),
+            reasonTemplate: String(item?.reasonTemplate || '').trim()
+        }))
+        .filter((item) =>
+            ['approved-now', 'approved-backlog', 'needs-info', 'rejected'].includes(item.decision) &&
+            item.label &&
+            item.reasonTemplate
+        );
+    if (normalized.length === 0) return [...DEFAULT_SESSION_DECISION_TEMPLATES];
+    return normalized;
+};
+
+const parseSessionAgenda = (rawJson) => {
+    if (!rawJson) return [];
+    try {
+        const parsed = JSON.parse(rawJson);
+        if (!Array.isArray(parsed)) return [];
+        return parsed
+            .map((entry, idx) => {
+                const submissionId = Number.parseInt(entry?.submissionId, 10);
+                if (Number.isNaN(submissionId)) return null;
+                const sortOrder = Number.parseInt(entry?.sortOrder, 10);
+                return {
+                    submissionId,
+                    sortOrder: Number.isNaN(sortOrder) ? idx + 1 : sortOrder
+                };
+            })
+            .filter(Boolean)
+            .sort((a, b) => a.sortOrder - b.sortOrder);
+    } catch {
+        return [];
+    }
+};
+
+const normalizeAgendaSubmissionIds = (rawSubmissionIds) => {
+    if (!Array.isArray(rawSubmissionIds)) return [];
+    const parsed = rawSubmissionIds
+        .map((id, idx) => ({
+            submissionId: Number.parseInt(id, 10),
+            sortOrder: idx + 1
+        }))
+        .filter((entry) => !Number.isNaN(entry.submissionId));
+    const seen = new Set();
+    const deduped = [];
+    for (const entry of parsed) {
+        if (seen.has(entry.submissionId)) continue;
+        seen.add(entry.submissionId);
+        deduped.push(entry);
+    }
+    return deduped;
+};
+
+const toSessionResponse = (row) => ({
+    id: String(row.id),
+    boardId: String(row.boardId),
+    title: row.title,
+    status: row.status,
+    scheduledAt: row.scheduledAt || null,
+    startedAt: row.startedAt || null,
+    endedAt: row.endedAt || null,
+    agendaLocked: !!row.agendaLocked,
+    agenda: parseSessionAgenda(row.agendaJson),
+    decisionTemplates: parseSessionTemplates(row.decisionTemplateJson),
+    createdByOid: row.createdByOid || null,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt
+});
+
+const isBoardChairOrAdmin = async ({ pool, boardId, user }) => {
+    const roles = Array.isArray(user?.roles) ? user.roles : [];
+    if (roles.includes('Admin')) return true;
+    const chairResult = await pool.request()
+        .input('boardId', sql.Int, boardId)
+        .input('userOid', sql.NVarChar(100), user?.oid || '')
+        .query(`
+            SELECT TOP 1 id
+            FROM GovernanceMembership
+            WHERE boardId = @boardId
+              AND userOid = @userOid
+              AND role = 'chair'
+              AND isActive = 1
+              AND effectiveFrom <= GETDATE()
+              AND (effectiveTo IS NULL OR effectiveTo > GETDATE())
+        `);
+    return chairResult.recordset.length > 0;
+};
+
+const fetchBoardPolicyDefaults = async (pool, boardId) => {
+    const phase3Ready = await hasGovernancePhase3Schema(pool);
+    if (!phase3Ready) return { ...DEFAULT_GOVERNANCE_POLICY };
+
+    const settings = await getOrCreateGovernanceSettings(pool);
+    const globalDefaults = getDefaultGovernancePolicy(settings, phase3Ready);
+    const boardPolicyReady = await hasGovernanceBoardPolicySchema(pool);
+    if (!boardPolicyReady) return globalDefaults;
+
+    const boardResult = await pool.request()
+        .input('id', sql.Int, boardId)
+        .query(`
+            SELECT TOP 1
+                quorumPercentOverride,
+                quorumMinCountOverride,
+                decisionRequiresQuorumOverride,
+                voteWindowDaysOverride
+            FROM GovernanceBoard
+            WHERE id = @id
+        `);
+    if (boardResult.recordset.length === 0) return globalDefaults;
+
+    const boardPolicy = buildBoardPolicy(boardResult.recordset[0], globalDefaults, boardPolicyReady);
+    return boardPolicy.effective;
+};
+
+const getSessionTracker = async ({ pool, boardId, agendaSubmissionIds }) => {
+    if (!Array.isArray(agendaSubmissionIds) || agendaSubmissionIds.length === 0) {
+        return {
+            totals: {
+                agendaCount: 0,
+                inReviewCount: 0,
+                decidedCount: 0,
+                quorumMetCount: 0,
+                pendingVoteCount: 0,
+                needsChairDecisionCount: 0
+            },
+            items: []
+        };
+    }
+
+    const { text: agendaInClause, params: agendaParams } = buildInClause('agendaSubmissionId', agendaSubmissionIds);
+    const request = pool.request().input('boardId', sql.Int, boardId);
+    addParams(request, agendaParams);
+    const reviewRows = await request.query(`
+        SELECT
+            s.id AS submissionId,
+            f.name AS formName,
+            s.governanceStatus,
+            s.governanceDecision,
+            gr.id AS reviewId,
+            gr.status AS reviewStatus,
+            gr.decision AS reviewDecision,
+            gr.policySnapshotJson
+        FROM IntakeSubmissions s
+        INNER JOIN IntakeForms f ON f.id = s.formId
+        OUTER APPLY (
+            SELECT TOP 1 id, status, decision, policySnapshotJson
+            FROM GovernanceReview
+            WHERE submissionId = s.id
+            ORDER BY reviewRound DESC
+        ) gr
+        WHERE f.governanceBoardId = @boardId
+          AND s.id IN (${agendaInClause})
+    `);
+
+    const reviewIds = reviewRows.recordset
+        .map((row) => Number.parseInt(row.reviewId, 10))
+        .filter((id) => !Number.isNaN(id));
+    const statsByReviewId = new Map();
+    if (reviewIds.length > 0) {
+        const { text: reviewInClause, params: reviewParams } = buildInClause('reviewId', reviewIds);
+        const statsRequest = pool.request();
+        addParams(statsRequest, reviewParams);
+        const reviewStats = await statsRequest.query(`
+            SELECT
+                gr.id AS reviewId,
+                SUM(CASE WHEN grp.isEligibleVoter = 1 THEN 1 ELSE 0 END) AS eligibleVoterCount,
+                (
+                    SELECT COUNT(*)
+                    FROM GovernanceVote gv
+                    WHERE gv.reviewId = gr.id
+                ) AS voteCount
+            FROM GovernanceReview gr
+            LEFT JOIN GovernanceReviewParticipant grp ON grp.reviewId = gr.id
+            WHERE gr.id IN (${reviewInClause})
+            GROUP BY gr.id
+        `);
+        for (const row of reviewStats.recordset) {
+            statsByReviewId.set(Number(row.reviewId), {
+                eligibleVoterCount: Number(row.eligibleVoterCount || 0),
+                voteCount: Number(row.voteCount || 0)
+            });
+        }
+    }
+
+    const boardPolicy = await fetchBoardPolicyDefaults(pool, boardId);
+    const items = reviewRows.recordset
+        .map((row) => {
+            const reviewId = row.reviewId ? Number(row.reviewId) : null;
+            const stats = reviewId ? (statsByReviewId.get(reviewId) || { eligibleVoterCount: 0, voteCount: 0 }) : { eligibleVoterCount: 0, voteCount: 0 };
+            const policy = parsePolicySnapshot(row.policySnapshotJson) || boardPolicy;
+            const requiredVotes = calculateRequiredVotes(stats.eligibleVoterCount, policy);
+            const quorumMet = requiredVotes === 0 ? true : stats.voteCount >= requiredVotes;
+            const pendingVotes = Math.max(0, requiredVotes - stats.voteCount);
+
+            return {
+                submissionId: String(row.submissionId),
+                formName: row.formName || 'Submission',
+                governanceStatus: row.governanceStatus || null,
+                governanceDecision: row.governanceDecision || null,
+                reviewId: row.reviewId ? String(row.reviewId) : null,
+                reviewStatus: row.reviewStatus || null,
+                reviewDecision: row.reviewDecision || null,
+                eligibleVoterCount: stats.eligibleVoterCount,
+                voteCount: stats.voteCount,
+                requiredVotes,
+                pendingVotes,
+                quorumMet
+            };
+        })
+        .sort((a, b) => Number.parseInt(a.submissionId, 10) - Number.parseInt(b.submissionId, 10));
+
+    const totals = {
+        agendaCount: items.length,
+        inReviewCount: items.filter((item) => item.reviewStatus === 'in-review').length,
+        decidedCount: items.filter((item) => item.reviewStatus === 'decided').length,
+        quorumMetCount: items.filter((item) => item.quorumMet).length,
+        pendingVoteCount: items.reduce((sum, item) => sum + item.pendingVotes, 0),
+        needsChairDecisionCount: items.filter((item) =>
+            item.reviewStatus === 'in-review' &&
+            item.quorumMet
+        ).length
+    };
+
+    return { totals, items };
+};
+
 async function getOrCreateGovernanceSettings(pool) {
     const existing = await pool.request().query('SELECT TOP 1 * FROM GovernanceSettings ORDER BY id');
     if (existing.recordset.length > 0) {
@@ -321,6 +723,7 @@ router.get('/settings', requireAuth, async (req, res) => {
         const settings = await getOrCreateGovernanceSettings(pool);
         const phase3Ready = await hasGovernancePhase3Schema(pool);
         const boardPolicyReady = phase3Ready ? await hasGovernanceBoardPolicySchema(pool) : false;
+        const boardCapacityReady = await hasGovernanceCapacitySchema(pool);
         const defaults = getDefaultGovernancePolicy(settings, phase3Ready);
         res.json({
             governanceEnabled: !!settings.governanceEnabled,
@@ -334,6 +737,7 @@ router.get('/settings', requireAuth, async (req, res) => {
             defaultVoteWindowDays: defaults.voteWindowDays,
             phase3Ready,
             boardPolicyReady,
+            boardCapacityReady,
             updatedAt: settings.updatedAt,
             updatedByOid: settings.updatedByOid || null
         });
@@ -467,6 +871,7 @@ router.put('/settings', checkPermission('can_manage_governance'), governanceConf
         });
 
         const boardPolicyReady = phase3Ready ? await hasGovernanceBoardPolicySchema(pool) : false;
+        const boardCapacityReady = await hasGovernanceCapacitySchema(pool);
         res.json({
             success: true,
             governanceEnabled,
@@ -479,7 +884,8 @@ router.put('/settings', checkPermission('can_manage_governance'), governanceConf
             defaultDecisionRequiresQuorum: phase3Ready ? decisionRequiresQuorum : currentDecisionRequiresQuorum,
             defaultVoteWindowDays: phase3Ready ? voteWindowDays : currentVoteWindowDays,
             phase3Ready,
-            boardPolicyReady
+            boardPolicyReady,
+            boardCapacityReady
         });
     } catch (err) {
         handleError(res, 'updating governance settings', err);
@@ -562,6 +968,7 @@ router.get('/boards', checkPermission(['can_view_governance_queue', 'can_manage_
         const pool = await getPool();
         const phase3Ready = await hasGovernancePhase3Schema(pool);
         const boardPolicyReady = phase3Ready ? await hasGovernanceBoardPolicySchema(pool) : false;
+        const boardCapacityReady = await hasGovernanceCapacitySchema(pool);
         const settings = await getOrCreateGovernanceSettings(pool);
         const defaultPolicy = getDefaultGovernancePolicy(settings, phase3Ready);
 
@@ -583,6 +990,17 @@ router.get('/boards', checkPermission(['can_view_governance_queue', 'can_manage_
                 NULL AS decisionRequiresQuorumOverride,
                 NULL AS voteWindowDaysOverride,
             `;
+        const boardCapacitySelect = boardCapacityReady
+            ? `
+                b.weeklyCapacityHours,
+                b.wipLimit,
+                b.defaultSubmissionEffortHours,
+            `
+            : `
+                NULL AS weeklyCapacityHours,
+                NULL AS wipLimit,
+                NULL AS defaultSubmissionEffortHours,
+            `;
 
         const result = await request.query(`
             SELECT
@@ -592,6 +1010,7 @@ router.get('/boards', checkPermission(['can_view_governance_queue', 'can_manage_
                 b.createdAt,
                 b.createdByOid,
                 ${boardPolicySelect}
+                ${boardCapacitySelect}
                 (
                     SELECT COUNT(*)
                     FROM GovernanceMembership gm
@@ -606,6 +1025,7 @@ router.get('/boards', checkPermission(['can_view_governance_queue', 'can_manage_
 
         res.json(result.recordset.map(row => {
             const policy = buildBoardPolicy(row, defaultPolicy, boardPolicyReady);
+            const boardCapacity = buildBoardCapacity(row, boardCapacityReady);
             return {
                 id: row.id.toString(),
                 name: row.name,
@@ -619,7 +1039,9 @@ router.get('/boards', checkPermission(['can_view_governance_queue', 'can_manage_
                 policyOverrides: policy.overrides,
                 effectivePolicy: policy.effective,
                 policySources: policy.sources,
-                boardPolicyReady
+                boardPolicyReady,
+                boardCapacity,
+                boardCapacityReady
             };
         }));
     } catch (err) {
@@ -637,10 +1059,17 @@ router.post('/boards', checkPermission('can_manage_governance'), governanceConfi
         const pool = await getPool();
         const phase3Ready = await hasGovernancePhase3Schema(pool);
         const boardPolicyReady = phase3Ready ? await hasGovernanceBoardPolicySchema(pool) : false;
+        const boardCapacityReady = await hasGovernanceCapacitySchema(pool);
         const parsedBoardPolicy = parseBoardPolicyPayload(req.body?.boardPolicy);
+        const parsedBoardCapacity = parseBoardCapacityPayload(req.body?.boardCapacity);
         if (parsedBoardPolicy && !boardPolicyReady) {
             return res.status(409).json({
                 error: 'Board policy overrides are not available yet. Run `npm run migrate:governance:phase3` in `server`.'
+            });
+        }
+        if (parsedBoardCapacity && !boardCapacityReady) {
+            return res.status(409).json({
+                error: 'Board capacity fields are not available yet. Run `npm run migrate:wave3` in `server`.'
             });
         }
 
@@ -655,9 +1084,46 @@ router.post('/boards', checkPermission('can_manage_governance'), governanceConfi
             .input('name', sql.NVarChar(255), trimmedName)
             .input('isActive', sql.Bit, isActive === false ? 0 : 1)
             .input('createdByOid', sql.NVarChar(100), user?.oid || null);
+        const boardCapacity = parsedBoardCapacity || { ...DEFAULT_BOARD_CAPACITY };
 
         let result;
-        if (boardPolicyReady) {
+        if (boardPolicyReady && boardCapacityReady) {
+            result = await insertRequest
+                .input('quorumPercentOverride', sql.Int, policyOverrides.quorumPercent)
+                .input('quorumMinCountOverride', sql.Int, policyOverrides.quorumMinCount)
+                .input('decisionRequiresQuorumOverride', sql.Bit, policyOverrides.decisionRequiresQuorum === null ? null : (policyOverrides.decisionRequiresQuorum ? 1 : 0))
+                .input('voteWindowDaysOverride', sql.Int, policyOverrides.voteWindowDays)
+                .input('weeklyCapacityHours', sql.Decimal(9, 2), boardCapacity.weeklyCapacityHours)
+                .input('wipLimit', sql.Int, boardCapacity.wipLimit)
+                .input('defaultSubmissionEffortHours', sql.Decimal(9, 2), boardCapacity.defaultSubmissionEffortHours)
+                .query(`
+                    INSERT INTO GovernanceBoard (
+                        name,
+                        isActive,
+                        createdByOid,
+                        quorumPercentOverride,
+                        quorumMinCountOverride,
+                        decisionRequiresQuorumOverride,
+                        voteWindowDaysOverride,
+                        weeklyCapacityHours,
+                        wipLimit,
+                        defaultSubmissionEffortHours
+                    )
+                    OUTPUT INSERTED.id, INSERTED.createdAt
+                    VALUES (
+                        @name,
+                        @isActive,
+                        @createdByOid,
+                        @quorumPercentOverride,
+                        @quorumMinCountOverride,
+                        @decisionRequiresQuorumOverride,
+                        @voteWindowDaysOverride,
+                        @weeklyCapacityHours,
+                        @wipLimit,
+                        @defaultSubmissionEffortHours
+                    )
+                `);
+        } else if (boardPolicyReady) {
             result = await insertRequest
                 .input('quorumPercentOverride', sql.Int, policyOverrides.quorumPercent)
                 .input('quorumMinCountOverride', sql.Int, policyOverrides.quorumMinCount)
@@ -682,6 +1148,30 @@ router.post('/boards', checkPermission('can_manage_governance'), governanceConfi
                         @quorumMinCountOverride,
                         @decisionRequiresQuorumOverride,
                         @voteWindowDaysOverride
+                    )
+                `);
+        } else if (boardCapacityReady) {
+            result = await insertRequest
+                .input('weeklyCapacityHours', sql.Decimal(9, 2), boardCapacity.weeklyCapacityHours)
+                .input('wipLimit', sql.Int, boardCapacity.wipLimit)
+                .input('defaultSubmissionEffortHours', sql.Decimal(9, 2), boardCapacity.defaultSubmissionEffortHours)
+                .query(`
+                    INSERT INTO GovernanceBoard (
+                        name,
+                        isActive,
+                        createdByOid,
+                        weeklyCapacityHours,
+                        wipLimit,
+                        defaultSubmissionEffortHours
+                    )
+                    OUTPUT INSERTED.id, INSERTED.createdAt
+                    VALUES (
+                        @name,
+                        @isActive,
+                        @createdByOid,
+                        @weeklyCapacityHours,
+                        @wipLimit,
+                        @defaultSubmissionEffortHours
                     )
                 `);
         } else {
@@ -719,7 +1209,8 @@ router.post('/boards', checkPermission('can_manage_governance'), governanceConfi
             after: {
                 name: trimmedName,
                 isActive: isActive !== false,
-                boardPolicy: parsedBoardPolicy ? policy : { useGlobalDefaults: true, source: 'global' }
+                boardPolicy: parsedBoardPolicy ? policy : { useGlobalDefaults: true, source: 'global' },
+                boardCapacity
             },
             req
         });
@@ -735,10 +1226,15 @@ router.post('/boards', checkPermission('can_manage_governance'), governanceConfi
             policyOverrides: policy.overrides,
             effectivePolicy: policy.effective,
             policySources: policy.sources,
-            boardPolicyReady
+            boardPolicyReady,
+            boardCapacity: {
+                ...boardCapacity,
+                schemaReady: boardCapacityReady
+            },
+            boardCapacityReady
         });
     } catch (err) {
-        if (err?.message?.startsWith('boardPolicy')) {
+        if (err?.message?.startsWith('boardPolicy') || err?.message?.startsWith('boardCapacity')) {
             return res.status(400).json({ error: err.message });
         }
         handleError(res, 'creating governance board', err);
@@ -754,19 +1250,29 @@ router.put('/boards/:id', checkPermission('can_manage_governance'), governanceCo
         const pool = await getPool();
         const phase3Ready = await hasGovernancePhase3Schema(pool);
         const boardPolicyReady = phase3Ready ? await hasGovernanceBoardPolicySchema(pool) : false;
+        const boardCapacityReady = await hasGovernanceCapacitySchema(pool);
         const parsedBoardPolicy = parseBoardPolicyPayload(req.body?.boardPolicy);
+        const parsedBoardCapacity = parseBoardCapacityPayload(req.body?.boardCapacity);
         if (parsedBoardPolicy && !boardPolicyReady) {
             return res.status(409).json({
                 error: 'Board policy overrides are not available yet. Run `npm run migrate:governance:phase3` in `server`.'
+            });
+        }
+        if (parsedBoardCapacity && !boardCapacityReady) {
+            return res.status(409).json({
+                error: 'Board capacity fields are not available yet. Run `npm run migrate:wave3` in `server`.'
             });
         }
 
         const selectPolicyColumns = boardPolicyReady
             ? ', quorumPercentOverride, quorumMinCountOverride, decisionRequiresQuorumOverride, voteWindowDaysOverride'
             : '';
+        const selectCapacityColumns = boardCapacityReady
+            ? ', weeklyCapacityHours, wipLimit, defaultSubmissionEffortHours'
+            : '';
         const prev = await pool.request()
             .input('id', sql.Int, boardId)
-            .query(`SELECT id, name, isActive${selectPolicyColumns} FROM GovernanceBoard WHERE id = @id`);
+            .query(`SELECT id, name, isActive${selectPolicyColumns}${selectCapacityColumns} FROM GovernanceBoard WHERE id = @id`);
 
         if (prev.recordset.length === 0) return res.status(404).json({ error: 'Board not found' });
 
@@ -797,6 +1303,15 @@ router.put('/boards/:id', checkPermission('can_manage_governance'), governanceCo
             updates.push('decisionRequiresQuorumOverride = @decisionRequiresQuorumOverride');
             updates.push('voteWindowDaysOverride = @voteWindowDaysOverride');
         }
+        if (parsedBoardCapacity) {
+            request.input('weeklyCapacityHours', sql.Decimal(9, 2), parsedBoardCapacity.weeklyCapacityHours);
+            request.input('wipLimit', sql.Int, parsedBoardCapacity.wipLimit);
+            request.input('defaultSubmissionEffortHours', sql.Decimal(9, 2), parsedBoardCapacity.defaultSubmissionEffortHours);
+
+            updates.push('weeklyCapacityHours = @weeklyCapacityHours');
+            updates.push('wipLimit = @wipLimit');
+            updates.push('defaultSubmissionEffortHours = @defaultSubmissionEffortHours');
+        }
 
         if (updates.length === 0) {
             return res.status(400).json({ error: 'No valid fields to update' });
@@ -811,13 +1326,18 @@ router.put('/boards/:id', checkPermission('can_manage_governance'), governanceCo
             entityTitle: name || prev.recordset[0].name,
             user,
             before: prev.recordset[0],
-            after: { name, isActive, boardPolicy: parsedBoardPolicy || undefined },
+            after: {
+                name,
+                isActive,
+                boardPolicy: parsedBoardPolicy || undefined,
+                boardCapacity: parsedBoardCapacity || undefined
+            },
             req
         });
 
-        res.json({ success: true, boardPolicyReady });
+        res.json({ success: true, boardPolicyReady, boardCapacityReady });
     } catch (err) {
-        if (err?.message?.startsWith('boardPolicy')) {
+        if (err?.message?.startsWith('boardPolicy') || err?.message?.startsWith('boardCapacity')) {
             return res.status(400).json({ error: err.message });
         }
         handleError(res, 'updating governance board', err);
@@ -1177,6 +1697,378 @@ router.post('/boards/:id/criteria/versions/:versionId/publish', checkPermission(
             return res.status(400).json({ error: err.message });
         }
         handleError(res, 'publishing governance criteria version', err);
+    }
+});
+
+// ==================== SESSION MODE ====================
+
+router.get('/boards/:id/sessions', checkPermission('can_view_governance_queue'), async (req, res) => {
+    try {
+        const boardId = Number.parseInt(req.params.id, 10);
+        if (Number.isNaN(boardId)) return res.status(400).json({ error: 'Invalid board id' });
+
+        const pool = await getPool();
+        const schemaReady = await hasGovernanceSessionSchema(pool);
+        if (!schemaReady) {
+            return res.json({
+                schemaReady: false,
+                items: []
+            });
+        }
+
+        const statusFilter = typeof req.query.status === 'string' ? req.query.status.trim().toLowerCase() : '';
+        const request = pool.request().input('boardId', sql.Int, boardId);
+        let where = 'WHERE boardId = @boardId';
+        if (statusFilter) {
+            if (!['draft', 'live', 'closed'].includes(statusFilter)) {
+                return res.status(400).json({ error: 'status must be draft, live, or closed' });
+            }
+            where += ' AND status = @status';
+            request.input('status', sql.NVarChar(20), statusFilter);
+        }
+
+        const result = await request.query(`
+            SELECT *
+            FROM GovernanceSession
+            ${where}
+            ORDER BY
+                CASE status WHEN 'live' THEN 0 WHEN 'draft' THEN 1 ELSE 2 END,
+                ISNULL(scheduledAt, createdAt) DESC,
+                id DESC
+        `);
+
+        res.json({
+            schemaReady: true,
+            items: result.recordset.map(toSessionResponse)
+        });
+    } catch (err) {
+        handleError(res, 'fetching governance sessions', err);
+    }
+});
+
+router.get('/boards/:id/sessions/active', checkPermission('can_view_governance_queue'), async (req, res) => {
+    try {
+        const boardId = Number.parseInt(req.params.id, 10);
+        if (Number.isNaN(boardId)) return res.status(400).json({ error: 'Invalid board id' });
+
+        const pool = await getPool();
+        const schemaReady = await hasGovernanceSessionSchema(pool);
+        if (!schemaReady) {
+            return res.json({
+                schemaReady: false,
+                session: null,
+                tracker: {
+                    totals: {
+                        agendaCount: 0,
+                        inReviewCount: 0,
+                        decidedCount: 0,
+                        quorumMetCount: 0,
+                        pendingVoteCount: 0,
+                        needsChairDecisionCount: 0
+                    },
+                    items: []
+                }
+            });
+        }
+
+        const sessionResult = await pool.request()
+            .input('boardId', sql.Int, boardId)
+            .query(`
+                SELECT TOP 1 *
+                FROM GovernanceSession
+                WHERE boardId = @boardId
+                  AND status = 'live'
+                ORDER BY startedAt DESC, id DESC
+            `);
+
+        if (sessionResult.recordset.length === 0) {
+            return res.json({
+                schemaReady: true,
+                session: null,
+                tracker: {
+                    totals: {
+                        agendaCount: 0,
+                        inReviewCount: 0,
+                        decidedCount: 0,
+                        quorumMetCount: 0,
+                        pendingVoteCount: 0,
+                        needsChairDecisionCount: 0
+                    },
+                    items: []
+                }
+            });
+        }
+
+        const session = toSessionResponse(sessionResult.recordset[0]);
+        const agendaSubmissionIds = session.agenda.map((entry) => entry.submissionId);
+        const tracker = await getSessionTracker({ pool, boardId, agendaSubmissionIds });
+
+        res.json({
+            schemaReady: true,
+            session,
+            tracker
+        });
+    } catch (err) {
+        handleError(res, 'fetching active governance session', err);
+    }
+});
+
+router.post('/boards/:id/sessions', checkPermission(['can_decide_governance', 'can_manage_governance']), governanceConfigWriteLimiter, async (req, res) => {
+    try {
+        const boardId = Number.parseInt(req.params.id, 10);
+        if (Number.isNaN(boardId)) return res.status(400).json({ error: 'Invalid board id' });
+
+        const pool = await getPool();
+        if (!(await hasGovernanceSessionSchema(pool))) {
+            return res.status(409).json({ error: 'Governance session mode is not installed. Run `npm run migrate:wave2` in `server`.' });
+        }
+
+        const boardResult = await pool.request()
+            .input('id', sql.Int, boardId)
+            .query('SELECT id, name FROM GovernanceBoard WHERE id = @id');
+        if (boardResult.recordset.length === 0) return res.status(404).json({ error: 'Board not found' });
+
+        const user = getAuthUser(req);
+        const canManageSession = await isBoardChairOrAdmin({ pool, boardId, user });
+        if (!canManageSession) {
+            return res.status(403).json({ error: 'Only board chairs (or admins) can create governance sessions.' });
+        }
+
+        const titleInput = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
+        const title = titleInput || `${boardResult.recordset[0].name} Session`;
+        const scheduledAt = req.body?.scheduledAt ? new Date(req.body.scheduledAt) : null;
+        if (scheduledAt && Number.isNaN(scheduledAt.getTime())) {
+            return res.status(400).json({ error: 'scheduledAt must be a valid date/time' });
+        }
+
+        const agenda = normalizeAgendaSubmissionIds(req.body?.agendaSubmissionIds);
+        const decisionTemplates = normalizeSessionTemplates(req.body?.decisionTemplates);
+
+        const inserted = await pool.request()
+            .input('boardId', sql.Int, boardId)
+            .input('title', sql.NVarChar(255), title)
+            .input('scheduledAt', sql.DateTime2, scheduledAt)
+            .input('agendaJson', sql.NVarChar(sql.MAX), JSON.stringify(agenda))
+            .input('decisionTemplateJson', sql.NVarChar(sql.MAX), JSON.stringify(decisionTemplates))
+            .input('createdByOid', sql.NVarChar(100), user?.oid || null)
+            .query(`
+                INSERT INTO GovernanceSession (
+                    boardId, title, status, scheduledAt, agendaLocked, agendaJson, decisionTemplateJson, createdByOid
+                )
+                OUTPUT INSERTED.*
+                VALUES (
+                    @boardId, @title, 'draft', @scheduledAt, 0, @agendaJson, @decisionTemplateJson, @createdByOid
+                )
+            `);
+
+        const session = toSessionResponse(inserted.recordset[0]);
+        logAudit({
+            action: 'governance.session_create',
+            entityType: 'governance_session',
+            entityId: session.id,
+            entityTitle: title,
+            user,
+            after: {
+                boardId,
+                title,
+                scheduledAt,
+                agendaCount: session.agenda.length
+            },
+            req
+        });
+
+        res.json({
+            success: true,
+            session
+        });
+    } catch (err) {
+        handleError(res, 'creating governance session', err);
+    }
+});
+
+router.put('/sessions/:id/agenda', checkPermission(['can_decide_governance', 'can_manage_governance']), governanceConfigWriteLimiter, async (req, res) => {
+    try {
+        const sessionId = Number.parseInt(req.params.id, 10);
+        if (Number.isNaN(sessionId)) return res.status(400).json({ error: 'Invalid session id' });
+
+        const pool = await getPool();
+        if (!(await hasGovernanceSessionSchema(pool))) {
+            return res.status(409).json({ error: 'Governance session mode is not installed. Run `npm run migrate:wave2` in `server`.' });
+        }
+
+        const sessionResult = await pool.request()
+            .input('id', sql.Int, sessionId)
+            .query('SELECT * FROM GovernanceSession WHERE id = @id');
+        if (sessionResult.recordset.length === 0) return res.status(404).json({ error: 'Session not found' });
+        const currentSession = sessionResult.recordset[0];
+
+        const user = getAuthUser(req);
+        const canManageSession = await isBoardChairOrAdmin({ pool, boardId: currentSession.boardId, user });
+        if (!canManageSession) {
+            return res.status(403).json({ error: 'Only board chairs (or admins) can update session agendas.' });
+        }
+        if (currentSession.agendaLocked) {
+            return res.status(409).json({ error: 'Agenda is locked for this session.' });
+        }
+
+        const agenda = normalizeAgendaSubmissionIds(req.body?.agendaSubmissionIds);
+        const decisionTemplates = req.body?.decisionTemplates
+            ? normalizeSessionTemplates(req.body.decisionTemplates)
+            : parseSessionTemplates(currentSession.decisionTemplateJson);
+
+        await pool.request()
+            .input('id', sql.Int, sessionId)
+            .input('agendaJson', sql.NVarChar(sql.MAX), JSON.stringify(agenda))
+            .input('decisionTemplateJson', sql.NVarChar(sql.MAX), JSON.stringify(decisionTemplates))
+            .query(`
+                UPDATE GovernanceSession
+                SET
+                    agendaJson = @agendaJson,
+                    decisionTemplateJson = @decisionTemplateJson,
+                    updatedAt = GETDATE()
+                WHERE id = @id
+            `);
+
+        const refreshed = await pool.request()
+            .input('id', sql.Int, sessionId)
+            .query('SELECT * FROM GovernanceSession WHERE id = @id');
+        res.json({
+            success: true,
+            session: toSessionResponse(refreshed.recordset[0])
+        });
+    } catch (err) {
+        handleError(res, 'updating governance session agenda', err);
+    }
+});
+
+router.post('/sessions/:id/start', checkPermission(['can_decide_governance', 'can_manage_governance']), governanceConfigWriteLimiter, async (req, res) => {
+    try {
+        const sessionId = Number.parseInt(req.params.id, 10);
+        if (Number.isNaN(sessionId)) return res.status(400).json({ error: 'Invalid session id' });
+
+        const pool = await getPool();
+        if (!(await hasGovernanceSessionSchema(pool))) {
+            return res.status(409).json({ error: 'Governance session mode is not installed. Run `npm run migrate:wave2` in `server`.' });
+        }
+
+        const sessionResult = await pool.request()
+            .input('id', sql.Int, sessionId)
+            .query('SELECT * FROM GovernanceSession WHERE id = @id');
+        if (sessionResult.recordset.length === 0) return res.status(404).json({ error: 'Session not found' });
+        const currentSession = sessionResult.recordset[0];
+        if (currentSession.status === 'closed') {
+            return res.status(409).json({ error: 'Closed sessions cannot be restarted.' });
+        }
+
+        const user = getAuthUser(req);
+        const canManageSession = await isBoardChairOrAdmin({ pool, boardId: currentSession.boardId, user });
+        if (!canManageSession) {
+            return res.status(403).json({ error: 'Only board chairs (or admins) can start sessions.' });
+        }
+
+        await pool.request()
+            .input('id', sql.Int, sessionId)
+            .query(`
+                UPDATE GovernanceSession
+                SET
+                    status = 'live',
+                    startedAt = COALESCE(startedAt, GETDATE()),
+                    agendaLocked = 1,
+                    updatedAt = GETDATE()
+                WHERE id = @id
+            `);
+
+        const refreshed = await pool.request()
+            .input('id', sql.Int, sessionId)
+            .query('SELECT * FROM GovernanceSession WHERE id = @id');
+        const session = toSessionResponse(refreshed.recordset[0]);
+        const tracker = await getSessionTracker({
+            pool,
+            boardId: Number.parseInt(session.boardId, 10),
+            agendaSubmissionIds: session.agenda.map((entry) => entry.submissionId)
+        });
+
+        logAudit({
+            action: 'governance.session_start',
+            entityType: 'governance_session',
+            entityId: session.id,
+            entityTitle: session.title,
+            user,
+            after: {
+                boardId: session.boardId,
+                agendaCount: session.agenda.length
+            },
+            req
+        });
+
+        res.json({
+            success: true,
+            session,
+            tracker
+        });
+    } catch (err) {
+        handleError(res, 'starting governance session', err);
+    }
+});
+
+router.post('/sessions/:id/close', checkPermission(['can_decide_governance', 'can_manage_governance']), governanceConfigWriteLimiter, async (req, res) => {
+    try {
+        const sessionId = Number.parseInt(req.params.id, 10);
+        if (Number.isNaN(sessionId)) return res.status(400).json({ error: 'Invalid session id' });
+
+        const pool = await getPool();
+        if (!(await hasGovernanceSessionSchema(pool))) {
+            return res.status(409).json({ error: 'Governance session mode is not installed. Run `npm run migrate:wave2` in `server`.' });
+        }
+
+        const sessionResult = await pool.request()
+            .input('id', sql.Int, sessionId)
+            .query('SELECT * FROM GovernanceSession WHERE id = @id');
+        if (sessionResult.recordset.length === 0) return res.status(404).json({ error: 'Session not found' });
+        const currentSession = sessionResult.recordset[0];
+
+        const user = getAuthUser(req);
+        const canManageSession = await isBoardChairOrAdmin({ pool, boardId: currentSession.boardId, user });
+        if (!canManageSession) {
+            return res.status(403).json({ error: 'Only board chairs (or admins) can close sessions.' });
+        }
+
+        await pool.request()
+            .input('id', sql.Int, sessionId)
+            .query(`
+                UPDATE GovernanceSession
+                SET
+                    status = 'closed',
+                    endedAt = COALESCE(endedAt, GETDATE()),
+                    agendaLocked = 1,
+                    updatedAt = GETDATE()
+                WHERE id = @id
+            `);
+
+        const refreshed = await pool.request()
+            .input('id', sql.Int, sessionId)
+            .query('SELECT * FROM GovernanceSession WHERE id = @id');
+        const session = toSessionResponse(refreshed.recordset[0]);
+
+        logAudit({
+            action: 'governance.session_close',
+            entityType: 'governance_session',
+            entityId: session.id,
+            entityTitle: session.title,
+            user,
+            after: {
+                boardId: session.boardId,
+                endedAt: session.endedAt
+            },
+            req
+        });
+
+        res.json({
+            success: true,
+            session
+        });
+    } catch (err) {
+        handleError(res, 'closing governance session', err);
     }
 });
 

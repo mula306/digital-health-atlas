@@ -1,5 +1,6 @@
 import {
     LayoutDashboard,
+    Briefcase,
     Target,
     Folder,
     BarChart3,
@@ -100,6 +101,7 @@ export function Layout({ children, currentView, onViewChange }) {
         hasPermission('can_manage_governance');
 
     const allNavItems = [
+        { id: 'my-work', label: 'My Work', icon: Briefcase },
         { id: 'exec-dashboard', label: 'Executive Summary', icon: LayoutDashboard, permission: 'can_view_exec_dashboard' },
         { id: 'goals', label: 'Goals', icon: Target, permission: 'can_view_goals' },
         { id: 'metrics', label: 'Metrics', icon: TrendingUp, permission: 'can_view_metrics' },
@@ -129,6 +131,7 @@ export function Layout({ children, currentView, onViewChange }) {
     }, [navItems]);
 
     const pageDescriptions = {
+        'my-work': 'Personal work queue, watchlist focus, and pending governance actions.',
         'exec-dashboard': 'Portfolio-level health, trends, and strategic outcomes.',
         goals: 'Track strategic objectives and ensure delivery alignment.',
         metrics: 'Explore KPI performance and trend visibility.',

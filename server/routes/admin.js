@@ -1,11 +1,24 @@
 import express from 'express';
 import { getPool, sql } from '../db.js';
-import { checkPermission, checkRole, getAuthUser, invalidatePermissionCache, requireAuth } from '../middleware/authMiddleware.js';
+import { checkPermission, checkRole, getAuthUser, hasPermission, invalidatePermissionCache, requireAuth } from '../middleware/authMiddleware.js';
 import { handleError } from '../utils/errorHandler.js';
 import { logAudit } from '../utils/auditLogger.js';
 import { invalidateTagCache, invalidateProjectCache } from '../utils/cache.js';
 
 const router = express.Router();
+
+const normalizeAccessLevel = (value) => (String(value || '').toLowerCase() === 'write' ? 'write' : 'read');
+
+const parseNullableExpiry = (value) => {
+    if (value === undefined || value === null || value === '') return null;
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+        throw new Error('expiresAt must be a valid date/time or null');
+    }
+    return parsed;
+};
+
+const getScopedEntityAccessPredicate = () => '(expiresAt IS NULL OR expiresAt > GETDATE())';
 
 // ==================== TAG GROUPS ====================
 
@@ -545,7 +558,9 @@ router.get('/projects/:projectId/sharing', checkRole('Admin'), async (req, res) 
             orgName: r.orgName,
             orgSlug: r.orgSlug,
             accessLevel: r.accessLevel,
-            grantedAt: r.grantedAt
+            grantedAt: r.grantedAt,
+            expiresAt: r.expiresAt || null,
+            isExpired: !!(r.expiresAt && new Date(r.expiresAt).getTime() <= Date.now())
         })));
     } catch (err) {
         handleError(res, 'fetching project sharing', err);
@@ -556,10 +571,11 @@ router.get('/projects/:projectId/sharing', checkRole('Admin'), async (req, res) 
 router.post('/projects/:projectId/sharing', checkRole('Admin'), async (req, res) => {
     try {
         const projectId = parseInt(req.params.projectId);
-        const { orgId, accessLevel } = req.body;
+        const { orgId, accessLevel, expiresAt } = req.body;
         if (!orgId) return res.status(400).json({ error: 'orgId is required' });
 
-        const level = accessLevel === 'write' ? 'write' : 'read';
+        const level = normalizeAccessLevel(accessLevel);
+        const parsedExpiresAt = parseNullableExpiry(expiresAt);
         const user = getAuthUser(req);
         const pool = await getPool();
 
@@ -567,18 +583,22 @@ router.post('/projects/:projectId/sharing', checkRole('Admin'), async (req, res)
             .input('projectId', sql.Int, projectId)
             .input('orgId', sql.Int, parseInt(orgId))
             .input('accessLevel', sql.NVarChar(20), level)
+            .input('expiresAt', sql.DateTime2, parsedExpiresAt)
             .input('grantedByOid', sql.NVarChar(100), user?.oid || null)
             .query(`
                 MERGE ProjectOrgAccess AS target
                 USING (SELECT @projectId, @orgId) AS source (projectId, orgId)
                 ON target.projectId = source.projectId AND target.orgId = source.orgId
-                WHEN MATCHED THEN UPDATE SET accessLevel = @accessLevel, grantedAt = GETDATE(), grantedByOid = @grantedByOid
-                WHEN NOT MATCHED THEN INSERT (projectId, orgId, accessLevel, grantedByOid) VALUES (@projectId, @orgId, @accessLevel, @grantedByOid);
+                WHEN MATCHED THEN UPDATE SET accessLevel = @accessLevel, expiresAt = @expiresAt, grantedAt = GETDATE(), grantedByOid = @grantedByOid
+                WHEN NOT MATCHED THEN INSERT (projectId, orgId, accessLevel, expiresAt, grantedByOid) VALUES (@projectId, @orgId, @accessLevel, @expiresAt, @grantedByOid);
             `);
 
-        logAudit({ action: 'project.share', entityType: 'project', entityId: projectId, entityTitle: 'Share', user, after: { orgId, accessLevel: level }, req });
+        logAudit({ action: 'project.share', entityType: 'project', entityId: projectId, entityTitle: 'Share', user, after: { orgId, accessLevel: level, expiresAt: parsedExpiresAt }, req });
         res.json({ success: true });
     } catch (err) {
+        if (err?.message?.includes('expiresAt')) {
+            return res.status(400).json({ error: err.message });
+        }
         handleError(res, 'sharing project with organization', err);
     }
 });
@@ -661,10 +681,11 @@ router.get('/organizations/:orgId/sharing-summary', checkRole('Admin'), async (r
         const projectsResult = await pool.request()
             .input('orgId', sql.Int, orgId)
             .query(`
-                SELECT poa.projectId, poa.accessLevel, poa.grantedAt, p.title AS projectTitle
+                SELECT poa.projectId, poa.accessLevel, poa.grantedAt, poa.expiresAt, p.title AS projectTitle
                 FROM ProjectOrgAccess poa
                 INNER JOIN Projects p ON p.id = poa.projectId
                 WHERE poa.orgId = @orgId
+                  AND ${getScopedEntityAccessPredicate()}
                 ORDER BY p.title ASC
             `);
 
@@ -674,10 +695,11 @@ router.get('/organizations/:orgId/sharing-summary', checkRole('Admin'), async (r
             const goalsResult = await pool.request()
                 .input('orgId', sql.Int, orgId)
                 .query(`
-                    SELECT goa.goalId, goa.accessLevel, goa.grantedAt, g.title AS goalTitle, g.type AS goalType, g.parentId
+                    SELECT goa.goalId, goa.accessLevel, goa.grantedAt, goa.expiresAt, g.title AS goalTitle, g.type AS goalType, g.parentId
                     FROM GoalOrgAccess goa
                     INNER JOIN Goals g ON g.id = goa.goalId
                     WHERE goa.orgId = @orgId
+                      AND ${getScopedEntityAccessPredicate()}
                     ORDER BY g.title ASC
                 `);
             goalsRecords = goalsResult.recordset;
@@ -691,7 +713,9 @@ router.get('/organizations/:orgId/sharing-summary', checkRole('Admin'), async (r
                 projectId: r.projectId.toString(),
                 projectTitle: r.projectTitle,
                 accessLevel: r.accessLevel,
-                grantedAt: r.grantedAt
+                grantedAt: r.grantedAt,
+                expiresAt: r.expiresAt || null,
+                isExpired: !!(r.expiresAt && new Date(r.expiresAt).getTime() <= Date.now())
             })),
             goals: goalsRecords.map(r => ({
                 goalId: r.goalId.toString(),
@@ -699,11 +723,470 @@ router.get('/organizations/:orgId/sharing-summary', checkRole('Admin'), async (r
                 goalType: r.goalType,
                 parentId: r.parentId ? r.parentId.toString() : null,
                 accessLevel: r.accessLevel,
-                grantedAt: r.grantedAt
+                grantedAt: r.grantedAt,
+                expiresAt: r.expiresAt || null,
+                isExpired: !!(r.expiresAt && new Date(r.expiresAt).getTime() <= Date.now())
             }))
         });
     } catch (err) {
         handleError(res, 'fetching org sharing summary', err);
+    }
+});
+
+// ==================== SHARING REQUEST WORKFLOW ====================
+
+const validateSharingRequestEntity = async (pool, entityType, entityId) => {
+    if (entityType === 'project') {
+        const result = await pool.request()
+            .input('id', sql.Int, entityId)
+            .query('SELECT TOP 1 id, title, orgId FROM Projects WHERE id = @id');
+        if (result.recordset.length === 0) return null;
+        const row = result.recordset[0];
+        return {
+            entityType: 'project',
+            entityId: Number(row.id),
+            entityTitle: row.title || `Project ${row.id}`,
+            ownerOrgId: row.orgId || null
+        };
+    }
+
+    const result = await pool.request()
+        .input('id', sql.Int, entityId)
+        .query('SELECT TOP 1 id, title, orgId FROM Goals WHERE id = @id');
+    if (result.recordset.length === 0) return null;
+    const row = result.recordset[0];
+    return {
+        entityType: 'goal',
+        entityId: Number(row.id),
+        entityTitle: row.title || `Goal ${row.id}`,
+        ownerOrgId: row.orgId || null
+    };
+};
+
+router.get('/sharing-requests', requireAuth, async (req, res) => {
+    try {
+        const user = getAuthUser(req);
+        if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+        const pool = await getPool();
+
+        // Mark approved requests as expired once their expiry passes
+        await pool.request().query(`
+            UPDATE OrgSharingRequest
+            SET
+                status = 'expired',
+                updatedAt = GETDATE()
+            WHERE status = 'approved'
+              AND expiresAt IS NOT NULL
+              AND expiresAt <= GETDATE()
+        `);
+
+        const status = typeof req.query.status === 'string' ? req.query.status.trim().toLowerCase() : '';
+        const entityType = typeof req.query.entityType === 'string' ? req.query.entityType.trim().toLowerCase() : '';
+        const targetOrgId = Number.parseInt(req.query.targetOrgId, 10);
+        const isAdmin = Array.isArray(user.roles) && user.roles.includes('Admin');
+
+        const request = pool.request();
+        const filters = [];
+        if (status) {
+            if (!['pending', 'approved', 'rejected', 'revoked', 'expired'].includes(status)) {
+                return res.status(400).json({ error: 'Invalid status filter' });
+            }
+            filters.push('sr.status = @status');
+            request.input('status', sql.NVarChar(20), status);
+        }
+        if (entityType) {
+            if (!['project', 'goal'].includes(entityType)) {
+                return res.status(400).json({ error: 'entityType must be project or goal' });
+            }
+            filters.push('sr.entityType = @entityType');
+            request.input('entityType', sql.NVarChar(20), entityType);
+        }
+        if (!Number.isNaN(targetOrgId)) {
+            filters.push('sr.targetOrgId = @targetOrgId');
+            request.input('targetOrgId', sql.Int, targetOrgId);
+        }
+        if (!isAdmin) {
+            filters.push('sr.requestedByOid = @requestedByOid');
+            request.input('requestedByOid', sql.NVarChar(100), user.oid || '');
+        }
+
+        const where = filters.length > 0 ? `WHERE ${filters.join(' AND ')}` : '';
+        const result = await request.query(`
+            SELECT
+                sr.*,
+                o.name AS targetOrgName,
+                p.title AS projectTitle,
+                g.title AS goalTitle
+            FROM OrgSharingRequest sr
+            INNER JOIN Organizations o ON o.id = sr.targetOrgId
+            LEFT JOIN Projects p ON sr.entityType = 'project' AND p.id = sr.entityId
+            LEFT JOIN Goals g ON sr.entityType = 'goal' AND g.id = sr.entityId
+            ${where}
+            ORDER BY sr.requestedAt DESC, sr.id DESC
+        `);
+
+        res.json(result.recordset.map((row) => ({
+            id: String(row.id),
+            entityType: row.entityType,
+            entityId: String(row.entityId),
+            entityTitle: row.entityType === 'project' ? (row.projectTitle || `Project ${row.entityId}`) : (row.goalTitle || `Goal ${row.entityId}`),
+            targetOrgId: String(row.targetOrgId),
+            targetOrgName: row.targetOrgName,
+            requestedAccessLevel: row.requestedAccessLevel,
+            reason: row.reason || null,
+            requestedByOid: row.requestedByOid,
+            requestedAt: row.requestedAt,
+            expiresAt: row.expiresAt || null,
+            ownerAttested: !!row.ownerAttested,
+            ownerAttestedByOid: row.ownerAttestedByOid || null,
+            ownerAttestedAt: row.ownerAttestedAt || null,
+            status: row.status,
+            decisionNote: row.decisionNote || null,
+            decidedByOid: row.decidedByOid || null,
+            decidedAt: row.decidedAt || null
+        })));
+    } catch (err) {
+        handleError(res, 'fetching sharing requests', err);
+    }
+});
+
+router.post('/sharing-requests', requireAuth, async (req, res) => {
+    try {
+        const user = getAuthUser(req);
+        if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+        const entityType = String(req.body?.entityType || '').trim().toLowerCase();
+        const entityId = Number.parseInt(req.body?.entityId, 10);
+        const targetOrgId = Number.parseInt(req.body?.targetOrgId, 10);
+        const requestedAccessLevel = normalizeAccessLevel(req.body?.requestedAccessLevel);
+        const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim() : null;
+        const ownerAttested = req.body?.ownerAttested === true;
+        const expiresAt = parseNullableExpiry(req.body?.expiresAt);
+
+        if (!['project', 'goal'].includes(entityType)) {
+            return res.status(400).json({ error: 'entityType must be project or goal' });
+        }
+        if (Number.isNaN(entityId)) return res.status(400).json({ error: 'entityId is required' });
+        if (Number.isNaN(targetOrgId)) return res.status(400).json({ error: 'targetOrgId is required' });
+        if (expiresAt && expiresAt.getTime() <= Date.now()) {
+            return res.status(400).json({ error: 'expiresAt must be in the future' });
+        }
+
+        const canRequest = entityType === 'project'
+            ? await hasPermission(user, ['can_view_projects', 'can_edit_project', 'can_create_project'])
+            : await hasPermission(user, ['can_view_goals', 'can_edit_goal', 'can_create_goal']);
+        if (!canRequest) return res.status(403).json({ error: 'Forbidden' });
+
+        const pool = await getPool();
+        const targetOrg = await pool.request()
+            .input('id', sql.Int, targetOrgId)
+            .query('SELECT TOP 1 id, name FROM Organizations WHERE id = @id');
+        if (targetOrg.recordset.length === 0) {
+            return res.status(400).json({ error: 'Target organization not found' });
+        }
+
+        const entity = await validateSharingRequestEntity(pool, entityType, entityId);
+        if (!entity) {
+            return res.status(404).json({ error: `${entityType} not found` });
+        }
+
+        const duplicatePending = await pool.request()
+            .input('entityType', sql.NVarChar(20), entityType)
+            .input('entityId', sql.Int, entityId)
+            .input('targetOrgId', sql.Int, targetOrgId)
+            .query(`
+                SELECT TOP 1 id
+                FROM OrgSharingRequest
+                WHERE entityType = @entityType
+                  AND entityId = @entityId
+                  AND targetOrgId = @targetOrgId
+                  AND status = 'pending'
+                ORDER BY requestedAt DESC
+            `);
+        if (duplicatePending.recordset.length > 0) {
+            return res.status(409).json({ error: 'A pending sharing request already exists for this item and organization.' });
+        }
+
+        const inserted = await pool.request()
+            .input('entityType', sql.NVarChar(20), entityType)
+            .input('entityId', sql.Int, entityId)
+            .input('targetOrgId', sql.Int, targetOrgId)
+            .input('requestedAccessLevel', sql.NVarChar(20), requestedAccessLevel)
+            .input('reason', sql.NVarChar(1000), reason)
+            .input('requestedByOid', sql.NVarChar(100), user.oid || '')
+            .input('expiresAt', sql.DateTime2, expiresAt)
+            .input('ownerAttested', sql.Bit, ownerAttested ? 1 : 0)
+            .input('ownerAttestedByOid', sql.NVarChar(100), ownerAttested ? (user.oid || null) : null)
+            .input('ownerAttestedAt', sql.DateTime2, ownerAttested ? new Date() : null)
+            .query(`
+                INSERT INTO OrgSharingRequest (
+                    entityType, entityId, targetOrgId, requestedAccessLevel, reason,
+                    requestedByOid, expiresAt, ownerAttested, ownerAttestedByOid, ownerAttestedAt, status
+                )
+                OUTPUT INSERTED.*
+                VALUES (
+                    @entityType, @entityId, @targetOrgId, @requestedAccessLevel, @reason,
+                    @requestedByOid, @expiresAt, @ownerAttested, @ownerAttestedByOid, @ownerAttestedAt, 'pending'
+                )
+            `);
+
+        logAudit({
+            action: 'sharing_request.create',
+            entityType: 'sharing_request',
+            entityId: inserted.recordset[0].id,
+            entityTitle: `${entity.entityType}:${entity.entityTitle}`,
+            user,
+            after: {
+                entityType,
+                entityId,
+                targetOrgId,
+                requestedAccessLevel,
+                expiresAt,
+                ownerAttested
+            },
+            req
+        });
+
+        res.json({
+            success: true,
+            id: String(inserted.recordset[0].id)
+        });
+    } catch (err) {
+        if (err?.message?.includes('expiresAt')) {
+            return res.status(400).json({ error: err.message });
+        }
+        handleError(res, 'creating sharing request', err);
+    }
+});
+
+router.post('/sharing-requests/:id/approve', checkRole('Admin'), async (req, res) => {
+    try {
+        const requestId = Number.parseInt(req.params.id, 10);
+        if (Number.isNaN(requestId)) return res.status(400).json({ error: 'Invalid request id' });
+
+        const pool = await getPool();
+        const approvalRequest = await pool.request()
+            .input('id', sql.Int, requestId)
+            .query('SELECT TOP 1 * FROM OrgSharingRequest WHERE id = @id');
+        if (approvalRequest.recordset.length === 0) return res.status(404).json({ error: 'Sharing request not found' });
+        const sharingRequest = approvalRequest.recordset[0];
+        if (sharingRequest.status !== 'pending') {
+            return res.status(409).json({ error: 'Only pending requests can be approved.' });
+        }
+
+        const overrideExpiry = req.body?.expiresAt !== undefined ? parseNullableExpiry(req.body.expiresAt) : sharingRequest.expiresAt;
+        if (overrideExpiry && overrideExpiry.getTime() <= Date.now()) {
+            return res.status(400).json({ error: 'expiresAt must be in the future' });
+        }
+
+        const decisionNote = typeof req.body?.decisionNote === 'string' ? req.body.decisionNote.trim() : null;
+        const requestedAccessLevel = normalizeAccessLevel(sharingRequest.requestedAccessLevel);
+        const approver = getAuthUser(req);
+
+        const tx = new sql.Transaction(pool);
+        await tx.begin();
+        try {
+            if (sharingRequest.entityType === 'project') {
+                await new sql.Request(tx)
+                    .input('projectId', sql.Int, sharingRequest.entityId)
+                    .input('orgId', sql.Int, sharingRequest.targetOrgId)
+                    .input('accessLevel', sql.NVarChar(20), requestedAccessLevel)
+                    .input('expiresAt', sql.DateTime2, overrideExpiry)
+                    .input('grantedByOid', sql.NVarChar(100), approver?.oid || null)
+                    .query(`
+                        MERGE ProjectOrgAccess AS target
+                        USING (SELECT @projectId, @orgId) AS source (projectId, orgId)
+                        ON target.projectId = source.projectId AND target.orgId = source.orgId
+                        WHEN MATCHED THEN UPDATE SET accessLevel = @accessLevel, expiresAt = @expiresAt, grantedAt = GETDATE(), grantedByOid = @grantedByOid
+                        WHEN NOT MATCHED THEN INSERT (projectId, orgId, accessLevel, expiresAt, grantedByOid)
+                            VALUES (@projectId, @orgId, @accessLevel, @expiresAt, @grantedByOid);
+                    `);
+            } else {
+                await new sql.Request(tx)
+                    .input('goalId', sql.Int, sharingRequest.entityId)
+                    .input('orgId', sql.Int, sharingRequest.targetOrgId)
+                    .input('accessLevel', sql.NVarChar(20), requestedAccessLevel)
+                    .input('expiresAt', sql.DateTime2, overrideExpiry)
+                    .input('grantedByOid', sql.NVarChar(100), approver?.oid || null)
+                    .query(`
+                        MERGE GoalOrgAccess AS target
+                        USING (SELECT @goalId, @orgId) AS source (goalId, orgId)
+                        ON target.goalId = source.goalId AND target.orgId = source.orgId
+                        WHEN MATCHED THEN UPDATE SET accessLevel = @accessLevel, expiresAt = @expiresAt, grantedAt = GETDATE(), grantedByOid = @grantedByOid
+                        WHEN NOT MATCHED THEN INSERT (goalId, orgId, accessLevel, expiresAt, grantedByOid)
+                            VALUES (@goalId, @orgId, @accessLevel, @expiresAt, @grantedByOid);
+                    `);
+            }
+
+            await new sql.Request(tx)
+                .input('id', sql.Int, requestId)
+                .input('decisionNote', sql.NVarChar(1000), decisionNote)
+                .input('decidedByOid', sql.NVarChar(100), approver?.oid || null)
+                .input('expiresAt', sql.DateTime2, overrideExpiry)
+                .query(`
+                    UPDATE OrgSharingRequest
+                    SET
+                        status = 'approved',
+                        decisionNote = @decisionNote,
+                        decidedByOid = @decidedByOid,
+                        decidedAt = GETDATE(),
+                        expiresAt = @expiresAt,
+                        updatedAt = GETDATE()
+                    WHERE id = @id
+                `);
+
+            await tx.commit();
+        } catch (err) {
+            await tx.rollback();
+            throw err;
+        }
+
+        logAudit({
+            action: 'sharing_request.approve',
+            entityType: 'sharing_request',
+            entityId: requestId,
+            entityTitle: `${sharingRequest.entityType}:${sharingRequest.entityId}`,
+            user: approver,
+            after: {
+                targetOrgId: sharingRequest.targetOrgId,
+                accessLevel: requestedAccessLevel,
+                expiresAt: overrideExpiry
+            },
+            req
+        });
+
+        res.json({ success: true });
+    } catch (err) {
+        if (err?.message?.includes('expiresAt')) {
+            return res.status(400).json({ error: err.message });
+        }
+        handleError(res, 'approving sharing request', err);
+    }
+});
+
+router.post('/sharing-requests/:id/reject', checkRole('Admin'), async (req, res) => {
+    try {
+        const requestId = Number.parseInt(req.params.id, 10);
+        if (Number.isNaN(requestId)) return res.status(400).json({ error: 'Invalid request id' });
+
+        const decisionNote = typeof req.body?.decisionNote === 'string' ? req.body.decisionNote.trim() : null;
+        const approver = getAuthUser(req);
+        const pool = await getPool();
+        const requestResult = await pool.request()
+            .input('id', sql.Int, requestId)
+            .query('SELECT TOP 1 * FROM OrgSharingRequest WHERE id = @id');
+        if (requestResult.recordset.length === 0) return res.status(404).json({ error: 'Sharing request not found' });
+        if (requestResult.recordset[0].status !== 'pending') {
+            return res.status(409).json({ error: 'Only pending requests can be rejected.' });
+        }
+
+        await pool.request()
+            .input('id', sql.Int, requestId)
+            .input('decisionNote', sql.NVarChar(1000), decisionNote)
+            .input('decidedByOid', sql.NVarChar(100), approver?.oid || null)
+            .query(`
+                UPDATE OrgSharingRequest
+                SET
+                    status = 'rejected',
+                    decisionNote = @decisionNote,
+                    decidedByOid = @decidedByOid,
+                    decidedAt = GETDATE(),
+                    updatedAt = GETDATE()
+                WHERE id = @id
+            `);
+
+        logAudit({
+            action: 'sharing_request.reject',
+            entityType: 'sharing_request',
+            entityId: requestId,
+            entityTitle: `${requestResult.recordset[0].entityType}:${requestResult.recordset[0].entityId}`,
+            user: approver,
+            after: { decisionNote },
+            req
+        });
+
+        res.json({ success: true });
+    } catch (err) {
+        handleError(res, 'rejecting sharing request', err);
+    }
+});
+
+router.post('/sharing-requests/:id/revoke', requireAuth, async (req, res) => {
+    try {
+        const requestId = Number.parseInt(req.params.id, 10);
+        if (Number.isNaN(requestId)) return res.status(400).json({ error: 'Invalid request id' });
+
+        const actor = getAuthUser(req);
+        if (!actor) return res.status(401).json({ error: 'Unauthorized' });
+        const isAdmin = Array.isArray(actor.roles) && actor.roles.includes('Admin');
+
+        const pool = await getPool();
+        const requestResult = await pool.request()
+            .input('id', sql.Int, requestId)
+            .query('SELECT TOP 1 * FROM OrgSharingRequest WHERE id = @id');
+        if (requestResult.recordset.length === 0) return res.status(404).json({ error: 'Sharing request not found' });
+        const sharingRequest = requestResult.recordset[0];
+
+        if (!isAdmin && sharingRequest.requestedByOid !== actor.oid) {
+            return res.status(403).json({ error: 'Forbidden' });
+        }
+        if (!['pending', 'approved'].includes(sharingRequest.status)) {
+            return res.status(409).json({ error: 'Only pending or approved requests can be revoked.' });
+        }
+
+        const decisionNote = typeof req.body?.decisionNote === 'string' ? req.body.decisionNote.trim() : null;
+        const tx = new sql.Transaction(pool);
+        await tx.begin();
+        try {
+            if (sharingRequest.status === 'approved') {
+                if (sharingRequest.entityType === 'project') {
+                    await new sql.Request(tx)
+                        .input('projectId', sql.Int, sharingRequest.entityId)
+                        .input('orgId', sql.Int, sharingRequest.targetOrgId)
+                        .query('DELETE FROM ProjectOrgAccess WHERE projectId = @projectId AND orgId = @orgId');
+                } else {
+                    await new sql.Request(tx)
+                        .input('goalId', sql.Int, sharingRequest.entityId)
+                        .input('orgId', sql.Int, sharingRequest.targetOrgId)
+                        .query('DELETE FROM GoalOrgAccess WHERE goalId = @goalId AND orgId = @orgId');
+                }
+            }
+
+            await new sql.Request(tx)
+                .input('id', sql.Int, requestId)
+                .input('decisionNote', sql.NVarChar(1000), decisionNote)
+                .input('decidedByOid', sql.NVarChar(100), actor?.oid || null)
+                .query(`
+                    UPDATE OrgSharingRequest
+                    SET
+                        status = 'revoked',
+                        decisionNote = @decisionNote,
+                        decidedByOid = @decidedByOid,
+                        decidedAt = GETDATE(),
+                        updatedAt = GETDATE()
+                    WHERE id = @id
+                `);
+
+            await tx.commit();
+        } catch (err) {
+            await tx.rollback();
+            throw err;
+        }
+
+        logAudit({
+            action: 'sharing_request.revoke',
+            entityType: 'sharing_request',
+            entityId: requestId,
+            entityTitle: `${sharingRequest.entityType}:${sharingRequest.entityId}`,
+            user: actor,
+            after: { decisionNote },
+            req
+        });
+
+        res.json({ success: true });
+    } catch (err) {
+        handleError(res, 'revoking sharing request', err);
     }
 });
 
@@ -712,12 +1195,13 @@ router.get('/organizations/:orgId/sharing-summary', checkRole('Admin'), async (r
 // Bulk share projects with an org
 router.post('/projects/bulk-share', checkRole('Admin'), async (req, res) => {
     try {
-        const { projectIds, orgId, accessLevel } = req.body;
+        const { projectIds, orgId, accessLevel, expiresAt } = req.body;
         if (!Array.isArray(projectIds) || !orgId) {
             return res.status(400).json({ error: 'projectIds (array) and orgId are required' });
         }
 
-        const level = accessLevel === 'write' ? 'write' : 'read';
+        const level = normalizeAccessLevel(accessLevel);
+        const parsedExpiresAt = parseNullableExpiry(expiresAt);
         const user = getAuthUser(req);
         const pool = await getPool();
         const transaction = new sql.Transaction(pool);
@@ -730,23 +1214,27 @@ router.post('/projects/bulk-share', checkRole('Admin'), async (req, res) => {
                     .input('projectId', sql.Int, parseInt(projectId))
                     .input('orgId', sql.Int, parseInt(orgId))
                     .input('accessLevel', sql.NVarChar(20), level)
+                    .input('expiresAt', sql.DateTime2, parsedExpiresAt)
                     .input('grantedByOid', sql.NVarChar(100), user?.oid || null)
                     .query(`
                         MERGE ProjectOrgAccess AS target
                         USING (SELECT @projectId, @orgId) AS source (projectId, orgId)
                         ON target.projectId = source.projectId AND target.orgId = source.orgId
-                        WHEN MATCHED THEN UPDATE SET accessLevel = @accessLevel, grantedAt = GETDATE(), grantedByOid = @grantedByOid
-                        WHEN NOT MATCHED THEN INSERT (projectId, orgId, accessLevel, grantedByOid) VALUES (@projectId, @orgId, @accessLevel, @grantedByOid);
+                        WHEN MATCHED THEN UPDATE SET accessLevel = @accessLevel, expiresAt = @expiresAt, grantedAt = GETDATE(), grantedByOid = @grantedByOid
+                        WHEN NOT MATCHED THEN INSERT (projectId, orgId, accessLevel, expiresAt, grantedByOid) VALUES (@projectId, @orgId, @accessLevel, @expiresAt, @grantedByOid);
                     `);
             }
             await transaction.commit();
-            logAudit({ action: 'project.bulk_share', entityType: 'project', entityId: null, entityTitle: `${projectIds.length} projects shared`, user, after: { orgId, accessLevel: level, count: projectIds.length }, req });
+            logAudit({ action: 'project.bulk_share', entityType: 'project', entityId: null, entityTitle: `${projectIds.length} projects shared`, user, after: { orgId, accessLevel: level, expiresAt: parsedExpiresAt, count: projectIds.length }, req });
             res.json({ success: true, count: projectIds.length });
         } catch (err) {
             await transaction.rollback();
             throw err;
         }
     } catch (err) {
+        if (err?.message?.includes('expiresAt')) {
+            return res.status(400).json({ error: err.message });
+        }
         handleError(res, 'bulk sharing projects', err);
     }
 });
@@ -804,7 +1292,9 @@ router.get('/goals/:goalId/sharing', checkRole('Admin'), async (req, res) => {
             orgName: r.orgName,
             orgSlug: r.orgSlug,
             accessLevel: r.accessLevel,
-            grantedAt: r.grantedAt
+            grantedAt: r.grantedAt,
+            expiresAt: r.expiresAt || null,
+            isExpired: !!(r.expiresAt && new Date(r.expiresAt).getTime() <= Date.now())
         })));
     } catch (err) {
         handleError(res, 'fetching goal sharing', err);
@@ -815,10 +1305,11 @@ router.get('/goals/:goalId/sharing', checkRole('Admin'), async (req, res) => {
 router.post('/goals/:goalId/sharing', checkRole('Admin'), async (req, res) => {
     try {
         const goalId = parseInt(req.params.goalId);
-        const { orgId, accessLevel, includeDescendants } = req.body;
+        const { orgId, accessLevel, includeDescendants, expiresAt } = req.body;
         if (!orgId) return res.status(400).json({ error: 'orgId is required' });
 
-        const level = accessLevel === 'write' ? 'write' : 'read';
+        const level = normalizeAccessLevel(accessLevel);
+        const parsedExpiresAt = parseNullableExpiry(expiresAt);
         const user = getAuthUser(req);
         const pool = await getPool();
 
@@ -850,23 +1341,27 @@ router.post('/goals/:goalId/sharing', checkRole('Admin'), async (req, res) => {
                     .input('goalId', sql.Int, gId)
                     .input('orgId', sql.Int, parseInt(orgId))
                     .input('accessLevel', sql.NVarChar(20), level)
+                    .input('expiresAt', sql.DateTime2, parsedExpiresAt)
                     .input('grantedByOid', sql.NVarChar(100), user?.oid || null)
                     .query(`
                         MERGE GoalOrgAccess AS target
                         USING (SELECT @goalId, @orgId) AS source (goalId, orgId)
                         ON target.goalId = source.goalId AND target.orgId = source.orgId
-                        WHEN MATCHED THEN UPDATE SET accessLevel = @accessLevel, grantedAt = GETDATE(), grantedByOid = @grantedByOid
-                        WHEN NOT MATCHED THEN INSERT (goalId, orgId, accessLevel, grantedByOid) VALUES (@goalId, @orgId, @accessLevel, @grantedByOid);
+                        WHEN MATCHED THEN UPDATE SET accessLevel = @accessLevel, expiresAt = @expiresAt, grantedAt = GETDATE(), grantedByOid = @grantedByOid
+                        WHEN NOT MATCHED THEN INSERT (goalId, orgId, accessLevel, expiresAt, grantedByOid) VALUES (@goalId, @orgId, @accessLevel, @expiresAt, @grantedByOid);
                     `);
             }
             await transaction.commit();
-            logAudit({ action: 'goal.share', entityType: 'goal', entityId: goalId, entityTitle: 'Goal Share', user, after: { orgId, accessLevel: level, goalCount: goalIds.length }, req });
+            logAudit({ action: 'goal.share', entityType: 'goal', entityId: goalId, entityTitle: 'Goal Share', user, after: { orgId, accessLevel: level, expiresAt: parsedExpiresAt, goalCount: goalIds.length }, req });
             res.json({ success: true, sharedGoalCount: goalIds.length });
         } catch (err) {
             await transaction.rollback();
             throw err;
         }
     } catch (err) {
+        if (err?.message?.includes('expiresAt')) {
+            return res.status(400).json({ error: err.message });
+        }
         handleError(res, 'sharing goal with organization', err);
     }
 });
@@ -893,12 +1388,13 @@ router.delete('/goals/:goalId/sharing/:orgId', checkRole('Admin'), async (req, r
 // Bulk share goals with an org
 router.post('/goals/bulk-share', checkRole('Admin'), async (req, res) => {
     try {
-        const { goalIds, orgId, accessLevel, includeDescendants } = req.body;
+        const { goalIds, orgId, accessLevel, includeDescendants, expiresAt } = req.body;
         if (!Array.isArray(goalIds) || !orgId) {
             return res.status(400).json({ error: 'goalIds (array) and orgId are required' });
         }
 
-        const level = accessLevel === 'write' ? 'write' : 'read';
+        const level = normalizeAccessLevel(accessLevel);
+        const parsedExpiresAt = parseNullableExpiry(expiresAt);
         const user = getAuthUser(req);
         const pool = await getPool();
 
@@ -930,23 +1426,27 @@ router.post('/goals/bulk-share', checkRole('Admin'), async (req, res) => {
                     .input('goalId', sql.Int, gId)
                     .input('orgId', sql.Int, parseInt(orgId))
                     .input('accessLevel', sql.NVarChar(20), level)
+                    .input('expiresAt', sql.DateTime2, parsedExpiresAt)
                     .input('grantedByOid', sql.NVarChar(100), user?.oid || null)
                     .query(`
                         MERGE GoalOrgAccess AS target
                         USING (SELECT @goalId, @orgId) AS source (goalId, orgId)
                         ON target.goalId = source.goalId AND target.orgId = source.orgId
-                        WHEN MATCHED THEN UPDATE SET accessLevel = @accessLevel, grantedAt = GETDATE(), grantedByOid = @grantedByOid
-                        WHEN NOT MATCHED THEN INSERT (goalId, orgId, accessLevel, grantedByOid) VALUES (@goalId, @orgId, @accessLevel, @grantedByOid);
+                        WHEN MATCHED THEN UPDATE SET accessLevel = @accessLevel, expiresAt = @expiresAt, grantedAt = GETDATE(), grantedByOid = @grantedByOid
+                        WHEN NOT MATCHED THEN INSERT (goalId, orgId, accessLevel, expiresAt, grantedByOid) VALUES (@goalId, @orgId, @accessLevel, @expiresAt, @grantedByOid);
                     `);
             }
             await transaction.commit();
-            logAudit({ action: 'goal.bulk_share', entityType: 'goal', entityId: null, entityTitle: `${allGoalIds.length} goals shared`, user, after: { orgId, accessLevel: level, count: allGoalIds.length }, req });
+            logAudit({ action: 'goal.bulk_share', entityType: 'goal', entityId: null, entityTitle: `${allGoalIds.length} goals shared`, user, after: { orgId, accessLevel: level, expiresAt: parsedExpiresAt, count: allGoalIds.length }, req });
             res.json({ success: true, count: allGoalIds.length });
         } catch (err) {
             await transaction.rollback();
             throw err;
         }
     } catch (err) {
+        if (err?.message?.includes('expiresAt')) {
+            return res.status(400).json({ error: err.message });
+        }
         handleError(res, 'bulk sharing goals', err);
     }
 });

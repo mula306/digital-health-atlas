@@ -103,6 +103,27 @@ const hasGovernanceBoardPolicySchema = async (pool) => {
     }
 };
 
+const hasGovernanceCapacitySchema = async (pool) => {
+    try {
+        const result = await pool.request().query(`
+            SELECT
+                CASE WHEN COL_LENGTH('GovernanceBoard', 'weeklyCapacityHours') IS NOT NULL THEN 1 ELSE 0 END AS hasWeeklyCapacityHours,
+                CASE WHEN COL_LENGTH('GovernanceBoard', 'wipLimit') IS NOT NULL THEN 1 ELSE 0 END AS hasWipLimit,
+                CASE WHEN COL_LENGTH('GovernanceBoard', 'defaultSubmissionEffortHours') IS NOT NULL THEN 1 ELSE 0 END AS hasDefaultSubmissionEffortHours,
+                CASE WHEN COL_LENGTH('IntakeSubmissions', 'estimatedEffortHours') IS NOT NULL THEN 1 ELSE 0 END AS hasEstimatedEffortHours
+        `);
+        const row = result.recordset[0] || {};
+        return !!(
+            row.hasWeeklyCapacityHours &&
+            row.hasWipLimit &&
+            row.hasDefaultSubmissionEffortHours &&
+            row.hasEstimatedEffortHours
+        );
+    } catch {
+        return false;
+    }
+};
+
 const toFiniteNumber = (value) => {
     const n = Number(value);
     return Number.isFinite(n) ? n : null;
@@ -316,6 +337,160 @@ const normalizeGovernanceMode = (value, fallback = 'off') => {
         return normalized;
     }
     return fallback;
+};
+
+const DEFAULT_WORKFLOW_SLA_POLICIES = Object.freeze({
+    triage: {
+        stageKey: 'triage',
+        displayName: 'Triage',
+        targetHours: 72,
+        warningHours: 48,
+        escalationHours: 96
+    },
+    governance: {
+        stageKey: 'governance',
+        displayName: 'Governance Review',
+        targetHours: 120,
+        warningHours: 96,
+        escalationHours: 144
+    },
+    resolution: {
+        stageKey: 'resolution',
+        displayName: 'Resolution',
+        targetHours: 48,
+        warningHours: 36,
+        escalationHours: 72
+    }
+});
+
+const normalizeSlaPolicy = (stageKey, policy = {}) => {
+    const defaults = DEFAULT_WORKFLOW_SLA_POLICIES[stageKey] || DEFAULT_WORKFLOW_SLA_POLICIES.triage;
+    const targetHours = Number.isFinite(Number(policy.targetHours))
+        ? Math.max(1, Math.trunc(Number(policy.targetHours)))
+        : defaults.targetHours;
+    const warningHoursRaw = Number.isFinite(Number(policy.warningHours))
+        ? Math.trunc(Number(policy.warningHours))
+        : defaults.warningHours;
+    const warningHours = Math.max(0, Math.min(targetHours, warningHoursRaw));
+    const escalationHoursRaw = Number.isFinite(Number(policy.escalationHours))
+        ? Math.trunc(Number(policy.escalationHours))
+        : defaults.escalationHours;
+    const escalationHours = Math.max(warningHours, escalationHoursRaw);
+
+    return {
+        stageKey,
+        displayName: typeof policy.displayName === 'string' && policy.displayName.trim()
+            ? policy.displayName.trim()
+            : defaults.displayName,
+        targetHours,
+        warningHours,
+        escalationHours
+    };
+};
+
+const hasWorkflowSlaSchema = async (pool) => {
+    try {
+        const result = await pool.request().query(`
+            SELECT
+                CASE WHEN OBJECT_ID('WorkflowSlaPolicy', 'U') IS NOT NULL THEN 1 ELSE 0 END AS hasWorkflowSlaPolicy,
+                CASE WHEN COL_LENGTH('IntakeSubmissions', 'lastSlaNudgedAt') IS NOT NULL THEN 1 ELSE 0 END AS hasLastSlaNudgedAt,
+                CASE WHEN COL_LENGTH('IntakeSubmissions', 'lastSlaNudgedByOid') IS NOT NULL THEN 1 ELSE 0 END AS hasLastSlaNudgedByOid
+        `);
+        const row = result.recordset[0] || {};
+        return !!(row.hasWorkflowSlaPolicy && row.hasLastSlaNudgedAt && row.hasLastSlaNudgedByOid);
+    } catch {
+        return false;
+    }
+};
+
+const fetchWorkflowSlaPolicies = async (pool) => {
+    const policies = {
+        triage: { ...DEFAULT_WORKFLOW_SLA_POLICIES.triage },
+        governance: { ...DEFAULT_WORKFLOW_SLA_POLICIES.governance },
+        resolution: { ...DEFAULT_WORKFLOW_SLA_POLICIES.resolution }
+    };
+
+    if (!(await hasWorkflowSlaSchema(pool))) {
+        return policies;
+    }
+
+    const result = await pool.request().query(`
+        SELECT stageKey, displayName, targetHours, warningHours, escalationHours, isActive
+        FROM WorkflowSlaPolicy
+        WHERE isActive = 1
+    `);
+
+    for (const row of result.recordset) {
+        const stageKey = String(row.stageKey || '').trim().toLowerCase();
+        if (!Object.prototype.hasOwnProperty.call(policies, stageKey)) continue;
+        policies[stageKey] = normalizeSlaPolicy(stageKey, row);
+    }
+
+    return policies;
+};
+
+const parseDateOrNull = (value) => {
+    if (!value) return null;
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return null;
+    return parsed;
+};
+
+const getSubmissionWorkflowStage = (submission) => {
+    const status = String(submission?.status || '').toLowerCase();
+    const governanceRequired = !!submission?.governanceRequired;
+    const governanceStatus = String(submission?.governanceStatus || '').toLowerCase();
+
+    if (status === 'approved' || status === 'rejected') return null;
+    if (governanceRequired && governanceStatus !== 'decided' && governanceStatus !== 'skipped') {
+        return 'governance';
+    }
+    if (governanceRequired && governanceStatus === 'decided') {
+        return 'resolution';
+    }
+    return 'triage';
+};
+
+const getSubmissionSlaAnchor = (submission, reviewStartedAt = null, reviewDecidedAt = null) => {
+    const stage = getSubmissionWorkflowStage(submission);
+    if (!stage) return null;
+
+    if (stage === 'governance') {
+        return reviewStartedAt || parseDateOrNull(submission?.submittedAt);
+    }
+    if (stage === 'resolution') {
+        return reviewDecidedAt || reviewStartedAt || parseDateOrNull(submission?.submittedAt);
+    }
+    return parseDateOrNull(submission?.submittedAt);
+};
+
+const buildSlaSnapshot = ({ stageKey, startedAt, policies }) => {
+    if (!stageKey || !startedAt || !policies?.[stageKey]) return null;
+    const policy = policies[stageKey];
+    const now = Date.now();
+    const elapsedMs = Math.max(0, now - startedAt.getTime());
+    const elapsedHours = Math.round((elapsedMs / 3600000) * 100) / 100;
+    const remainingHours = Math.round((policy.targetHours - elapsedHours) * 100) / 100;
+    const escalationInHours = Math.round((policy.escalationHours - elapsedHours) * 100) / 100;
+    const isBreached = elapsedHours > policy.targetHours;
+    const isWarning = !isBreached && elapsedHours >= policy.warningHours;
+    const isEscalationDue = elapsedHours >= policy.escalationHours;
+
+    return {
+        stageKey,
+        displayName: policy.displayName,
+        startedAt: startedAt.toISOString(),
+        elapsedHours,
+        targetHours: policy.targetHours,
+        warningHours: policy.warningHours,
+        escalationHours: policy.escalationHours,
+        remainingHours,
+        escalationInHours,
+        isBreached,
+        isWarning,
+        isEscalationDue,
+        urgency: isEscalationDue ? 'escalate' : isBreached ? 'breach' : isWarning ? 'warning' : 'normal'
+    };
 };
 
 const parseNullableBoardId = (value) => {
@@ -551,6 +726,9 @@ router.get('/governance-queue', checkPermission('can_view_governance_queue'), as
             return res.status(503).json({ error: 'Governance schema not installed. Run governance migration first.' });
         }
         const phase1Ready = await hasGovernancePhase1Schema(pool);
+        const workflowSlaReady = await hasWorkflowSlaSchema(pool);
+        const governanceCapacityReady = await hasGovernanceCapacitySchema(pool);
+        const workflowSlaPolicies = await fetchWorkflowSlaPolicies(pool);
         const user = getAuthUser(req);
 
         const boardId = parseInt(req.query.boardId, 10);
@@ -647,6 +825,55 @@ router.get('/governance-queue', checkPermission('can_view_governance_queue'), as
             .input('limit', sql.Int, limit)
             .input('offset', sql.Int, offset);
         addFilterParam.forEach(([name, type, value]) => dataRequest.input(name, type, value));
+        const latestReviewSelect = phase1Ready
+            ? `
+                lr.latestReviewId,
+                lr.latestReviewStatus,
+                lr.latestReviewStartedAt,
+                lr.latestReviewDecidedAt,
+            `
+            : `
+                NULL AS latestReviewId,
+                NULL AS latestReviewStatus,
+                NULL AS latestReviewStartedAt,
+                NULL AS latestReviewDecidedAt,
+            `;
+        const latestReviewApply = phase1Ready
+            ? `
+                OUTER APPLY (
+                    SELECT TOP 1
+                        gr.id AS latestReviewId,
+                        gr.status AS latestReviewStatus,
+                        gr.startedAt AS latestReviewStartedAt,
+                        gr.decidedAt AS latestReviewDecidedAt
+                    FROM GovernanceReview gr
+                    WHERE gr.submissionId = s.id
+                    ORDER BY gr.reviewRound DESC
+                ) lr
+            `
+            : '';
+        const slaNudgeSelect = workflowSlaReady
+            ? `
+                s.lastSlaNudgedAt,
+                s.lastSlaNudgedByOid,
+            `
+            : `
+                NULL AS lastSlaNudgedAt,
+                NULL AS lastSlaNudgedByOid,
+            `;
+        const capacitySelect = governanceCapacityReady
+            ? `
+                s.estimatedEffortHours,
+                b.weeklyCapacityHours,
+                b.wipLimit,
+                b.defaultSubmissionEffortHours,
+            `
+            : `
+                NULL AS estimatedEffortHours,
+                NULL AS weeklyCapacityHours,
+                NULL AS wipLimit,
+                NULL AS defaultSubmissionEffortHours,
+            `;
         const dataResult = await dataRequest.query(`
             SELECT
                 s.id,
@@ -660,6 +887,9 @@ router.get('/governance-queue', checkPermission('can_view_governance_queue'), as
                 s.governanceDecision,
                 s.governanceReason,
                 s.priorityScore,
+                ${latestReviewSelect}
+                ${slaNudgeSelect}
+                ${capacitySelect}
                 f.name AS formName,
                 f.governanceMode,
                 f.governanceBoardId,
@@ -667,6 +897,7 @@ router.get('/governance-queue', checkPermission('can_view_governance_queue'), as
             FROM IntakeSubmissions s
             INNER JOIN IntakeForms f ON f.id = s.formId
             LEFT JOIN GovernanceBoard b ON b.id = f.governanceBoardId
+            ${latestReviewApply}
             ${where}
             ORDER BY
                 CASE WHEN s.priorityScore IS NULL THEN 1 ELSE 0 END,
@@ -675,33 +906,490 @@ router.get('/governance-queue', checkPermission('can_view_governance_queue'), as
             OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY
         `);
 
+        let capacity = null;
+        if (!Number.isNaN(boardId) && governanceCapacityReady) {
+            const boardCapacityResult = await pool.request()
+                .input('boardId', sql.Int, boardId)
+                .query(`
+                    SELECT TOP 1
+                        b.id,
+                        b.name,
+                        b.orgId,
+                        b.weeklyCapacityHours,
+                        b.wipLimit,
+                        b.defaultSubmissionEffortHours
+                    FROM GovernanceBoard b
+                    WHERE b.id = @boardId
+                `);
+            const boardCapacity = boardCapacityResult.recordset[0] || null;
+
+            if (boardCapacity) {
+                const defaultEffort = Number(boardCapacity.defaultSubmissionEffortHours || 40);
+                const queueSummary = await pool.request()
+                    .input('boardId', sql.Int, boardId)
+                    .input('defaultEffort', sql.Decimal(9, 2), defaultEffort)
+                    .query(`
+                        SELECT
+                            SUM(CASE
+                                WHEN s.governanceRequired = 1
+                                     AND s.governanceStatus IN ('not-started', 'in-review')
+                                    THEN 1 ELSE 0
+                            END) AS pendingDecisionCount,
+                            SUM(CASE
+                                WHEN s.governanceRequired = 1
+                                     AND s.governanceStatus IN ('not-started', 'in-review')
+                                    THEN ISNULL(s.estimatedEffortHours, @defaultEffort)
+                                    ELSE 0
+                            END) AS pendingDecisionEffortHours,
+                            SUM(CASE
+                                WHEN s.governanceRequired = 1
+                                     AND s.governanceStatus = 'decided'
+                                     AND s.governanceDecision = 'approved-backlog'
+                                     AND s.convertedProjectId IS NULL
+                                    THEN 1 ELSE 0
+                            END) AS approvedBacklogCount
+                        FROM IntakeSubmissions s
+                        INNER JOIN IntakeForms f ON f.id = s.formId
+                        WHERE f.governanceBoardId = @boardId
+                    `);
+
+                const activeProjectRequest = pool.request();
+                if (boardCapacity.orgId === null || boardCapacity.orgId === undefined) {
+                    activeProjectRequest.input('boardOrgId', sql.Int, null);
+                } else {
+                    activeProjectRequest.input('boardOrgId', sql.Int, Number(boardCapacity.orgId));
+                }
+                const activeProjectResult = await activeProjectRequest.query(`
+                    SELECT COUNT(*) AS activeProjectCount
+                    FROM Projects p
+                    WHERE p.status = 'active'
+                      AND (@boardOrgId IS NULL OR p.orgId = @boardOrgId)
+                `);
+
+                const pendingDecisionCount = Number(queueSummary.recordset[0]?.pendingDecisionCount || 0);
+                const pendingDecisionEffortHours = Math.round(Number(queueSummary.recordset[0]?.pendingDecisionEffortHours || 0) * 100) / 100;
+                const approvedBacklogCount = Number(queueSummary.recordset[0]?.approvedBacklogCount || 0);
+                const activeProjectCount = Number(activeProjectResult.recordset[0]?.activeProjectCount || 0);
+                const weeklyCapacityHours = boardCapacity.weeklyCapacityHours === null || boardCapacity.weeklyCapacityHours === undefined
+                    ? null
+                    : Number(boardCapacity.weeklyCapacityHours);
+                const wipLimit = boardCapacity.wipLimit === null || boardCapacity.wipLimit === undefined
+                    ? null
+                    : Number(boardCapacity.wipLimit);
+                const projectedWipCount = activeProjectCount + pendingDecisionCount;
+                const projectedWeeklyDemandHours = pendingDecisionEffortHours;
+                const wipHeadroom = wipLimit === null ? null : (wipLimit - projectedWipCount);
+                const capacityHeadroomHours = weeklyCapacityHours === null
+                    ? null
+                    : (Math.round((weeklyCapacityHours - projectedWeeklyDemandHours) * 100) / 100);
+
+                capacity = {
+                    schemaReady: true,
+                    boardId: String(boardCapacity.id),
+                    boardName: boardCapacity.name,
+                    weeklyCapacityHours,
+                    wipLimit,
+                    defaultSubmissionEffortHours: defaultEffort,
+                    activeProjectCount,
+                    pendingDecisionCount,
+                    pendingDecisionEffortHours,
+                    approvedBacklogCount,
+                    scenarioApproveNow: {
+                        projectedWipCount,
+                        projectedWeeklyDemandHours,
+                        wipHeadroom,
+                        capacityHeadroomHours,
+                        wipBreached: wipLimit !== null && projectedWipCount > wipLimit,
+                        capacityBreached: weeklyCapacityHours !== null && projectedWeeklyDemandHours > weeklyCapacityHours
+                    }
+                };
+            }
+        }
+
         res.json({
-            items: dataResult.recordset.map(item => ({
-                id: item.id.toString(),
-                formId: item.formId.toString(),
-                formName: item.formName,
-                status: item.status,
-                submittedAt: item.submittedAt,
-                submitterName: item.submitterName || null,
-                submitterEmail: item.submitterEmail || null,
-                governanceRequired: !!item.governanceRequired,
-                governanceStatus: item.governanceStatus,
-                governanceDecision: item.governanceDecision || null,
-                governanceReason: item.governanceReason || null,
-                priorityScore: item.priorityScore === null ? null : Number(item.priorityScore),
-                governanceMode: item.governanceMode || 'off',
-                governanceBoardId: item.governanceBoardId ? item.governanceBoardId.toString() : null,
-                governanceBoardName: item.governanceBoardName || null
-            })),
+            items: dataResult.recordset.map(item => {
+                const stageKey = getSubmissionWorkflowStage(item);
+                const reviewStartedAt = parseDateOrNull(item.latestReviewStartedAt);
+                const reviewDecidedAt = parseDateOrNull(item.latestReviewDecidedAt);
+                const slaAnchor = getSubmissionSlaAnchor(item, reviewStartedAt, reviewDecidedAt);
+                const stageSla = buildSlaSnapshot({
+                    stageKey,
+                    startedAt: slaAnchor,
+                    policies: workflowSlaPolicies
+                });
+                const defaultEffort = item.defaultSubmissionEffortHours === null || item.defaultSubmissionEffortHours === undefined
+                    ? 40
+                    : Number(item.defaultSubmissionEffortHours);
+                const capacityEffortHours = item.estimatedEffortHours === null || item.estimatedEffortHours === undefined
+                    ? defaultEffort
+                    : Number(item.estimatedEffortHours);
+
+                return {
+                    id: item.id.toString(),
+                    formId: item.formId.toString(),
+                    formName: item.formName,
+                    status: item.status,
+                    submittedAt: item.submittedAt,
+                    submitterName: item.submitterName || null,
+                    submitterEmail: item.submitterEmail || null,
+                    governanceRequired: !!item.governanceRequired,
+                    governanceStatus: item.governanceStatus,
+                    governanceDecision: item.governanceDecision || null,
+                    governanceReason: item.governanceReason || null,
+                    priorityScore: item.priorityScore === null ? null : Number(item.priorityScore),
+                    estimatedEffortHours: item.estimatedEffortHours === null || item.estimatedEffortHours === undefined
+                        ? null
+                        : Number(item.estimatedEffortHours),
+                    capacityEffortHours,
+                    governanceMode: item.governanceMode || 'off',
+                    governanceBoardId: item.governanceBoardId ? item.governanceBoardId.toString() : null,
+                    governanceBoardName: item.governanceBoardName || null,
+                    boardWeeklyCapacityHours: item.weeklyCapacityHours === null || item.weeklyCapacityHours === undefined
+                        ? null
+                        : Number(item.weeklyCapacityHours),
+                    boardWipLimit: item.wipLimit === null || item.wipLimit === undefined ? null : Number(item.wipLimit),
+                    boardDefaultSubmissionEffortHours: defaultEffort,
+                    latestReviewId: item.latestReviewId ? String(item.latestReviewId) : null,
+                    latestReviewStatus: item.latestReviewStatus || null,
+                    latestReviewStartedAt: item.latestReviewStartedAt || null,
+                    latestReviewDecidedAt: item.latestReviewDecidedAt || null,
+                    stageSla,
+                    lastSlaNudgedAt: item.lastSlaNudgedAt || null,
+                    lastSlaNudgedByOid: item.lastSlaNudgedByOid || null
+                };
+            }),
             pagination: {
                 page,
                 limit,
                 total,
                 totalPages: Math.ceil(total / limit)
-            }
+            },
+            capacity
         });
     } catch (err) {
         handleError(res, 'fetching intake governance queue', err);
+    }
+});
+
+// Workflow SLA policy (triage/governance/resolution)
+router.get('/sla/policies', requireAuth, async (req, res) => {
+    try {
+        const user = getAuthUser(req);
+        if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+        const canView = await hasPermission(user, [
+            'can_view_incoming_requests',
+            'can_view_governance_queue',
+            'can_manage_intake',
+            'can_manage_governance'
+        ]);
+        if (!canView) return res.status(403).json({ error: 'Forbidden' });
+
+        const pool = await getPool();
+        const policies = await fetchWorkflowSlaPolicies(pool);
+        res.json({
+            policies: Object.values(policies),
+            schemaReady: await hasWorkflowSlaSchema(pool)
+        });
+    } catch (err) {
+        handleError(res, 'fetching workflow SLA policies', err);
+    }
+});
+
+router.put('/sla/policies', requireAuth, async (req, res) => {
+    try {
+        const user = getAuthUser(req);
+        if (!user) return res.status(401).json({ error: 'Unauthorized' });
+        const canManage = await hasPermission(user, ['can_manage_intake', 'can_manage_governance']);
+        if (!canManage) return res.status(403).json({ error: 'Forbidden' });
+
+        const payload = Array.isArray(req.body?.policies) ? req.body.policies : null;
+        if (!payload || payload.length === 0) {
+            return res.status(400).json({ error: 'policies array is required' });
+        }
+
+        const pool = await getPool();
+        if (!(await hasWorkflowSlaSchema(pool))) {
+            return res.status(409).json({ error: 'Workflow SLA schema is not installed. Run `npm run migrate:wave2` in `server`.' });
+        }
+
+        const tx = new sql.Transaction(pool);
+        await tx.begin();
+        try {
+            for (const rawPolicy of payload) {
+                const stageKey = String(rawPolicy?.stageKey || '').trim().toLowerCase();
+                if (!Object.prototype.hasOwnProperty.call(DEFAULT_WORKFLOW_SLA_POLICIES, stageKey)) {
+                    throw new Error(`Unsupported stageKey '${stageKey}'`);
+                }
+                const normalized = normalizeSlaPolicy(stageKey, rawPolicy);
+                const isActive = rawPolicy?.isActive === undefined ? 1 : (rawPolicy?.isActive ? 1 : 0);
+
+                await new sql.Request(tx)
+                    .input('stageKey', sql.NVarChar(40), stageKey)
+                    .input('displayName', sql.NVarChar(100), normalized.displayName)
+                    .input('targetHours', sql.Int, normalized.targetHours)
+                    .input('warningHours', sql.Int, normalized.warningHours)
+                    .input('escalationHours', sql.Int, normalized.escalationHours)
+                    .input('isActive', sql.Bit, isActive)
+                    .input('updatedByOid', sql.NVarChar(100), user?.oid || null)
+                    .query(`
+                        MERGE WorkflowSlaPolicy AS target
+                        USING (SELECT @stageKey AS stageKey) AS source
+                        ON target.stageKey = source.stageKey
+                        WHEN MATCHED THEN
+                            UPDATE SET
+                                displayName = @displayName,
+                                targetHours = @targetHours,
+                                warningHours = @warningHours,
+                                escalationHours = @escalationHours,
+                                isActive = @isActive,
+                                updatedAt = GETDATE(),
+                                updatedByOid = @updatedByOid
+                        WHEN NOT MATCHED THEN
+                            INSERT (stageKey, displayName, targetHours, warningHours, escalationHours, isActive, updatedByOid)
+                            VALUES (@stageKey, @displayName, @targetHours, @warningHours, @escalationHours, @isActive, @updatedByOid);
+                    `);
+            }
+            await tx.commit();
+        } catch (err) {
+            await tx.rollback();
+            throw err;
+        }
+
+        logAudit({
+            action: 'intake.sla_policy_update',
+            entityType: 'workflow_sla_policy',
+            entityId: null,
+            entityTitle: 'Workflow SLA Policy',
+            user,
+            after: { updatedStages: payload.map((item) => item?.stageKey).filter(Boolean) },
+            req
+        });
+
+        const policies = await fetchWorkflowSlaPolicies(pool);
+        res.json({
+            success: true,
+            policies: Object.values(policies)
+        });
+    } catch (err) {
+        if (err?.message?.includes('stageKey') || err?.message?.includes('Unsupported')) {
+            return res.status(400).json({ error: err.message });
+        }
+        handleError(res, 'updating workflow SLA policies', err);
+    }
+});
+
+router.get('/sla/summary', requireAuth, async (req, res) => {
+    try {
+        const user = getAuthUser(req);
+        if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+        const canViewIncoming = await hasPermission(user, ['can_view_incoming_requests', 'can_manage_intake']);
+        const canViewGovernance = await hasPermission(user, ['can_view_governance_queue', 'can_manage_governance']);
+        if (!canViewIncoming && !canViewGovernance) {
+            return res.status(403).json({ error: 'Forbidden' });
+        }
+
+        const pool = await getPool();
+        const phase1Ready = await hasGovernancePhase1Schema(pool);
+        const workflowSlaReady = await hasWorkflowSlaSchema(pool);
+        const policies = await fetchWorkflowSlaPolicies(pool);
+
+        const filter = canViewIncoming ? '' : 'AND s.governanceRequired = 1';
+        const latestReviewApply = phase1Ready
+            ? `
+                OUTER APPLY (
+                    SELECT TOP 1
+                        gr.startedAt AS latestReviewStartedAt,
+                        gr.decidedAt AS latestReviewDecidedAt
+                    FROM GovernanceReview gr
+                    WHERE gr.submissionId = s.id
+                    ORDER BY gr.reviewRound DESC
+                ) lr
+            `
+            : '';
+        const latestReviewSelect = phase1Ready
+            ? 'lr.latestReviewStartedAt, lr.latestReviewDecidedAt,'
+            : 'NULL AS latestReviewStartedAt, NULL AS latestReviewDecidedAt,';
+        const slaNudgeSelect = workflowSlaReady
+            ? 's.lastSlaNudgedAt, s.lastSlaNudgedByOid,'
+            : 'NULL AS lastSlaNudgedAt, NULL AS lastSlaNudgedByOid,';
+
+        const result = await pool.request().query(`
+            SELECT
+                s.id,
+                s.status,
+                s.submittedAt,
+                s.governanceRequired,
+                s.governanceStatus,
+                s.governanceDecision,
+                ${slaNudgeSelect}
+                ${latestReviewSelect}
+                f.name AS formName
+            FROM IntakeSubmissions s
+            INNER JOIN IntakeForms f ON f.id = s.formId
+            ${latestReviewApply}
+            WHERE s.status NOT IN ('approved', 'rejected')
+            ${filter}
+            ORDER BY s.submittedAt ASC
+        `);
+
+        const stageStats = {
+            triage: { total: 0, warning: 0, breached: 0, escalationDue: 0 },
+            governance: { total: 0, warning: 0, breached: 0, escalationDue: 0 },
+            resolution: { total: 0, warning: 0, breached: 0, escalationDue: 0 }
+        };
+        const breaches = [];
+
+        for (const row of result.recordset) {
+            const stageKey = getSubmissionWorkflowStage(row);
+            if (!stageKey) continue;
+            const anchor = getSubmissionSlaAnchor(
+                row,
+                parseDateOrNull(row.latestReviewStartedAt),
+                parseDateOrNull(row.latestReviewDecidedAt)
+            );
+            const stageSla = buildSlaSnapshot({
+                stageKey,
+                startedAt: anchor,
+                policies
+            });
+            if (!stageSla) continue;
+
+            stageStats[stageKey].total += 1;
+            if (stageSla.isWarning) stageStats[stageKey].warning += 1;
+            if (stageSla.isBreached) stageStats[stageKey].breached += 1;
+            if (stageSla.isEscalationDue) stageStats[stageKey].escalationDue += 1;
+
+            if (stageSla.isBreached || stageSla.isEscalationDue) {
+                breaches.push({
+                    submissionId: String(row.id),
+                    formName: row.formName || 'Submission',
+                    status: row.status,
+                    governanceStatus: row.governanceStatus || null,
+                    stageSla,
+                    lastSlaNudgedAt: row.lastSlaNudgedAt || null
+                });
+            }
+        }
+
+        breaches.sort((a, b) => {
+            if (a.stageSla.isEscalationDue !== b.stageSla.isEscalationDue) {
+                return a.stageSla.isEscalationDue ? -1 : 1;
+            }
+            return b.stageSla.elapsedHours - a.stageSla.elapsedHours;
+        });
+
+        res.json({
+            stageStats,
+            policies: Object.values(policies),
+            breaches: breaches.slice(0, 50)
+        });
+    } catch (err) {
+        handleError(res, 'fetching workflow SLA summary', err);
+    }
+});
+
+router.post('/submissions/:id/sla/nudge', requireAuth, async (req, res) => {
+    try {
+        const user = getAuthUser(req);
+        if (!user) return res.status(401).json({ error: 'Unauthorized' });
+        const canManage = await hasPermission(user, ['can_manage_intake', 'can_manage_governance']);
+        if (!canManage) return res.status(403).json({ error: 'Forbidden' });
+
+        const submissionId = Number.parseInt(req.params.id, 10);
+        if (Number.isNaN(submissionId)) return res.status(400).json({ error: 'Invalid submission id' });
+
+        const pool = await getPool();
+        if (!(await hasWorkflowSlaSchema(pool))) {
+            return res.status(409).json({ error: 'Workflow SLA schema is not installed. Run `npm run migrate:wave2` in `server`.' });
+        }
+
+        const phase1Ready = await hasGovernancePhase1Schema(pool);
+        const latestReviewApply = phase1Ready
+            ? `
+                OUTER APPLY (
+                    SELECT TOP 1
+                        gr.startedAt AS latestReviewStartedAt,
+                        gr.decidedAt AS latestReviewDecidedAt
+                    FROM GovernanceReview gr
+                    WHERE gr.submissionId = s.id
+                    ORDER BY gr.reviewRound DESC
+                ) lr
+            `
+            : '';
+        const latestReviewSelect = phase1Ready
+            ? 'lr.latestReviewStartedAt, lr.latestReviewDecidedAt'
+            : 'NULL AS latestReviewStartedAt, NULL AS latestReviewDecidedAt';
+
+        const submissionResult = await pool.request()
+            .input('id', sql.Int, submissionId)
+            .query(`
+                SELECT
+                    s.id,
+                    s.status,
+                    s.submittedAt,
+                    s.governanceRequired,
+                    s.governanceStatus,
+                    s.governanceDecision,
+                    ${latestReviewSelect}
+                FROM IntakeSubmissions s
+                ${latestReviewApply}
+                WHERE s.id = @id
+            `);
+
+        if (submissionResult.recordset.length === 0) {
+            return res.status(404).json({ error: 'Submission not found' });
+        }
+        const submission = submissionResult.recordset[0];
+        const stageKey = getSubmissionWorkflowStage(submission);
+        if (!stageKey) {
+            return res.status(409).json({ error: 'Submission is closed and has no active workflow stage.' });
+        }
+
+        const policies = await fetchWorkflowSlaPolicies(pool);
+        const stageSla = buildSlaSnapshot({
+            stageKey,
+            startedAt: getSubmissionSlaAnchor(
+                submission,
+                parseDateOrNull(submission.latestReviewStartedAt),
+                parseDateOrNull(submission.latestReviewDecidedAt)
+            ),
+            policies
+        });
+
+        await pool.request()
+            .input('id', sql.Int, submissionId)
+            .input('nudgedByOid', sql.NVarChar(100), user?.oid || null)
+            .query(`
+                UPDATE IntakeSubmissions
+                SET
+                    lastSlaNudgedAt = GETDATE(),
+                    lastSlaNudgedByOid = @nudgedByOid
+                WHERE id = @id
+            `);
+
+        logAudit({
+            action: 'submission.sla_nudge',
+            entityType: 'submission',
+            entityId: submissionId,
+            entityTitle: `Submission ${submissionId}`,
+            user,
+            after: {
+                stageKey,
+                stageSla
+            },
+            req
+        });
+
+        res.json({
+            success: true,
+            stageKey,
+            stageSla,
+            nudgedAt: new Date().toISOString()
+        });
+    } catch (err) {
+        handleError(res, 'posting workflow SLA nudge', err);
     }
 });
 
@@ -1417,6 +2105,17 @@ router.get('/submissions/:id/governance', requireAuth, async (req, res) => {
             return res.status(503).json({ error: 'Governance phase 1 schema not installed. Run governance phase 1 migration first.' });
         }
         const phase3Ready = await hasGovernancePhase3Schema(pool);
+        const workflowSlaReady = await hasWorkflowSlaSchema(pool);
+        const workflowSlaPolicies = await fetchWorkflowSlaPolicies(pool);
+        const slaNudgeSelect = workflowSlaReady
+            ? `
+                s.lastSlaNudgedAt,
+                s.lastSlaNudgedByOid,
+            `
+            : `
+                NULL AS lastSlaNudgedAt,
+                NULL AS lastSlaNudgedByOid,
+            `;
 
         const submissionResult = await pool.request()
             .input('id', sql.Int, submissionId)
@@ -1432,6 +2131,7 @@ router.get('/submissions/:id/governance', requireAuth, async (req, res) => {
                     s.governanceDecision,
                     s.governanceReason,
                     s.priorityScore,
+                    ${slaNudgeSelect}
                     f.name AS formName,
                     f.governanceBoardId,
                     b.name AS boardName
@@ -1470,6 +2170,12 @@ router.get('/submissions/:id/governance', requireAuth, async (req, res) => {
             `);
 
         if (reviewResult.recordset.length === 0) {
+            const stageKey = getSubmissionWorkflowStage(submission);
+            const stageSla = buildSlaSnapshot({
+                stageKey,
+                startedAt: getSubmissionSlaAnchor(submission),
+                policies: workflowSlaPolicies
+            });
             return res.json({
                 submission: {
                     id: submission.id.toString(),
@@ -1483,7 +2189,10 @@ router.get('/submissions/:id/governance', requireAuth, async (req, res) => {
                     governanceReason: submission.governanceReason,
                     priorityScore: submission.priorityScore === null ? null : Number(submission.priorityScore),
                     governanceBoardId: submission.governanceBoardId ? submission.governanceBoardId.toString() : null,
-                    governanceBoardName: submission.boardName || null
+                    governanceBoardName: submission.boardName || null,
+                    stageSla,
+                    lastSlaNudgedAt: submission.lastSlaNudgedAt || null,
+                    lastSlaNudgedByOid: submission.lastSlaNudgedByOid || null
                 },
                 review: null
             });
@@ -1557,6 +2266,14 @@ router.get('/submissions/:id/governance', requireAuth, async (req, res) => {
         const quorumMet = scoreSummary.voteCount >= requiredVotes;
         const voteDeadlineAt = review.voteDeadlineAt || null;
         const deadlinePassed = voteDeadlineAt ? new Date(voteDeadlineAt).getTime() < Date.now() : false;
+        const reviewStartedAt = parseDateOrNull(review.startedAt);
+        const reviewDecidedAt = parseDateOrNull(review.decidedAt);
+        const stageKey = getSubmissionWorkflowStage(submission);
+        const stageSla = buildSlaSnapshot({
+            stageKey,
+            startedAt: getSubmissionSlaAnchor(submission, reviewStartedAt, reviewDecidedAt),
+            policies: workflowSlaPolicies
+        });
 
         res.json({
             submission: {
@@ -1571,7 +2288,10 @@ router.get('/submissions/:id/governance', requireAuth, async (req, res) => {
                 governanceReason: submission.governanceReason,
                 priorityScore: submission.priorityScore === null ? null : Number(submission.priorityScore),
                 governanceBoardId: submission.governanceBoardId ? submission.governanceBoardId.toString() : null,
-                governanceBoardName: submission.boardName || null
+                governanceBoardName: submission.boardName || null,
+                stageSla,
+                lastSlaNudgedAt: submission.lastSlaNudgedAt || null,
+                lastSlaNudgedByOid: submission.lastSlaNudgedByOid || null
             },
             review: {
                 id: review.id.toString(),

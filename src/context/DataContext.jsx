@@ -70,6 +70,15 @@ export function DataProvider({ children }) {
         return fetchWithAuth(url, token, options);
     }, [instance]);
 
+    const getApiErrorMessage = useCallback(async (response, fallbackMessage) => {
+        const fallback = fallbackMessage || `Request failed (HTTP ${response?.status || 'unknown'})`;
+        if (!response) return fallback;
+        const payload = await response.json().catch(() => null);
+        if (typeof payload?.error === 'string' && payload.error.trim()) return payload.error.trim();
+        if (typeof payload?.message === 'string' && payload.message.trim()) return payload.message.trim();
+        return fallback;
+    }, []);
+
     // Load more projects (pagination)
     const loadMoreProjects = useCallback(async () => {
         if (!projectsPagination.hasMore || loadingMore) return;
@@ -740,6 +749,46 @@ export function DataProvider({ children }) {
         }
     }, [projects, authFetch]);
 
+    const fetchProjectBenefitsRisk = useCallback(async (projectId) => {
+        const res = await authFetch(`${API_BASE}/projects/${projectId}/benefits-risk`);
+        if (!res.ok) {
+            throw new Error(await getApiErrorMessage(res, 'Failed to load project benefits and risk'));
+        }
+        return await res.json();
+    }, [authFetch, getApiErrorMessage]);
+
+    const createProjectBenefit = useCallback(async (projectId, payload) => {
+        const res = await authFetch(`${API_BASE}/projects/${projectId}/benefits`, {
+            method: 'POST',
+            body: JSON.stringify(payload || {})
+        });
+        if (!res.ok) {
+            throw new Error(await getApiErrorMessage(res, 'Failed to create project benefit'));
+        }
+        return await res.json();
+    }, [authFetch, getApiErrorMessage]);
+
+    const updateProjectBenefit = useCallback(async (projectId, benefitId, payload) => {
+        const res = await authFetch(`${API_BASE}/projects/${projectId}/benefits/${benefitId}`, {
+            method: 'PUT',
+            body: JSON.stringify(payload || {})
+        });
+        if (!res.ok) {
+            throw new Error(await getApiErrorMessage(res, 'Failed to update project benefit'));
+        }
+        return await res.json();
+    }, [authFetch, getApiErrorMessage]);
+
+    const deleteProjectBenefit = useCallback(async (projectId, benefitId) => {
+        const res = await authFetch(`${API_BASE}/projects/${projectId}/benefits/${benefitId}`, {
+            method: 'DELETE'
+        });
+        if (!res.ok) {
+            throw new Error(await getApiErrorMessage(res, 'Failed to delete project benefit'));
+        }
+        return await res.json();
+    }, [authFetch, getApiErrorMessage]);
+
     // ==================== INTAKE FORMS ====================
 
     const addIntakeForm = useCallback(async (form) => {
@@ -820,10 +869,10 @@ export function DataProvider({ children }) {
         return await res.json();
     }, [authFetch]);
 
-    const shareProject = useCallback(async (projectId, orgId, accessLevel = 'read') => {
+    const shareProject = useCallback(async (projectId, orgId, accessLevel = 'read', expiresAt = null) => {
         const res = await authFetch(`${API_BASE}/admin/projects/${projectId}/sharing`, {
             method: 'POST',
-            body: JSON.stringify({ orgId, accessLevel })
+            body: JSON.stringify({ orgId, accessLevel, expiresAt })
         });
         if (!res.ok) throw new Error('Failed to share project');
         return await res.json();
@@ -845,10 +894,10 @@ export function DataProvider({ children }) {
         return await res.json();
     }, [authFetch]);
 
-    const bulkShareProjects = useCallback(async (projectIds, orgId, accessLevel = 'read') => {
+    const bulkShareProjects = useCallback(async (projectIds, orgId, accessLevel = 'read', expiresAt = null) => {
         const res = await authFetch(`${API_BASE}/admin/projects/bulk-share`, {
             method: 'POST',
-            body: JSON.stringify({ projectIds, orgId, accessLevel })
+            body: JSON.stringify({ projectIds, orgId, accessLevel, expiresAt })
         });
         if (!res.ok) throw new Error('Failed to bulk share projects');
         return await res.json();
@@ -868,10 +917,10 @@ export function DataProvider({ children }) {
         return await res.json();
     }, [authFetch]);
 
-    const shareGoal = useCallback(async (goalId, orgId, accessLevel = 'read', includeDescendants = true) => {
+    const shareGoal = useCallback(async (goalId, orgId, accessLevel = 'read', includeDescendants = true, expiresAt = null) => {
         const res = await authFetch(`${API_BASE}/admin/goals/${goalId}/sharing`, {
             method: 'POST',
-            body: JSON.stringify({ orgId, accessLevel, includeDescendants })
+            body: JSON.stringify({ orgId, accessLevel, includeDescendants, expiresAt })
         });
         if (!res.ok) throw new Error('Failed to share goal');
         return await res.json();
@@ -885,10 +934,10 @@ export function DataProvider({ children }) {
         return await res.json();
     }, [authFetch]);
 
-    const bulkShareGoals = useCallback(async (goalIds, orgId, accessLevel = 'read', includeDescendants = true) => {
+    const bulkShareGoals = useCallback(async (goalIds, orgId, accessLevel = 'read', includeDescendants = true, expiresAt = null) => {
         const res = await authFetch(`${API_BASE}/admin/goals/bulk-share`, {
             method: 'POST',
-            body: JSON.stringify({ goalIds, orgId, accessLevel, includeDescendants })
+            body: JSON.stringify({ goalIds, orgId, accessLevel, includeDescendants, expiresAt })
         });
         if (!res.ok) throw new Error('Failed to bulk share goals');
         return await res.json();
@@ -1146,6 +1195,242 @@ export function DataProvider({ children }) {
         return data;
     }, [authFetch, patchSubmissionLocal]);
 
+    // ==================== WAVE 2: INTAKE SLA ====================
+
+    const fetchIntakeSlaPolicies = useCallback(async () => {
+        const res = await authFetch(`${API_BASE}/intake/sla/policies`);
+        if (!res.ok) {
+            throw new Error(await getApiErrorMessage(res, 'Failed to load SLA policies'));
+        }
+        return await res.json();
+    }, [authFetch, getApiErrorMessage]);
+
+    const updateIntakeSlaPolicies = useCallback(async (policies = []) => {
+        const res = await authFetch(`${API_BASE}/intake/sla/policies`, {
+            method: 'PUT',
+            body: JSON.stringify({ policies })
+        });
+        if (!res.ok) {
+            throw new Error(await getApiErrorMessage(res, 'Failed to update SLA policies'));
+        }
+        return await res.json();
+    }, [authFetch, getApiErrorMessage]);
+
+    const fetchIntakeSlaSummary = useCallback(async () => {
+        const res = await authFetch(`${API_BASE}/intake/sla/summary`);
+        if (!res.ok) {
+            throw new Error(await getApiErrorMessage(res, 'Failed to load SLA summary'));
+        }
+        return await res.json();
+    }, [authFetch, getApiErrorMessage]);
+
+    const nudgeSubmissionSla = useCallback(async (submissionId) => {
+        const res = await authFetch(`${API_BASE}/intake/submissions/${submissionId}/sla/nudge`, {
+            method: 'POST'
+        });
+        if (!res.ok) {
+            throw new Error(await getApiErrorMessage(res, 'Failed to send SLA nudge'));
+        }
+        return await res.json();
+    }, [authFetch, getApiErrorMessage]);
+
+    // ==================== WAVE 2: GOVERNANCE SESSION MODE ====================
+
+    const fetchGovernanceSessions = useCallback(async (boardId, params = {}) => {
+        const searchParams = new URLSearchParams();
+        Object.entries(params).forEach(([key, value]) => {
+            if (value !== undefined && value !== null && String(value).trim() !== '') {
+                searchParams.set(key, String(value));
+            }
+        });
+        const suffix = searchParams.toString() ? `?${searchParams.toString()}` : '';
+        const res = await authFetch(`${API_BASE}/governance/boards/${boardId}/sessions${suffix}`);
+        if (!res.ok) {
+            throw new Error(await getApiErrorMessage(res, 'Failed to load governance sessions'));
+        }
+        return await res.json();
+    }, [authFetch, getApiErrorMessage]);
+
+    const fetchActiveGovernanceSession = useCallback(async (boardId) => {
+        const res = await authFetch(`${API_BASE}/governance/boards/${boardId}/sessions/active`);
+        if (!res.ok) {
+            throw new Error(await getApiErrorMessage(res, 'Failed to load active governance session'));
+        }
+        return await res.json();
+    }, [authFetch, getApiErrorMessage]);
+
+    const createGovernanceSession = useCallback(async (boardId, payload) => {
+        const res = await authFetch(`${API_BASE}/governance/boards/${boardId}/sessions`, {
+            method: 'POST',
+            body: JSON.stringify(payload || {})
+        });
+        if (!res.ok) {
+            throw new Error(await getApiErrorMessage(res, 'Failed to create governance session'));
+        }
+        return await res.json();
+    }, [authFetch, getApiErrorMessage]);
+
+    const updateGovernanceSessionAgenda = useCallback(async (sessionId, payload) => {
+        const res = await authFetch(`${API_BASE}/governance/sessions/${sessionId}/agenda`, {
+            method: 'PUT',
+            body: JSON.stringify(payload || {})
+        });
+        if (!res.ok) {
+            throw new Error(await getApiErrorMessage(res, 'Failed to update session agenda'));
+        }
+        return await res.json();
+    }, [authFetch, getApiErrorMessage]);
+
+    const startGovernanceSession = useCallback(async (sessionId) => {
+        const res = await authFetch(`${API_BASE}/governance/sessions/${sessionId}/start`, {
+            method: 'POST'
+        });
+        if (!res.ok) {
+            throw new Error(await getApiErrorMessage(res, 'Failed to start governance session'));
+        }
+        return await res.json();
+    }, [authFetch, getApiErrorMessage]);
+
+    const closeGovernanceSession = useCallback(async (sessionId) => {
+        const res = await authFetch(`${API_BASE}/governance/sessions/${sessionId}/close`, {
+            method: 'POST'
+        });
+        if (!res.ok) {
+            throw new Error(await getApiErrorMessage(res, 'Failed to close governance session'));
+        }
+        return await res.json();
+    }, [authFetch, getApiErrorMessage]);
+
+    // ==================== WAVE 2: EXECUTIVE REPORT PACKS ====================
+
+    const fetchExecutiveReportPacks = useCallback(async () => {
+        const res = await authFetch(`${API_BASE}/reports/packs`);
+        if (!res.ok) {
+            throw new Error(await getApiErrorMessage(res, 'Failed to load executive packs'));
+        }
+        return await res.json();
+    }, [authFetch, getApiErrorMessage]);
+
+    const createExecutiveReportPack = useCallback(async (payload) => {
+        const res = await authFetch(`${API_BASE}/reports/packs`, {
+            method: 'POST',
+            body: JSON.stringify(payload || {})
+        });
+        if (!res.ok) {
+            throw new Error(await getApiErrorMessage(res, 'Failed to create executive pack'));
+        }
+        return await res.json();
+    }, [authFetch, getApiErrorMessage]);
+
+    const updateExecutiveReportPack = useCallback(async (packId, payload) => {
+        const res = await authFetch(`${API_BASE}/reports/packs/${packId}`, {
+            method: 'PUT',
+            body: JSON.stringify(payload || {})
+        });
+        if (!res.ok) {
+            throw new Error(await getApiErrorMessage(res, 'Failed to update executive pack'));
+        }
+        return await res.json();
+    }, [authFetch, getApiErrorMessage]);
+
+    const fetchExecutiveReportPackRuns = useCallback(async (packId) => {
+        const res = await authFetch(`${API_BASE}/reports/packs/${packId}/runs`);
+        if (!res.ok) {
+            throw new Error(await getApiErrorMessage(res, 'Failed to load pack runs'));
+        }
+        return await res.json();
+    }, [authFetch, getApiErrorMessage]);
+
+    const runExecutiveReportPackNow = useCallback(async (packId) => {
+        const res = await authFetch(`${API_BASE}/reports/packs/${packId}/run-now`, {
+            method: 'POST'
+        });
+        if (!res.ok) {
+            throw new Error(await getApiErrorMessage(res, 'Failed to run executive pack'));
+        }
+        return await res.json();
+    }, [authFetch, getApiErrorMessage]);
+
+    const fetchExecutivePackSchedulerStatus = useCallback(async () => {
+        const res = await authFetch(`${API_BASE}/reports/scheduler/status`);
+        if (!res.ok) {
+            throw new Error(await getApiErrorMessage(res, 'Failed to load executive pack scheduler status'));
+        }
+        return await res.json();
+    }, [authFetch, getApiErrorMessage]);
+
+    const runDueExecutivePacks = useCallback(async (maxRuns = 10) => {
+        const res = await authFetch(`${API_BASE}/reports/scheduler/run-due`, {
+            method: 'POST',
+            body: JSON.stringify({ maxRuns })
+        });
+        if (!res.ok) {
+            throw new Error(await getApiErrorMessage(res, 'Failed to run due executive packs'));
+        }
+        return await res.json();
+    }, [authFetch, getApiErrorMessage]);
+
+    // ==================== WAVE 2: SHARING REQUEST WORKFLOW ====================
+
+    const fetchSharingRequests = useCallback(async (params = {}) => {
+        const searchParams = new URLSearchParams();
+        Object.entries(params).forEach(([key, value]) => {
+            if (value !== undefined && value !== null && String(value).trim() !== '') {
+                searchParams.set(key, String(value));
+            }
+        });
+        const suffix = searchParams.toString() ? `?${searchParams.toString()}` : '';
+        const res = await authFetch(`${API_BASE}/admin/sharing-requests${suffix}`);
+        if (!res.ok) {
+            throw new Error(await getApiErrorMessage(res, 'Failed to load sharing requests'));
+        }
+        return await res.json();
+    }, [authFetch, getApiErrorMessage]);
+
+    const createSharingRequest = useCallback(async (payload) => {
+        const res = await authFetch(`${API_BASE}/admin/sharing-requests`, {
+            method: 'POST',
+            body: JSON.stringify(payload || {})
+        });
+        if (!res.ok) {
+            throw new Error(await getApiErrorMessage(res, 'Failed to submit sharing request'));
+        }
+        return await res.json();
+    }, [authFetch, getApiErrorMessage]);
+
+    const approveSharingRequest = useCallback(async (requestId, payload = {}) => {
+        const res = await authFetch(`${API_BASE}/admin/sharing-requests/${requestId}/approve`, {
+            method: 'POST',
+            body: JSON.stringify(payload || {})
+        });
+        if (!res.ok) {
+            throw new Error(await getApiErrorMessage(res, 'Failed to approve sharing request'));
+        }
+        return await res.json();
+    }, [authFetch, getApiErrorMessage]);
+
+    const rejectSharingRequest = useCallback(async (requestId, payload = {}) => {
+        const res = await authFetch(`${API_BASE}/admin/sharing-requests/${requestId}/reject`, {
+            method: 'POST',
+            body: JSON.stringify(payload || {})
+        });
+        if (!res.ok) {
+            throw new Error(await getApiErrorMessage(res, 'Failed to reject sharing request'));
+        }
+        return await res.json();
+    }, [authFetch, getApiErrorMessage]);
+
+    const revokeSharingRequest = useCallback(async (requestId, payload = {}) => {
+        const res = await authFetch(`${API_BASE}/admin/sharing-requests/${requestId}/revoke`, {
+            method: 'POST',
+            body: JSON.stringify(payload || {})
+        });
+        if (!res.ok) {
+            throw new Error(await getApiErrorMessage(res, 'Failed to revoke sharing request'));
+        }
+        return await res.json();
+    }, [authFetch, getApiErrorMessage]);
+
     const addConversationMessage = useCallback(async (submissionId, message, senderType) => {
         try {
             const res = await authFetch(`${API_BASE}/intake/submissions/${submissionId}/message`, {
@@ -1221,13 +1506,54 @@ export function DataProvider({ children }) {
         return { ...submission, conversation };
     }, []);
 
-    const convertSubmissionToProject = useCallback(async (submissionId, projectData) => {
-        const projectId = await addProject(projectData);
+    const convertSubmissionToProject = useCallback(async (submissionId, projectData, options = {}) => {
+        const conversionContext = String(options?.conversionContext || '').trim();
+        const kickoffTasks = Array.isArray(options?.kickoffTasks)
+            ? options.kickoffTasks
+                .filter(task => task && String(task.title || '').trim() !== '')
+                .map(task => ({
+                    title: String(task.title || '').trim(),
+                    description: String(task.description || '').trim(),
+                    priority: ['high', 'medium', 'low'].includes(String(task.priority || '').toLowerCase())
+                        ? String(task.priority).toLowerCase()
+                        : 'medium',
+                    status: ['todo', 'in-progress', 'blocked', 'review', 'done'].includes(String(task.status || '').toLowerCase())
+                        ? String(task.status).toLowerCase()
+                        : 'todo',
+                    startDate: task.startDate || null,
+                    endDate: task.endDate || null
+                }))
+            : [];
+
+        const normalizedDescription = conversionContext
+            ? [String(projectData?.description || '').trim(), conversionContext]
+                .filter(Boolean)
+                .join('\n\n')
+            : projectData?.description;
+
+        const projectId = await addProject({
+            ...projectData,
+            description: normalizedDescription
+        });
         if (!projectId) {
             throw new Error('Project creation failed - no project ID returned');
         }
 
         try {
+            const seededTaskErrors = [];
+            let seededTaskCount = 0;
+            for (const taskTemplate of kickoffTasks) {
+                try {
+                    await addTask(projectId, taskTemplate);
+                    seededTaskCount += 1;
+                } catch (taskErr) {
+                    seededTaskErrors.push({
+                        title: taskTemplate.title,
+                        message: taskErr?.message || 'Task creation failed'
+                    });
+                }
+            }
+
             await authFetch(`${API_BASE}/intake/submissions/${submissionId}`, {
                 method: 'PUT',
                 body: JSON.stringify({
@@ -1241,7 +1567,11 @@ export function DataProvider({ children }) {
                 convertedProjectId: String(projectId)
             });
 
-            return projectId;
+            return {
+                projectId,
+                seededTaskCount,
+                seededTaskErrors
+            };
         } catch (err) {
             // Best effort rollback if submission update is rejected.
             try {
@@ -1252,7 +1582,7 @@ export function DataProvider({ children }) {
             }
             throw err;
         }
-    }, [addProject, authFetch, patchSubmissionLocal]);
+    }, [addProject, addTask, authFetch, patchSubmissionLocal]);
 
     // ==================== TAG MANAGEMENT ====================
 
@@ -1454,8 +1784,14 @@ export function DataProvider({ children }) {
             updateGovernanceCriteriaVersion, publishGovernanceCriteriaVersion,
             fetchIntakeGovernanceQueue, getSubmissionGovernance, startSubmissionGovernance,
             submitSubmissionGovernanceVote, decideSubmissionGovernance, applySubmissionGovernance, skipSubmissionGovernance,
+            fetchIntakeSlaPolicies, updateIntakeSlaPolicies, fetchIntakeSlaSummary, nudgeSubmissionSla,
+            fetchGovernanceSessions, fetchActiveGovernanceSession, createGovernanceSession,
+            updateGovernanceSessionAgenda, startGovernanceSession, closeGovernanceSession,
             addConversationMessage, markConversationRead, migrateInfoRequestsToConversation, convertSubmissionToProject,
             addStatusReport, getLatestStatusReport, restoreStatusReport,
+            fetchProjectBenefitsRisk, createProjectBenefit, updateProjectBenefit, deleteProjectBenefit,
+            fetchExecutiveReportPacks, createExecutiveReportPack, updateExecutiveReportPack,
+            fetchExecutiveReportPackRuns, runExecutiveReportPackNow, fetchExecutivePackSchedulerStatus, runDueExecutivePacks,
             authFetch, fetchExecSummaryProjects,
 
             permissions, hasPermission, hasRole, hasAnyRole, userRoles: effectiveRoles, updatePermissionsBulk,
@@ -1464,6 +1800,7 @@ export function DataProvider({ children }) {
             assignUserToOrg, fetchProjectSharing, shareProject, unshareProject,
             fetchOrgSharingSummary, bulkShareProjects, bulkUnshareProjects,
             fetchGoalSharing, shareGoal, unshareGoal, bulkShareGoals, bulkUnshareGoals,
+            fetchSharingRequests, createSharingRequest, approveSharingRequest, rejectSharingRequest, revokeSharingRequest,
             tagGroups, addTagGroup, updateTagGroup, deleteTagGroup,
             addTag, updateTag, deleteTag, updateProjectTags
         }}>

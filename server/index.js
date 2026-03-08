@@ -21,6 +21,7 @@ import intakeRouter from './routes/intake.js';
 import governanceRouter from './routes/governance.js';
 import usersRouter from './routes/users.js';
 import adminRouter from './routes/admin.js';
+import reportsRouter, { startExecutivePackScheduler } from './routes/reports.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -37,6 +38,7 @@ const LAST_LOGIN_UPDATE_INTERVAL_MS = Number.isFinite(AUTH_LAST_LOGIN_UPDATE_MS)
     ? AUTH_LAST_LOGIN_UPDATE_MS
     : 300000;
 const DUPLICATE_KEY_ERROR_CODES = new Set([2601, 2627]);
+const EXEC_PACK_SCHEDULER_INTERVAL_MS = Number.parseInt(process.env.EXEC_PACK_SCHEDULER_INTERVAL_MS || '60000', 10);
 const configuredCorsOrigins = (process.env.CORS_ALLOWED_ORIGINS || '')
     .split(',')
     .map((origin) => origin.trim())
@@ -241,6 +243,7 @@ app.use('/api/tasks', tasksRouter);
 app.use('/api/tags', tagsRouter);
 app.use('/api/intake', intakeRouter);
 app.use('/api/governance', governanceRouter);
+app.use('/api/reports', reportsRouter);
 app.use('/api/users', usersRouter);
 app.use('/api/admin', adminRouter);
 
@@ -258,6 +261,12 @@ app.listen(PORT, HOST, async () => {
         await getPool();
         // Seed permissions on startup
         await seedPermissions();
+        const schedulerStart = startExecutivePackScheduler({
+            intervalMs: Number.isFinite(EXEC_PACK_SCHEDULER_INTERVAL_MS) ? EXEC_PACK_SCHEDULER_INTERVAL_MS : 60000
+        });
+        if (schedulerStart.started) {
+            console.log(`Executive pack scheduler started (interval ${schedulerStart.intervalMs}ms)`);
+        }
 
         console.log(`API server running on:`);
         console.log(`  Local:   http://localhost:${PORT}`);

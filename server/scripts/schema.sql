@@ -166,6 +166,33 @@ CREATE TABLE StatusReports (
 );
 GO
 
+-- Benefits realization tracking (post go-live outcomes)
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'ProjectBenefitRealization')
+CREATE TABLE ProjectBenefitRealization (
+    id INT IDENTITY(1,1) PRIMARY KEY,
+    projectId INT NOT NULL,
+    title NVARCHAR(255) NOT NULL,
+    description NVARCHAR(MAX) NULL,
+    linkedKpiId INT NULL,
+    baselineValue DECIMAL(18,2) NULL,
+    targetValue DECIMAL(18,2) NULL,
+    currentValue DECIMAL(18,2) NULL,
+    unit NVARCHAR(50) NULL,
+    status NVARCHAR(20) NOT NULL DEFAULT 'planned', -- planned | in-progress | realized | at-risk | not-realized
+    dueAt DATE NULL,
+    realizedAt DATE NULL,
+    governanceReviewId INT NULL,
+    governanceDecision NVARCHAR(30) NULL,
+    notes NVARCHAR(MAX) NULL,
+    createdAt DATETIME2 NOT NULL DEFAULT GETDATE(),
+    updatedAt DATETIME2 NOT NULL DEFAULT GETDATE(),
+    updatedByOid NVARCHAR(100) NULL,
+    CONSTRAINT FK_ProjectBenefitRealization_Project FOREIGN KEY (projectId) REFERENCES Projects(id) ON DELETE CASCADE,
+    CONSTRAINT FK_ProjectBenefitRealization_KPI FOREIGN KEY (linkedKpiId) REFERENCES KPIs(id) ON DELETE SET NULL,
+    CONSTRAINT CK_ProjectBenefitRealization_Status CHECK (status IN ('planned', 'in-progress', 'realized', 'at-risk', 'not-realized'))
+);
+GO
+
 -- Intake Forms
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'IntakeForms')
 CREATE TABLE IntakeForms (
@@ -192,6 +219,25 @@ CREATE TABLE IntakeSubmissions (
     CONSTRAINT FK_IntakeSubmissions_Form FOREIGN KEY (formId) REFERENCES IntakeForms(id) ON DELETE CASCADE,
     CONSTRAINT FK_IntakeSubmissions_Project FOREIGN KEY (convertedProjectId) REFERENCES Projects(id) ON DELETE SET NULL
 );
+GO
+
+IF COL_LENGTH('IntakeSubmissions', 'estimatedEffortHours') IS NULL
+BEGIN
+    ALTER TABLE IntakeSubmissions
+    ADD estimatedEffortHours DECIMAL(9,2) NULL;
+END
+GO
+
+IF NOT EXISTS (
+    SELECT 1
+    FROM sys.check_constraints
+    WHERE name = 'CK_IntakeSubmissions_EstimatedEffortHours'
+)
+BEGIN
+    ALTER TABLE IntakeSubmissions
+    ADD CONSTRAINT CK_IntakeSubmissions_EstimatedEffortHours
+    CHECK (estimatedEffortHours IS NULL OR estimatedEffortHours > 0);
+END
 GO
 
 -- Role Permissions
@@ -328,6 +374,28 @@ BEGIN
 END
 GO
 
+IF COL_LENGTH('GovernanceBoard', 'weeklyCapacityHours') IS NULL
+BEGIN
+    ALTER TABLE GovernanceBoard
+    ADD weeklyCapacityHours DECIMAL(9,2) NULL;
+END
+GO
+
+IF COL_LENGTH('GovernanceBoard', 'wipLimit') IS NULL
+BEGIN
+    ALTER TABLE GovernanceBoard
+    ADD wipLimit INT NULL;
+END
+GO
+
+IF COL_LENGTH('GovernanceBoard', 'defaultSubmissionEffortHours') IS NULL
+BEGIN
+    ALTER TABLE GovernanceBoard
+    ADD defaultSubmissionEffortHours DECIMAL(9,2) NOT NULL
+        CONSTRAINT DF_GovernanceBoard_DefaultSubmissionEffortHours DEFAULT 40 WITH VALUES;
+END
+GO
+
 IF NOT EXISTS (
     SELECT 1
     FROM sys.check_constraints
@@ -361,6 +429,42 @@ BEGIN
     ALTER TABLE GovernanceBoard
     ADD CONSTRAINT CK_GovernanceBoard_VoteWindowDaysOverride
     CHECK (voteWindowDaysOverride IS NULL OR voteWindowDaysOverride BETWEEN 1 AND 90);
+END
+GO
+
+IF NOT EXISTS (
+    SELECT 1
+    FROM sys.check_constraints
+    WHERE name = 'CK_GovernanceBoard_WeeklyCapacityHours'
+)
+BEGIN
+    ALTER TABLE GovernanceBoard
+    ADD CONSTRAINT CK_GovernanceBoard_WeeklyCapacityHours
+    CHECK (weeklyCapacityHours IS NULL OR weeklyCapacityHours > 0);
+END
+GO
+
+IF NOT EXISTS (
+    SELECT 1
+    FROM sys.check_constraints
+    WHERE name = 'CK_GovernanceBoard_WipLimit'
+)
+BEGIN
+    ALTER TABLE GovernanceBoard
+    ADD CONSTRAINT CK_GovernanceBoard_WipLimit
+    CHECK (wipLimit IS NULL OR wipLimit >= 1);
+END
+GO
+
+IF NOT EXISTS (
+    SELECT 1
+    FROM sys.check_constraints
+    WHERE name = 'CK_GovernanceBoard_DefaultSubmissionEffortHours'
+)
+BEGIN
+    ALTER TABLE GovernanceBoard
+    ADD CONSTRAINT CK_GovernanceBoard_DefaultSubmissionEffortHours
+    CHECK (defaultSubmissionEffortHours > 0);
 END
 GO
 
@@ -549,6 +653,37 @@ BEGIN
 END
 GO
 
+IF COL_LENGTH('ProjectBenefitRealization', 'governanceReviewId') IS NULL
+BEGIN
+    ALTER TABLE ProjectBenefitRealization
+    ADD governanceReviewId INT NULL;
+END
+GO
+
+IF NOT EXISTS (
+    SELECT 1
+    FROM sys.foreign_keys
+    WHERE name = 'FK_ProjectBenefitRealization_GovernanceReview'
+)
+BEGIN
+    ALTER TABLE ProjectBenefitRealization
+    ADD CONSTRAINT FK_ProjectBenefitRealization_GovernanceReview
+    FOREIGN KEY (governanceReviewId) REFERENCES GovernanceReview(id) ON DELETE SET NULL;
+END
+GO
+
+IF NOT EXISTS (
+    SELECT 1
+    FROM sys.check_constraints
+    WHERE name = 'CK_ProjectBenefitRealization_GovernanceDecision'
+)
+BEGIN
+    ALTER TABLE ProjectBenefitRealization
+    ADD CONSTRAINT CK_ProjectBenefitRealization_GovernanceDecision
+    CHECK (governanceDecision IS NULL OR governanceDecision IN ('approved-now', 'approved-backlog', 'needs-info', 'rejected'));
+END
+GO
+
 -- Snapshot of review participants at review start
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'GovernanceReviewParticipant')
 CREATE TABLE GovernanceReviewParticipant (
@@ -576,6 +711,133 @@ CREATE TABLE GovernanceVote (
     updatedAt DATETIME2 NULL,
     CONSTRAINT FK_GovernanceVote_Review FOREIGN KEY (reviewId) REFERENCES GovernanceReview(id) ON DELETE CASCADE,
     CONSTRAINT UQ_GovernanceVote_ReviewVoter UNIQUE (reviewId, voterUserOid)
+);
+GO
+
+-- Workflow SLA policy baseline (triage/governance/resolution)
+IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'WorkflowSlaPolicy')
+CREATE TABLE WorkflowSlaPolicy (
+    id INT IDENTITY(1,1) PRIMARY KEY,
+    stageKey NVARCHAR(40) NOT NULL,
+    displayName NVARCHAR(100) NOT NULL,
+    targetHours INT NOT NULL,
+    warningHours INT NOT NULL,
+    escalationHours INT NOT NULL,
+    isActive BIT NOT NULL DEFAULT 1,
+    updatedAt DATETIME2 NOT NULL DEFAULT GETDATE(),
+    updatedByOid NVARCHAR(100) NULL,
+    CONSTRAINT UQ_WorkflowSlaPolicy_StageKey UNIQUE(stageKey),
+    CONSTRAINT CK_WorkflowSlaPolicy_TargetHours CHECK (targetHours >= 1),
+    CONSTRAINT CK_WorkflowSlaPolicy_WarningHours CHECK (warningHours >= 0 AND warningHours <= targetHours),
+    CONSTRAINT CK_WorkflowSlaPolicy_EscalationHours CHECK (escalationHours >= warningHours)
+);
+GO
+
+IF NOT EXISTS (SELECT 1 FROM WorkflowSlaPolicy WHERE stageKey = 'triage')
+BEGIN
+    INSERT INTO WorkflowSlaPolicy (stageKey, displayName, targetHours, warningHours, escalationHours)
+    VALUES ('triage', 'Triage', 72, 48, 96);
+END
+GO
+
+IF NOT EXISTS (SELECT 1 FROM WorkflowSlaPolicy WHERE stageKey = 'governance')
+BEGIN
+    INSERT INTO WorkflowSlaPolicy (stageKey, displayName, targetHours, warningHours, escalationHours)
+    VALUES ('governance', 'Governance Review', 120, 96, 144);
+END
+GO
+
+IF NOT EXISTS (SELECT 1 FROM WorkflowSlaPolicy WHERE stageKey = 'resolution')
+BEGIN
+    INSERT INTO WorkflowSlaPolicy (stageKey, displayName, targetHours, warningHours, escalationHours)
+    VALUES ('resolution', 'Resolution', 48, 36, 72);
+END
+GO
+
+IF COL_LENGTH('IntakeSubmissions', 'lastSlaNudgedAt') IS NULL
+BEGIN
+    ALTER TABLE IntakeSubmissions
+    ADD lastSlaNudgedAt DATETIME2 NULL;
+END
+GO
+
+IF COL_LENGTH('IntakeSubmissions', 'lastSlaNudgedByOid') IS NULL
+BEGIN
+    ALTER TABLE IntakeSubmissions
+    ADD lastSlaNudgedByOid NVARCHAR(100) NULL;
+END
+GO
+
+-- Governance session mode (meeting-centric queue)
+IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'GovernanceSession')
+CREATE TABLE GovernanceSession (
+    id INT IDENTITY(1,1) PRIMARY KEY,
+    boardId INT NOT NULL,
+    title NVARCHAR(255) NOT NULL,
+    status NVARCHAR(20) NOT NULL DEFAULT 'draft', -- draft | live | closed
+    scheduledAt DATETIME2 NULL,
+    startedAt DATETIME2 NULL,
+    endedAt DATETIME2 NULL,
+    agendaLocked BIT NOT NULL DEFAULT 0,
+    agendaJson NVARCHAR(MAX) NULL, -- [{ submissionId, sortOrder }]
+    decisionTemplateJson NVARCHAR(MAX) NULL,
+    createdByOid NVARCHAR(100) NULL,
+    createdAt DATETIME2 NOT NULL DEFAULT GETDATE(),
+    updatedAt DATETIME2 NOT NULL DEFAULT GETDATE(),
+    CONSTRAINT FK_GovernanceSession_Board FOREIGN KEY (boardId) REFERENCES GovernanceBoard(id) ON DELETE CASCADE,
+    CONSTRAINT CK_GovernanceSession_Status CHECK (status IN ('draft', 'live', 'closed'))
+);
+GO
+
+-- Automated executive report packs
+IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'ExecutiveReportPack')
+CREATE TABLE ExecutiveReportPack (
+    id INT IDENTITY(1,1) PRIMARY KEY,
+    name NVARCHAR(160) NOT NULL,
+    description NVARCHAR(500) NULL,
+    ownerOid NVARCHAR(100) NULL,
+    scopeOrgId INT NULL,
+    isActive BIT NOT NULL DEFAULT 1,
+    scheduleType NVARCHAR(20) NOT NULL DEFAULT 'weekly', -- weekly | manual
+    scheduleDayOfWeek TINYINT NULL, -- 0 (Sun) - 6 (Sat)
+    scheduleHour TINYINT NOT NULL DEFAULT 9,
+    scheduleMinute TINYINT NOT NULL DEFAULT 0,
+    timezone NVARCHAR(64) NOT NULL DEFAULT 'America/Regina',
+    exceptionOnly BIT NOT NULL DEFAULT 0,
+    filterJson NVARCHAR(MAX) NULL,
+    recipientJson NVARCHAR(MAX) NULL,
+    lastRunAt DATETIME2 NULL,
+    nextRunAt DATETIME2 NULL,
+    createdAt DATETIME2 NOT NULL DEFAULT GETDATE(),
+    updatedAt DATETIME2 NOT NULL DEFAULT GETDATE(),
+    CONSTRAINT CK_ExecutiveReportPack_ScheduleType CHECK (scheduleType IN ('weekly', 'manual')),
+    CONSTRAINT CK_ExecutiveReportPack_DayOfWeek CHECK (scheduleDayOfWeek IS NULL OR (scheduleDayOfWeek BETWEEN 0 AND 6)),
+    CONSTRAINT CK_ExecutiveReportPack_Hour CHECK (scheduleHour BETWEEN 0 AND 23),
+    CONSTRAINT CK_ExecutiveReportPack_Minute CHECK (scheduleMinute BETWEEN 0 AND 59)
+);
+GO
+
+IF COL_LENGTH('ExecutiveReportPack', 'scopeOrgId') IS NULL
+BEGIN
+    ALTER TABLE ExecutiveReportPack
+    ADD scopeOrgId INT NULL;
+END
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'ExecutiveReportPackRun')
+CREATE TABLE ExecutiveReportPackRun (
+    id BIGINT IDENTITY(1,1) PRIMARY KEY,
+    packId INT NOT NULL,
+    runType NVARCHAR(20) NOT NULL DEFAULT 'manual', -- manual | scheduled
+    status NVARCHAR(20) NOT NULL DEFAULT 'completed', -- running | completed | failed
+    startedAt DATETIME2 NOT NULL DEFAULT GETDATE(),
+    completedAt DATETIME2 NULL,
+    initiatedByOid NVARCHAR(100) NULL,
+    summaryJson NVARCHAR(MAX) NULL,
+    errorText NVARCHAR(MAX) NULL,
+    CONSTRAINT FK_ExecutiveReportPackRun_Pack FOREIGN KEY (packId) REFERENCES ExecutiveReportPack(id) ON DELETE CASCADE,
+    CONSTRAINT CK_ExecutiveReportPackRun_RunType CHECK (runType IN ('manual', 'scheduled')),
+    CONSTRAINT CK_ExecutiveReportPackRun_Status CHECK (status IN ('running', 'completed', 'failed'))
 );
 GO
 
@@ -607,11 +869,20 @@ IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_TaskChecklistItems_Tas
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_StatusReports_ProjectId')
     CREATE INDEX IX_StatusReports_ProjectId ON StatusReports(projectId);
 
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_ProjectBenefitRealization_Project')
+    CREATE INDEX IX_ProjectBenefitRealization_Project ON ProjectBenefitRealization(projectId, status, dueAt);
+
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_ProjectBenefitRealization_Kpi')
+    CREATE INDEX IX_ProjectBenefitRealization_Kpi ON ProjectBenefitRealization(linkedKpiId);
+
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_IntakeSubmissions_FormId')
     CREATE INDEX IX_IntakeSubmissions_FormId ON IntakeSubmissions(formId);
 
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_IntakeSubmissions_Status')
     CREATE INDEX IX_IntakeSubmissions_Status ON IntakeSubmissions(status);
+
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_IntakeSubmissions_EstimatedEffort')
+    CREATE INDEX IX_IntakeSubmissions_EstimatedEffort ON IntakeSubmissions(estimatedEffortHours);
 GO
 
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_IntakeForms_GovernanceMode')
@@ -658,6 +929,28 @@ IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_GovernanceVote_Voter')
 
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_GovernanceReview_VoteDeadline')
     CREATE INDEX IX_GovernanceReview_VoteDeadline ON GovernanceReview(status, voteDeadlineAt);
+
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_GovernanceBoard_Capacity')
+    CREATE INDEX IX_GovernanceBoard_Capacity ON GovernanceBoard(isActive, wipLimit, weeklyCapacityHours);
+GO
+
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_WorkflowSlaPolicy_Stage')
+    CREATE INDEX IX_WorkflowSlaPolicy_Stage ON WorkflowSlaPolicy(stageKey, isActive);
+
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_GovernanceSession_BoardStatus')
+    CREATE INDEX IX_GovernanceSession_BoardStatus ON GovernanceSession(boardId, status, createdAt DESC);
+
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_GovernanceSession_Status')
+    CREATE INDEX IX_GovernanceSession_Status ON GovernanceSession(status, scheduledAt, startedAt);
+
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_ExecutiveReportPack_Active')
+    CREATE INDEX IX_ExecutiveReportPack_Active ON ExecutiveReportPack(isActive, nextRunAt, updatedAt DESC);
+
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_ExecutiveReportPack_ScopeOrg')
+    CREATE INDEX IX_ExecutiveReportPack_ScopeOrg ON ExecutiveReportPack(scopeOrgId, isActive, nextRunAt);
+
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_ExecutiveReportPackRun_Pack')
+    CREATE INDEX IX_ExecutiveReportPackRun_Pack ON ExecutiveReportPackRun(packId, startedAt DESC);
 GO
 
 
@@ -802,6 +1095,20 @@ BEGIN
 END
 GO
 
+IF COL_LENGTH('ExecutiveReportPack', 'scopeOrgId') IS NULL
+BEGIN
+    ALTER TABLE ExecutiveReportPack ADD scopeOrgId INT NULL;
+END
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_ExecutiveReportPack_ScopeOrg')
+BEGIN
+    ALTER TABLE ExecutiveReportPack
+    ADD CONSTRAINT FK_ExecutiveReportPack_ScopeOrg
+    FOREIGN KEY (scopeOrgId) REFERENCES Organizations(id) ON DELETE SET NULL;
+END
+GO
+
 IF COL_LENGTH('TagGroups', 'orgId') IS NULL
 BEGIN
     ALTER TABLE TagGroups ADD orgId INT NULL;
@@ -862,6 +1169,7 @@ CREATE TABLE ProjectOrgAccess (
     projectId   INT NOT NULL,
     orgId       INT NOT NULL,
     accessLevel NVARCHAR(20) NOT NULL DEFAULT 'read',
+    expiresAt   DATETIME2 NULL,
     grantedAt   DATETIME2 DEFAULT GETDATE(),
     grantedByOid NVARCHAR(100) NULL,
     CONSTRAINT PK_ProjectOrgAccess PRIMARY KEY (projectId, orgId),
@@ -871,18 +1179,61 @@ CREATE TABLE ProjectOrgAccess (
 );
 GO
 
+IF COL_LENGTH('ProjectOrgAccess', 'expiresAt') IS NULL
+BEGIN
+    ALTER TABLE ProjectOrgAccess
+    ADD expiresAt DATETIME2 NULL;
+END
+GO
+
 -- Cross-org sharing for goals
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'GoalOrgAccess')
 CREATE TABLE GoalOrgAccess (
     goalId       INT NOT NULL,
     orgId        INT NOT NULL,
     accessLevel  NVARCHAR(20) NOT NULL DEFAULT 'read',
+    expiresAt    DATETIME2 NULL,
     grantedAt    DATETIME2 DEFAULT GETDATE(),
     grantedByOid NVARCHAR(100) NULL,
     CONSTRAINT PK_GoalOrgAccess PRIMARY KEY (goalId, orgId),
     CONSTRAINT FK_GoalOrgAccess_Goal FOREIGN KEY (goalId) REFERENCES Goals(id) ON DELETE CASCADE,
     CONSTRAINT FK_GoalOrgAccess_Org FOREIGN KEY (orgId) REFERENCES Organizations(id) ON DELETE CASCADE,
     CONSTRAINT CK_GoalOrgAccess_Level CHECK (accessLevel IN ('read', 'write'))
+);
+GO
+
+IF COL_LENGTH('GoalOrgAccess', 'expiresAt') IS NULL
+BEGIN
+    ALTER TABLE GoalOrgAccess
+    ADD expiresAt DATETIME2 NULL;
+END
+GO
+
+-- Sharing request workflow (request / approve / reject / revoke)
+IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'OrgSharingRequest')
+CREATE TABLE OrgSharingRequest (
+    id INT IDENTITY(1,1) PRIMARY KEY,
+    entityType NVARCHAR(20) NOT NULL, -- project | goal
+    entityId INT NOT NULL,
+    targetOrgId INT NOT NULL,
+    requestedAccessLevel NVARCHAR(20) NOT NULL DEFAULT 'read', -- read | write
+    reason NVARCHAR(1000) NULL,
+    requestedByOid NVARCHAR(100) NOT NULL,
+    requestedAt DATETIME2 NOT NULL DEFAULT GETDATE(),
+    expiresAt DATETIME2 NULL,
+    ownerAttested BIT NOT NULL DEFAULT 0,
+    ownerAttestedByOid NVARCHAR(100) NULL,
+    ownerAttestedAt DATETIME2 NULL,
+    status NVARCHAR(20) NOT NULL DEFAULT 'pending', -- pending | approved | rejected | revoked | expired
+    decisionNote NVARCHAR(1000) NULL,
+    decidedByOid NVARCHAR(100) NULL,
+    decidedAt DATETIME2 NULL,
+    createdAt DATETIME2 NOT NULL DEFAULT GETDATE(),
+    updatedAt DATETIME2 NOT NULL DEFAULT GETDATE(),
+    CONSTRAINT FK_OrgSharingRequest_TargetOrg FOREIGN KEY (targetOrgId) REFERENCES Organizations(id) ON DELETE CASCADE,
+    CONSTRAINT CK_OrgSharingRequest_EntityType CHECK (entityType IN ('project', 'goal')),
+    CONSTRAINT CK_OrgSharingRequest_AccessLevel CHECK (requestedAccessLevel IN ('read', 'write')),
+    CONSTRAINT CK_OrgSharingRequest_Status CHECK (status IN ('pending', 'approved', 'rejected', 'revoked', 'expired'))
 );
 GO
 
@@ -948,14 +1299,26 @@ IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_TagGroups_OrgId')
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_ProjectOrgAccess_OrgId')
     CREATE INDEX IX_ProjectOrgAccess_OrgId ON ProjectOrgAccess(orgId);
 
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_ProjectOrgAccess_Expiry')
+    CREATE INDEX IX_ProjectOrgAccess_Expiry ON ProjectOrgAccess(orgId, expiresAt, projectId);
+
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_GoalOrgAccess_OrgId')
     CREATE INDEX IX_GoalOrgAccess_OrgId ON GoalOrgAccess(orgId);
+
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_GoalOrgAccess_Expiry')
+    CREATE INDEX IX_GoalOrgAccess_Expiry ON GoalOrgAccess(orgId, expiresAt, goalId);
 
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_GoalOrgAccess_GoalId')
     CREATE INDEX IX_GoalOrgAccess_GoalId ON GoalOrgAccess(goalId);
 
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_ProjectGoals_GoalId')
     CREATE INDEX IX_ProjectGoals_GoalId ON ProjectGoals(goalId);
+
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_OrgSharingRequest_Status')
+    CREATE INDEX IX_OrgSharingRequest_Status ON OrgSharingRequest(status, targetOrgId, requestedAt DESC);
+
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_OrgSharingRequest_Entity')
+    CREATE INDEX IX_OrgSharingRequest_Entity ON OrgSharingRequest(entityType, entityId, status);
 GO
 
 -- AuditLog Table

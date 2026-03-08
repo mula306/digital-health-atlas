@@ -563,3 +563,189 @@
     opacity: 0.5;
     cursor: not-allowed;
 }
+
+/* ==================== BENEFITS + RISK ==================== */
+.project-benefits-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 0.9rem;
+}
+
+.project-benefits-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.8rem;
+}
+
+.project-risk-card,
+.project-governance-trace,
+.project-benefit-editor,
+.project-benefit-list {
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--bg-card);
+    padding: 0.8rem;
+}
+
+.project-risk-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+}
+
+.project-risk-head h3,
+.project-governance-trace h3,
+.project-benefit-editor h3,
+.project-benefit-list h3 {
+    margin: 0;
+    font-size: 0.92rem;
+    color: var(--text-primary);
+}
+
+.project-risk-score {
+    font-size: 1.2rem;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.project-risk-meta {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    margin-top: 0.45rem;
+    color: var(--text-secondary);
+    font-size: 0.78rem;
+}
+
+.project-risk-metrics {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin-top: 0.55rem;
+    font-size: 0.76rem;
+    color: var(--text-secondary);
+}
+
+.project-risk-metrics span {
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
+    padding: 0.12rem 0.45rem;
+    background: var(--bg-secondary);
+}
+
+.project-risk-signal-list {
+    margin: 0.55rem 0 0;
+    padding-left: 1rem;
+    display: grid;
+    gap: 0.22rem;
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+}
+
+.project-risk-signal-list li strong {
+    color: var(--text-primary);
+}
+
+.project-benefits-muted {
+    margin: 0.45rem 0 0;
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+}
+
+.project-trace-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 0.45rem;
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+}
+
+.project-benefits-warning {
+    border: 1px solid rgba(245, 158, 11, 0.35);
+    background: rgba(245, 158, 11, 0.12);
+    border-radius: var(--radius-sm);
+    padding: 0.5rem 0.65rem;
+    color: #b45309;
+    font-size: 0.78rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+
+.project-benefit-editor-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.55rem;
+}
+
+.project-benefit-editor .form-group {
+    margin-bottom: 0.55rem;
+}
+
+.project-benefit-editor-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.45rem;
+}
+
+.project-benefit-list-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.55rem;
+}
+
+.project-benefit-list-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 0.55rem;
+}
+
+.project-benefit-card {
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    background: var(--bg-secondary);
+    padding: 0.6rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+
+.project-benefit-card-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 0.4rem;
+}
+
+.project-benefit-card-head strong {
+    font-size: 0.83rem;
+    color: var(--text-primary);
+}
+
+.project-benefit-card-metrics {
+    display: grid;
+    gap: 0.18rem;
+    font-size: 0.74rem;
+    color: var(--text-secondary);
+}
+
+.project-benefit-card-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.35rem;
+}
+
+@media (max-width: 960px) {
+    .project-benefits-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .project-benefit-editor-grid {
+        grid-template-columns: 1fr;
+    }
+}

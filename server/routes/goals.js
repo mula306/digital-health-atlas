@@ -24,7 +24,12 @@ router.get('/', checkPermission(['can_view_goals', 'can_view_exec_dashboard']), 
                 .input('orgId', sql.Int, req.orgId)
                 .query(`SELECT * FROM Goals 
                         WHERE orgId = @orgId 
-                           OR id IN (SELECT goalId FROM GoalOrgAccess WHERE orgId = @orgId)
+                           OR id IN (
+                               SELECT goalId
+                               FROM GoalOrgAccess
+                               WHERE orgId = @orgId
+                                 AND (expiresAt IS NULL OR expiresAt > GETDATE())
+                           )
                         ORDER BY id`);
         }
         console.log(`Goals fetched: ${goalsResult.recordset.length}`);
@@ -44,6 +49,20 @@ router.get('/', checkPermission(['can_view_goals', 'can_view_exec_dashboard']), 
             const { text, params } = buildInClause('tagId', tagIds);
             tagJoin = `INNER JOIN ProjectTags pt ON p.id = pt.projectId AND pt.tagId IN (${text})`;
             Object.assign(queryParams, params);
+        }
+        const statsOrgScope = (req.orgId === null || req.orgId === undefined) ? '' : `
+            WHERE (
+                p.orgId = @orgId
+                OR p.id IN (
+                    SELECT projectId
+                    FROM ProjectOrgAccess
+                    WHERE orgId = @orgId
+                      AND (expiresAt IS NULL OR expiresAt > GETDATE())
+                )
+            )
+        `;
+        if (req.orgId !== null && req.orgId !== undefined) {
+            queryParams.orgId = req.orgId;
         }
 
         const statsQuery = `
@@ -65,6 +84,7 @@ router.get('/', checkPermission(['can_view_goals', 'can_view_exec_dashboard']), 
                 FROM Tasks t
                 WHERE t.projectId = p.id
             ) tCounts
+            ${statsOrgScope}
             GROUP BY pg.goalId
         `;
 

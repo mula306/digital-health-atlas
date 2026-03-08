@@ -1,11 +1,12 @@
 import { useState, useCallback, useMemo, useEffect } from 'react';
-import { Settings, LayoutGrid, Table, GanttChart, FileText, Calendar, Activity, Star } from 'lucide-react';
+import { Settings, LayoutGrid, Table, GanttChart, FileText, Calendar, Activity, Star, BarChart3 } from 'lucide-react';
 import { useData } from '../../context/DataContext';
 import { KanbanColumn } from './KanbanColumn';
 import { TaskTableView } from './TaskTableView';
 import { GanttView } from './GanttView';
 import { CalendarView } from './CalendarView';
 import { StatusReportPage } from '../StatusReport/StatusReportPage';
+import { ProjectBenefitsPanel } from './ProjectBenefitsPanel';
 import { Modal } from '../UI/Modal';
 import { AddTaskForm } from './AddTaskForm';
 import { EditProjectForm } from './EditProjectForm';
@@ -23,15 +24,21 @@ const COLUMNS = [
 
 const PRIORITY_ORDER = { high: 0, medium: 1, low: 2 };
 
-import { useAuth } from '../../hooks/useAuth';
-
 export function KanbanBoard({ project, onBack, goalTitle }) {
-    const { watchProject, unwatchProject, fetchAssignableUsers, currentUser } = useData();
-    const { canEdit } = useAuth();
+    const {
+        watchProject,
+        unwatchProject,
+        fetchAssignableUsers,
+        currentUser,
+        hasPermission
+    } = useData();
+    const canEditProject = hasPermission('can_edit_project');
+    const canDeleteProject = hasPermission('can_delete_project');
+    const canManageProject = canEditProject || canDeleteProject;
     const [showAddModal, setShowAddModal] = useState(false);
     const [showEditModal, setShowEditModal] = useState(false);
     const [selectedTask, setSelectedTask] = useState(null);
-    const [viewMode, setViewMode] = useState('table'); // 'table', 'gantt', 'kanban', 'reports'
+    const [viewMode, setViewMode] = useState('table'); // 'table', 'gantt', 'kanban', 'reports', 'benefits', 'activity'
     const [isUpdatingWatch, setIsUpdatingWatch] = useState(false);
     const [taskQuickFilter, setTaskQuickFilter] = useState('all');
     const [assigneeOptions, setAssigneeOptions] = useState([]);
@@ -124,7 +131,7 @@ export function KanbanBoard({ project, onBack, goalTitle }) {
     }, [isUpdatingWatch, project.isWatched, project.id, unwatchProject, watchProject]);
 
     useEffect(() => {
-        if (!canEdit) return;
+        if (!canEditProject) return;
         let cancelled = false;
         fetchAssignableUsers()
             .then((users) => {
@@ -136,7 +143,7 @@ export function KanbanBoard({ project, onBack, goalTitle }) {
                 console.error('Failed to load assignable users:', err);
             });
         return () => { cancelled = true; };
-    }, [canEdit, fetchAssignableUsers]);
+    }, [canEditProject, fetchAssignableUsers]);
 
     // Keep selectedTask in sync with project updates.
     useEffect(() => {
@@ -168,7 +175,7 @@ export function KanbanBoard({ project, onBack, goalTitle }) {
                         >
                             <Star size={16} fill={project.isWatched ? 'currentColor' : 'none'} />
                         </button>
-                        {canEdit && (
+                        {canManageProject && (
                             <button
                                 onClick={() => setShowEditModal(true)}
                                 className="icon-btn"
@@ -224,6 +231,13 @@ export function KanbanBoard({ project, onBack, goalTitle }) {
                             <FileText size={18} />
                         </button>
                         <button
+                            className={`view-toggle-btn ${viewMode === 'benefits' ? 'active' : ''}`}
+                            onClick={() => setViewMode('benefits')}
+                            title="Benefits and Risk"
+                        >
+                            <BarChart3 size={18} />
+                        </button>
+                        <button
                             className={`view-toggle-btn ${viewMode === 'activity' ? 'active' : ''}`}
                             onClick={() => setViewMode('activity')}
                             title="Activity History"
@@ -232,13 +246,13 @@ export function KanbanBoard({ project, onBack, goalTitle }) {
                         </button>
                     </div>
 
-                    {viewMode !== 'reports' && viewMode !== 'activity' && canEdit && (
+                    {viewMode !== 'reports' && viewMode !== 'activity' && viewMode !== 'benefits' && canEditProject && (
                         <button className="btn-primary" onClick={() => setShowAddModal(true)}>New Task</button>
                     )}
                 </div>
             </div>
 
-            {viewMode !== 'reports' && viewMode !== 'activity' && (
+            {viewMode !== 'reports' && viewMode !== 'activity' && viewMode !== 'benefits' && (
                 <div className="task-quick-filters">
                     <button
                         type="button"
@@ -288,6 +302,7 @@ export function KanbanBoard({ project, onBack, goalTitle }) {
                             tasks={tasksByStatus[col.id] || []}
                             projectId={project.id}
                             onTaskClick={handleTaskClick}
+                            canEditTask={canEditProject}
                         />
                     ))}
                 </div>
@@ -321,6 +336,13 @@ export function KanbanBoard({ project, onBack, goalTitle }) {
                 />
             )}
 
+            {viewMode === 'benefits' && (
+                <ProjectBenefitsPanel
+                    projectId={project.id}
+                    canEditProject={canEditProject}
+                />
+            )}
+
             {viewMode === 'activity' && (
                 <ProjectActivityFeed projectId={project.id} />
             )}
@@ -346,7 +368,12 @@ export function KanbanBoard({ project, onBack, goalTitle }) {
                 size="large"
                 closeOnOverlayClick={false}
             >
-                <EditProjectForm project={project} onClose={handleEditClose} />
+                <EditProjectForm
+                    project={project}
+                    onClose={handleEditClose}
+                    canEditProject={canEditProject}
+                    canDeleteProject={canDeleteProject}
+                />
             </Modal>
 
             {selectedTask && (
@@ -354,6 +381,7 @@ export function KanbanBoard({ project, onBack, goalTitle }) {
                     task={selectedTask}
                     projectId={project.id}
                     assigneeOptions={assigneeOptions}
+                    canEditTask={canEditProject}
                     onClose={() => setSelectedTask(null)}
                 />
             )}

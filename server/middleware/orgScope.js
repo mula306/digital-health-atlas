@@ -115,7 +115,9 @@ export const checkProjectWriteAccess = (getProjectId) => {
                         END as accessLevel
                     FROM Projects p
                     LEFT JOIN ProjectOrgAccess poa 
-                        ON poa.projectId = p.id AND poa.orgId = @orgId
+                        ON poa.projectId = p.id
+                       AND poa.orgId = @orgId
+                       AND (poa.expiresAt IS NULL OR poa.expiresAt > GETDATE())
                     WHERE p.id = @projectId
                 `);
 
@@ -183,7 +185,9 @@ export const checkGoalAccess = (getGoalId) => {
                         END as accessLevel
                     FROM Goals g
                     LEFT JOIN GoalOrgAccess goa
-                        ON goa.goalId = g.id AND goa.orgId = @orgId
+                        ON goa.goalId = g.id
+                       AND goa.orgId = @orgId
+                       AND (goa.expiresAt IS NULL OR goa.expiresAt > GETDATE())
                     WHERE g.id = @goalId
                 `);
 
@@ -252,7 +256,9 @@ export const checkTaskWriteAccess = (getTaskId) => {
                     FROM Tasks t
                     INNER JOIN Projects p ON p.id = t.projectId
                     LEFT JOIN ProjectOrgAccess poa
-                        ON poa.projectId = p.id AND poa.orgId = @orgId
+                        ON poa.projectId = p.id
+                       AND poa.orgId = @orgId
+                       AND (poa.expiresAt IS NULL OR poa.expiresAt > GETDATE())
                     WHERE t.id = @taskId
                 `);
 
@@ -313,7 +319,9 @@ export const checkKpiWriteAccess = (getKpiId) => {
                     FROM KPIs k
                     INNER JOIN Goals g ON g.id = k.goalId
                     LEFT JOIN GoalOrgAccess goa
-                        ON goa.goalId = g.id AND goa.orgId = @orgId
+                        ON goa.goalId = g.id
+                       AND goa.orgId = @orgId
+                       AND (goa.expiresAt IS NULL OR goa.expiresAt > GETDATE())
                     WHERE k.id = @kpiId
                 `);
 

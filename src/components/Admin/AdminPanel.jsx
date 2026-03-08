@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useData } from '../../context/DataContext';
 import { Save, Shield, AlertTriangle, RefreshCw, Tag, Activity, Scale, Building2 } from 'lucide-react';
 import { useToast } from '../../context/ToastContext';
@@ -8,13 +8,22 @@ import { GovernanceConfig } from './GovernanceConfig';
 import { OrganizationManager } from './OrganizationManager';
 import './AdminPanel.css';
 
-export function AdminPanel() {
+export function AdminPanel({
+    initialTab = null,
+    onTabChange = null,
+    governanceTab = null,
+    onGovernanceTabChange = null,
+    organizationSection = null,
+    onOrganizationSectionChange = null,
+    organizationSharingTab = null,
+    onOrganizationSharingTabChange = null
+}) {
     const { permissions: contextPermissions, updatePermissionsBulk, hasPermission, hasRole } = useData();
     const { success, error: showError } = useToast();
     const [localPermissions, setLocalPermissions] = useState([]);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
-    const [activeTab, setActiveTab] = useState('permissions');
+    const [activeTabState, setActiveTabState] = useState('permissions');
     const isAdmin = hasRole('Admin');
     const canManageRolePermissions = isAdmin;
     const canManageTags = isAdmin || hasPermission('can_manage_tags');
@@ -98,13 +107,33 @@ export function AdminPanel() {
         canManageGovernance ? 'governance' : null,
         canManageOrganizations ? 'organizations' : null
     ].filter(Boolean);
+    const isActiveTabControlled = typeof onTabChange === 'function';
+    const normalizedInitialTab = (
+        typeof initialTab === 'string' &&
+        availableTabs.includes(initialTab)
+    ) ? initialTab : null;
+    const activeTab = (
+        isActiveTabControlled
+            ? normalizedInitialTab
+            : (availableTabs.includes(activeTabState) ? activeTabState : null)
+    ) || availableTabs[0] || null;
+
+    const openAdminTab = useCallback((nextTab) => {
+        if (!availableTabs.includes(nextTab)) return;
+        if (isActiveTabControlled) {
+            onTabChange?.(nextTab);
+            return;
+        }
+        setActiveTabState(nextTab);
+    }, [availableTabs, isActiveTabControlled, onTabChange]);
 
     useEffect(() => {
-        if (availableTabs.length === 0) return;
-        if (!availableTabs.includes(activeTab)) {
-            setActiveTab(availableTabs[0]);
+        if (!isActiveTabControlled) return;
+        if (!activeTab) return;
+        if (initialTab !== activeTab) {
+            onTabChange?.(activeTab);
         }
-    }, [activeTab, availableTabs]);
+    }, [isActiveTabControlled, activeTab, initialTab, onTabChange]);
 
     // Sync with context permissions on load
     useEffect(() => {
@@ -260,7 +289,7 @@ export function AdminPanel() {
                     {canManageRolePermissions && (
                         <button
                             className={`admin-tab ${activeTab === 'permissions' ? 'active' : ''}`}
-                            onClick={() => setActiveTab('permissions')}
+                            onClick={() => openAdminTab('permissions')}
                         >
                             <Shield size={16} /> Role Permissions
                         </button>
@@ -268,7 +297,7 @@ export function AdminPanel() {
                     {canManageTags && (
                         <button
                             className={`admin-tab ${activeTab === 'tags' ? 'active' : ''}`}
-                            onClick={() => setActiveTab('tags')}
+                            onClick={() => openAdminTab('tags')}
                         >
                             <Tag size={16} /> Tag Management
                         </button>
@@ -276,7 +305,7 @@ export function AdminPanel() {
                     {canViewAuditLog && (
                         <button
                             className={`admin-tab ${activeTab === 'audit-log' ? 'active' : ''}`}
-                            onClick={() => setActiveTab('audit-log')}
+                            onClick={() => openAdminTab('audit-log')}
                         >
                             <Activity size={16} /> Audit Log
                         </button>
@@ -284,7 +313,7 @@ export function AdminPanel() {
                     {canManageGovernance && (
                         <button
                             className={`admin-tab ${activeTab === 'governance' ? 'active' : ''}`}
-                            onClick={() => setActiveTab('governance')}
+                            onClick={() => openAdminTab('governance')}
                         >
                             <Scale size={16} /> Governance
                         </button>
@@ -292,7 +321,7 @@ export function AdminPanel() {
                     {canManageOrganizations && (
                         <button
                             className={`admin-tab ${activeTab === 'organizations' ? 'active' : ''}`}
-                            onClick={() => setActiveTab('organizations')}
+                            onClick={() => openAdminTab('organizations')}
                         >
                             <Building2 size={16} /> Organizations
                         </button>
@@ -383,11 +412,19 @@ export function AdminPanel() {
                     )}
 
                     {activeTab === 'governance' && canManageGovernance && (
-                        <GovernanceConfig />
+                        <GovernanceConfig
+                            initialTab={governanceTab}
+                            onTabChange={onGovernanceTabChange}
+                        />
                     )}
 
                     {activeTab === 'organizations' && canManageOrganizations && (
-                        <OrganizationManager />
+                        <OrganizationManager
+                            initialSection={organizationSection}
+                            onSectionChange={onOrganizationSectionChange}
+                            initialSharingTab={organizationSharingTab}
+                            onSharingTabChange={onOrganizationSharingTabChange}
+                        />
                     )}
 
                 </div> {/* End .admin-content-area */}

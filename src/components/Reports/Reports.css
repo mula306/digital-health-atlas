@@ -1,5 +1,223 @@
 /* Reports Module Styles */
 
+.reports-page {
+    display: flex;
+    flex-direction: column;
+    gap: 0.9rem;
+    height: 100%;
+}
+
+.reports-pack-panel {
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    background: var(--bg-card);
+    padding: 0.85rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.reports-pack-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.reports-pack-header h3 {
+    margin: 0;
+    font-size: 0.95rem;
+    color: var(--text-primary);
+}
+
+.reports-pack-actions {
+    display: inline-flex;
+    gap: 0.45rem;
+    align-items: center;
+}
+
+.reports-pack-editor {
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--bg-secondary);
+    padding: 0.7rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+}
+
+.reports-pack-editor-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 0.5rem;
+}
+
+.reports-pack-editor .form-group {
+    margin: 0;
+}
+
+.reports-pack-editor .form-group label {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-tertiary);
+}
+
+.reports-pack-editor input,
+.reports-pack-editor select,
+.reports-pack-editor textarea {
+    width: 100%;
+}
+
+.reports-pack-editor textarea {
+    min-height: 64px;
+    resize: vertical;
+}
+
+.reports-pack-editor-toggles {
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+}
+
+.reports-pack-editor-toggles label {
+    display: inline-flex;
+    gap: 0.35rem;
+    align-items: center;
+}
+
+.reports-pack-editor-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.45rem;
+}
+
+.reports-pack-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+    gap: 0.5rem;
+}
+
+.reports-pack-card {
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: 0.55rem;
+    background: var(--bg-card);
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+}
+
+.reports-pack-card.active {
+    border-color: var(--accent-primary);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-primary) 30%, transparent);
+}
+
+.reports-pack-card-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 0.4rem;
+}
+
+.reports-pack-select {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    align-items: flex-start;
+    text-align: left;
+    border: none;
+    background: transparent;
+    color: inherit;
+    padding: 0;
+    cursor: pointer;
+}
+
+.reports-pack-select strong {
+    color: var(--text-primary);
+    font-size: 0.84rem;
+}
+
+.reports-pack-select span {
+    color: var(--text-tertiary);
+    font-size: 0.72rem;
+}
+
+.reports-pack-status {
+    font-size: 0.66rem;
+    font-weight: 700;
+    padding: 0.15rem 0.45rem;
+    border-radius: 999px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.reports-pack-status.active {
+    background: rgba(16, 185, 129, 0.12);
+    color: #047857;
+}
+
+.reports-pack-status.paused {
+    background: rgba(100, 116, 139, 0.16);
+    color: #475569;
+}
+
+.reports-pack-card-meta {
+    display: grid;
+    gap: 0.12rem;
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+}
+
+.reports-pack-card-actions {
+    display: flex;
+    gap: 0.4rem;
+}
+
+.reports-pack-runs {
+    border-top: 1px solid var(--border-color);
+    padding-top: 0.55rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+
+.reports-pack-runs-head h4 {
+    margin: 0;
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+}
+
+.reports-pack-run-list {
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+}
+
+.reports-pack-run-row {
+    display: grid;
+    grid-template-columns: 120px 1fr 1fr;
+    gap: 0.5rem;
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+    padding: 0.3rem 0.45rem;
+    background: var(--bg-secondary);
+}
+
+.reports-pack-run-row + .reports-pack-run-row {
+    border-top: 1px solid var(--border-color);
+}
+
+.reports-pack-empty {
+    font-size: 0.78rem;
+    color: var(--text-tertiary);
+}
+
 .reports-container {
     display: flex;
     height: 100%;

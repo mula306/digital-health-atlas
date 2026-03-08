@@ -4,19 +4,19 @@ import { useData } from '../../context/DataContext';
 import { useToast } from '../../context/ToastContext';
 import './TaskDetail.css';
 
-import { useAuth } from '../../hooks/useAuth';
-
-export function TaskDetailPanel({ task, projectId, assigneeOptions = [], onClose }) {
+export function TaskDetailPanel({ task, projectId, assigneeOptions = [], canEditTask, onClose }) {
     const {
         updateTask,
         deleteTask,
+        hasPermission,
         fetchTaskChecklist,
         addTaskChecklistItem,
         updateTaskChecklistItem,
         deleteTaskChecklistItem
     } = useData();
     const { success, error } = useToast();
-    const { canEdit, canDelete } = useAuth();
+    const canEdit = canEditTask ?? hasPermission('can_edit_project');
+    const canDelete = canEdit;
     const [isEditing, setIsEditing] = useState(false);
 
     // Helper to format date for input (YYYY-MM-DD)

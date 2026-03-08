@@ -8,9 +8,6 @@ import { getDescendantGoalIds } from '../../utils/goalHelpers';
 import { FilterBar } from '../UI/FilterBar';
 import { ProjectTagBadges } from '../UI/ProjectTagSelector';
 import './KanbanView.css';
-
-import { useAuth } from '../../hooks/useAuth';
-
 import { EmptyState } from '../UI/EmptyState';
 import { API_BASE } from '../../apiClient';
 
@@ -22,8 +19,20 @@ const STATUS_OPTIONS = [
 ];
 
 export default function KanbanView({ initialGoalFilter, onClearFilter }) {
-    const { projects, goals, loadProjectDetails, loading, loadMoreProjects, projectsPagination, loadingMore, authFetch, watchProject, unwatchProject } = useData();
-    const { canEdit } = useAuth();
+    const {
+        projects,
+        goals,
+        loadProjectDetails,
+        loading,
+        loadMoreProjects,
+        projectsPagination,
+        loadingMore,
+        authFetch,
+        watchProject,
+        unwatchProject,
+        hasPermission
+    } = useData();
+    const canCreateProject = hasPermission('can_create_project');
 
     // Persist selected project to survive remounts/refresh
     const [selectedProjectId, setSelectedProjectIdState] = useState(() => {
@@ -369,7 +378,7 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
                             <Table size={16} />
                         </button>
                     </div>
-                    {canEdit && (
+                    {canCreateProject && (
                         <button className="btn-primary" onClick={() => setShowProjectModal(true)}>
                             <Plus size={18} />
                             New Project

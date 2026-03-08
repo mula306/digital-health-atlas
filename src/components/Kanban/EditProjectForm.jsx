@@ -6,7 +6,12 @@ import { CascadingGoalFilter } from '../UI/CascadingGoalFilter';
 import { validateGoalAssignment } from '../../utils/goalAssignmentValidation';
 import { X } from 'lucide-react';
 
-export function EditProjectForm({ project, onClose }) {
+export function EditProjectForm({
+    project,
+    onClose,
+    canEditProject = true,
+    canDeleteProject = false
+}) {
     const { updateProject, updateProjectTags, deleteProject, goals } = useData();
     const { success, error: showError } = useToast();
     const [title, setTitle] = useState(project.title || '');
@@ -57,6 +62,10 @@ export function EditProjectForm({ project, onClose }) {
 
     const handleSubmit = async (e) => {
         e.preventDefault();
+        if (!canEditProject) {
+            showError('You do not have permission to edit this project.');
+            return;
+        }
         const normalizedPendingGoalId = String(pendingGoalId || '').trim();
         const hasPendingGoal = normalizedPendingGoalId !== '' && !goalIds.includes(normalizedPendingGoalId);
         const effectiveGoalIds = hasPendingGoal
@@ -87,6 +96,10 @@ export function EditProjectForm({ project, onClose }) {
     };
 
     const handleDelete = () => {
+        if (!canDeleteProject) {
+            showError('You do not have permission to delete this project.');
+            return;
+        }
         if (confirmDelete) {
             deleteProject(project.id);
             success('Project deleted');
@@ -108,6 +121,7 @@ export function EditProjectForm({ project, onClose }) {
                         onChange={e => setTitle(e.target.value)}
                         className="form-input"
                         placeholder="Project name"
+                        disabled={!canEditProject}
                     />
                 </div>
 
@@ -117,6 +131,7 @@ export function EditProjectForm({ project, onClose }) {
                         value={status}
                         onChange={e => setStatus(e.target.value)}
                         className="form-select"
+                        disabled={!canEditProject}
                     >
                         <option value="active">Active</option>
                         <option value="on-hold">On Hold</option>
@@ -137,6 +152,7 @@ export function EditProjectForm({ project, onClose }) {
                             }}>
                                 {getGoalTitle(gid)}
                                 <button type="button" onClick={() => removeGoal(gid)}
+                                    disabled={!canEditProject}
                                     style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: 'var(--text-tertiary)', display: 'flex' }}>
                                     <X size={14} />
                                 </button>
@@ -149,7 +165,7 @@ export function EditProjectForm({ project, onClose }) {
                         <CascadingGoalFilter value={pendingGoalId} onChange={setPendingGoalId} />
                     </div>
                     <button type="button" onClick={addGoal} className="btn-secondary"
-                        disabled={!pendingGoalId}
+                        disabled={!pendingGoalId || !canEditProject}
                         style={{ whiteSpace: 'nowrap', marginTop: '2px' }}>
                         + Add Goal
                     </button>
@@ -164,38 +180,45 @@ export function EditProjectForm({ project, onClose }) {
                     className="form-textarea"
                     rows={4}
                     placeholder="Brief project description..."
+                    disabled={!canEditProject}
                 />
             </div>
 
             <div className="form-group">
                 <label>Project Tags</label>
-                <ProjectTagSelector
-                    projectId={project.id}
-                    currentTags={projectTags}
-                    onChange={(nextTags) => {
-                        setProjectTags((prev) => (areTagsEqual(prev, nextTags) ? prev : nextTags));
-                    }}
-                    showSaveButton={false}
-                    compact={false}
-                />
+                <div style={{ pointerEvents: canEditProject ? 'auto' : 'none', opacity: canEditProject ? 1 : 0.65 }}>
+                    <ProjectTagSelector
+                        projectId={project.id}
+                        currentTags={projectTags}
+                        onChange={(nextTags) => {
+                            setProjectTags((prev) => (areTagsEqual(prev, nextTags) ? prev : nextTags));
+                        }}
+                        showSaveButton={false}
+                        compact={false}
+                    />
+                </div>
             </div>
 
             <div className="form-actions" style={{ justifyContent: 'space-between' }}>
-                <button
-                    type="button"
-                    onClick={handleDelete}
-                    className="btn-danger"
-                    style={{
-                        background: confirmDelete ? '#ef4444' : 'transparent',
-                        color: confirmDelete ? 'white' : '#ef4444',
-                        border: '1px solid #ef4444'
-                    }}
-                >
-                    {confirmDelete ? 'Click Again to Confirm' : 'Delete Project'}
-                </button>
+                <div>
+                    {canDeleteProject && (
+                        <button
+                            type="button"
+                            onClick={handleDelete}
+                            className="btn-danger"
+                            style={{
+                                background: confirmDelete ? '#ef4444' : 'transparent',
+                                color: confirmDelete ? 'white' : '#ef4444',
+                                border: '1px solid #ef4444'
+                            }}
+                        >
+                            {confirmDelete ? 'Click Again to Confirm' : 'Delete Project'}
+                        </button>
+                    )}
+                </div>
                 <div style={{ display: 'flex', gap: '1rem' }}>
                     <button type="button" onClick={onClose} className="btn-secondary">Cancel</button>
-                    <button type="submit" className="btn-primary">Save Changes</button>
+                    {canEditProject && <button type="submit" className="btn-primary">Save Changes</button>}
                 </div>
             </div>
         </form>

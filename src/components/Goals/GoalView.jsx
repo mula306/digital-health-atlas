@@ -8,8 +8,6 @@ import { FilterBar } from '../UI/FilterBar';
 import { EmptyState } from '../UI/EmptyState';
 import './Goals.css';
 
-import { useAuth } from '../../hooks/useAuth';
-
 const STATUS_OPTIONS = [
     { id: 'red', label: 'Red', color: '#ef4444' },
     { id: 'yellow', label: 'Yellow', color: '#f59e0b' },
@@ -18,8 +16,8 @@ const STATUS_OPTIONS = [
 ];
 
 export function GoalView({ onNavigateToProjects, onNavigateToMetrics }) {
-    const { goals, projects, fetchExecSummaryProjects } = useData();
-    const { canEdit } = useAuth();
+    const { goals, projects, fetchExecSummaryProjects, hasPermission } = useData();
+    const canCreateGoal = hasPermission('can_create_goal');
     const [showAddModal, setShowAddModal] = useState(false);
     const [goalFilter, setGoalFilter] = useState('');
     const [selectedTags, setSelectedTags] = useState([]);
@@ -96,7 +94,7 @@ export function GoalView({ onNavigateToProjects, onNavigateToMetrics }) {
                             Collapse
                         </button>
                     </div>
-                    {canEdit && (
+                    {canCreateGoal && (
                         <button className="btn-primary" onClick={() => setShowAddModal(true)}>
                             <Plus size={18} />
                             New Goal
