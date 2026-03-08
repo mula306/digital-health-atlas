@@ -55,6 +55,9 @@
 
 .reports-pack-editor .form-group {
     margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.28rem;
 }
 
 .reports-pack-editor .form-group label {
@@ -68,6 +71,21 @@
 .reports-pack-editor select,
 .reports-pack-editor textarea {
     width: 100%;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    background: var(--bg-card);
+    color: var(--text-primary);
+    font-size: 0.78rem;
+    padding: 0.42rem 0.5rem;
+    transition: border-color 0.16s ease, box-shadow 0.16s ease, background-color 0.16s ease;
+}
+
+.reports-pack-editor input:focus,
+.reports-pack-editor select:focus,
+.reports-pack-editor textarea:focus {
+    outline: none;
+    border-color: color-mix(in srgb, var(--accent-primary) 56%, var(--border-color));
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 24%, transparent);
 }
 
 .reports-pack-editor textarea {
@@ -109,6 +127,7 @@
     border-radius: 999px;
     padding: 0.2rem 0.55rem;
     font-size: 0.68rem;
+    line-height: 1.2;
     cursor: pointer;
     transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
 }
@@ -124,6 +143,13 @@
     color: var(--text-primary);
 }
 
+.reports-pack-filter-options .reports-filter-chip {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .reports-pack-editor-toggles {
     display: flex;
     gap: 0.75rem;
@@ -136,6 +162,16 @@
     display: inline-flex;
     gap: 0.35rem;
     align-items: center;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    background: var(--bg-card);
+    padding: 0.3rem 0.5rem;
+}
+
+.reports-pack-editor-toggles input[type="checkbox"] {
+    width: 14px;
+    height: 14px;
+    accent-color: var(--accent-primary);
 }
 
 .reports-pack-editor-actions {
@@ -153,11 +189,13 @@
 .reports-pack-card {
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
-    padding: 0.55rem;
+    padding: 0.7rem;
     background: var(--bg-card);
     display: flex;
     flex-direction: column;
-    gap: 0.45rem;
+    gap: 0.5rem;
+    box-shadow: 0 1px 2px color-mix(in srgb, var(--text-primary) 6%, transparent);
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .reports-pack-card.active {
@@ -224,6 +262,11 @@
 .reports-pack-card-actions {
     display: flex;
     gap: 0.4rem;
+}
+
+.reports-pack-card-actions .btn-sm {
+    min-height: 30px;
+    padding: 0.25rem 0.55rem;
 }
 
 .reports-pack-runs {

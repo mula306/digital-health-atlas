@@ -64,16 +64,57 @@ export function ReportsView() {
     });
     const canRunDuePacks = hasPermission('can_run_exec_pack_scheduler');
 
-    const availableGoals = useMemo(
-        () => (Array.isArray(goals) ? goals : [])
-            .map((goal) => ({
-                id: Number.parseInt(goal.id, 10),
-                title: goal.title || goal.name || `Goal ${goal.id}`
-            }))
+    const availableGoals = useMemo(() => {
+        const sourceGoals = Array.isArray(goals) ? goals : [];
+        const goalsById = new Map(
+            sourceGoals
+                .filter((goal) => goal && goal.id !== undefined && goal.id !== null)
+                .map((goal) => [String(goal.id), goal])
+        );
+
+        const buildGoalPath = (goal) => {
+            const path = [];
+            let current = goal;
+            const visited = new Set();
+
+            while (current && !visited.has(String(current.id))) {
+                visited.add(String(current.id));
+                path.unshift(current);
+                if (!current.parentId) break;
+                current = goalsById.get(String(current.parentId));
+            }
+
+            return path;
+        };
+
+        return sourceGoals
+            .map((goal) => {
+                const id = Number.parseInt(goal.id, 10);
+                const title = goal.title || goal.name || `Goal ${goal.id}`;
+                const path = buildGoalPath(goal);
+                const pathTitles = path.map((item) => item.title || item.name || `Goal ${item.id}`);
+                const organization = pathTitles[0] || title;
+                const hierarchyPath = pathTitles.join(' / ');
+                const label = pathTitles.length > 1
+                    ? `${organization}: ${title}`
+                    : title;
+
+                return {
+                    id,
+                    title,
+                    organization,
+                    hierarchyPath,
+                    label,
+                    depth: pathTitles.length
+                };
+            })
             .filter((goal) => !Number.isNaN(goal.id))
-            .sort((a, b) => a.title.localeCompare(b.title)),
-        [goals]
-    );
+            .sort((a, b) =>
+                a.organization.localeCompare(b.organization)
+                || a.depth - b.depth
+                || a.hierarchyPath.localeCompare(b.hierarchyPath)
+            );
+    }, [goals]);
 
     const availableTags = useMemo(() => {
         const groups = Array.isArray(tagGroups) ? tagGroups : [];
@@ -367,10 +408,10 @@ export function ReportsView() {
         const parts = [];
         if (goalCount > 0) parts.push(`${goalCount} goal${goalCount === 1 ? '' : 's'}`);
         if (tagCount > 0) parts.push(`${tagCount} tag${tagCount === 1 ? '' : 's'}`);
-        if (statusCount > 0) parts.push(`${statusCount} status`);
+        if (statusCount > 0) parts.push(`${statusCount} status${statusCount === 1 ? '' : 'es'}`);
         if (watchedOnly) parts.push('watched only');
 
-        return parts.length > 0 ? `Filters: ${parts.join(' • ')}` : 'Filters: none';
+        return parts.length > 0 ? `Filters: ${parts.join(' | ')}` : 'Filters: none';
     };
 
     return (
@@ -486,8 +527,9 @@ export function ReportsView() {
                                                 type="button"
                                                 className={`reports-filter-chip ${selected ? 'active' : ''}`}
                                                 onClick={() => toggleNumericFilter('goalIds', goal.id)}
+                                                title={goal.hierarchyPath}
                                             >
-                                                {goal.title}
+                                                {goal.label}
                                             </button>
                                         );
                                     })}
@@ -669,3 +711,4 @@ export function ReportsView() {
         </div>
     );
 }
+
