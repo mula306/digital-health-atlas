@@ -1,698 +1,451 @@
-# Digital Health Atlas — Architecture Review Board Document
+# Digital Health Atlas - Architecture Review Board Document
 
-**Document Version:** 1.0  
-**Date:** February 10, 2026  
+**Document Version:** 2.0  
+**Review Date:** March 9, 2026  
 **Author:** Digital Health IT Portfolio Management  
-**Classification:** Internal — Architecture Review Board  
+**Classification:** Internal - Architecture Review Board
 
 ---
 
 ## Table of Contents
 
 1. [Executive Summary](#1-executive-summary)
-2. [Business Context & Objectives](#2-business-context--objectives)
-3. [System Overview](#3-system-overview)
-4. [Architecture Design](#4-architecture-design)
-5. [Data Architecture](#5-data-architecture)
-6. [Security Architecture](#6-security-architecture)
-7. [API Design](#7-api-design)
-8. [Frontend Architecture](#8-frontend-architecture)
-9. [Deployment Architecture](#9-deployment-architecture)
-10. [Performance & Scalability](#10-performance--scalability)
-11. [Compliance & Standards](#11-compliance--standards)
-12. [Risk Assessment](#12-risk-assessment)
-13. [Future Roadmap](#13-future-roadmap)
+2. [Review Scope and Method](#2-review-scope-and-method)
+3. [Business and Capability Architecture](#3-business-and-capability-architecture)
+4. [System Context and Runtime Architecture](#4-system-context-and-runtime-architecture)
+5. [Application Architecture](#5-application-architecture)
+6. [Data Architecture](#6-data-architecture)
+7. [Security and Identity Architecture](#7-security-and-identity-architecture)
+8. [API and Integration Architecture](#8-api-and-integration-architecture)
+9. [Deployment and Operations Architecture](#9-deployment-and-operations-architecture)
+10. [Performance and Scalability](#10-performance-and-scalability)
+11. [Reliability and Quality Baseline](#11-reliability-and-quality-baseline)
+12. [Holistic Findings and Recommendations](#12-holistic-findings-and-recommendations)
+13. [Roadmap Alignment and Next Architecture Steps](#13-roadmap-alignment-and-next-architecture-steps)
 14. [Appendix](#14-appendix)
 
 ---
 
 ## 1. Executive Summary
 
-The **Digital Health Atlas** (DHA) is a web-based IT portfolio management platform purpose-built for healthcare organizations. It provides a single, real-time view of strategic goals, project portfolios, task boards, KPI metrics, status reporting, and project intake — enabling leadership to track progress, priorities, dependencies, risks, and measurable outcomes across the digital health landscape.
+Digital Health Atlas has evolved from a portfolio tracking tool into an end-to-end platform for:
 
-### Key Capabilities
+- intake and triage,
+- governance review and voting,
+- conversion to execution,
+- ongoing delivery and benefit tracking,
+- executive reporting and automation,
+- multi-organization sharing with controlled access.
 
-| Capability | Description |
-|---|---|
-| **Strategic Goal Hierarchy** | Multi-tiered goal tree (Organization → Division → Department → Branch) with cascading progress rollup |
-| **Project Portfolio Management** | Full project lifecycle with Kanban, Table, Gantt, and Calendar views |
-| **KPI / Metrics Dashboard** | Quantitative indicators linked to goals with target vs. actual tracking |
-| **Executive Summary Dashboard** | Filterable, exportable PDF overview of portfolio status for leadership |
-| **Status Reporting** | Versioned status reports with executive summaries, RAG ratings, and milestone tracking |
-| **Project Intake & Workflow** | Configurable intake forms with approval/rejection/info-request workflow |
-| **Multi-Dimensional Tagging** | Faceted taxonomy (7 tag groups, 30+ tags) for slicing portfolio by domain, capability, risk, geography, etc. |
-| **Role-Based Access Control** | Azure AD-integrated RBAC with 6 app roles and granular DB-backed permissions |
+### Current architecture posture
 
----
+- **Business fit:** Strong. Core operational workflows are now integrated across intake, governance, projects, and reporting.
+- **Security posture:** Good for current scale. Entra-based authentication and DB-driven RBAC are implemented with route-level enforcement.
+- **Data and workflow traceability:** Good. Governance decisions, votes, sharing requests, and audit trails are persisted.
+- **Operational maturity:** Moderate. Key gaps remain in production-grade observability, scheduler high availability controls, and API contract governance.
 
-## 2. Business Context & Objectives
+### ARB conclusion
 
-### Problem Statement
-
-Healthcare IT organizations manage complex portfolios spanning clinical systems, infrastructure, compliance, and digital innovation. Without a unified platform, visibility into cross-cutting priorities, progress, and risk is fragmented across spreadsheets, emails, and departmental silos.
-
-### Strategic Objectives
-
-- **Unified Visibility:** Single source of truth for all digital health initiatives
-- **Strategic Alignment:** Link every project to measurable organizational goals and KPIs
-- **Executive Decision Support:** Real-time dashboards and exportable reports for leadership
-- **Accountability:** Versioned status reports with RAG ratings and audit trails
-- **Intake Governance:** Structured request-to-project pipeline with approval workflows
-- **Taxonomy & Analysis:** Multi-dimensional tagging for portfolio analysis across domains, capabilities, outcomes, and geographies
+The platform is architecturally sound for current adoption and can support near-term growth. Recommended next focus is operational hardening and architecture governance rather than major rewrites.
 
 ---
 
-## 3. System Overview
+## 2. Review Scope and Method
 
-### High-Level Architecture
+This review was completed against the current repository state as of March 9, 2026 and included:
+
+- Frontend architecture and workflow implementations (`src/components/*`, `src/context/*`, `src/utils/*`)
+- Backend service and route architecture (`server/index.js`, `server/routes/*`, `server/utils/*`)
+- Security and RBAC model (`server/utils/rbacCatalog.js`, auth middleware, seeded permissions)
+- Canonical schema and migration strategy (`server/scripts/schema.sql`, `server/scripts/migration_manifest.js`)
+- Wave feature migrations (`migrate_wave2.sql`, `migrate_wave3.sql`)
+- Existing documentation and implementation plans (`docs/*`)
+
+Review objectives:
+
+1. Confirm current-state architecture accuracy.
+2. Identify architectural strengths and material risks.
+3. Recommend prioritized architecture actions.
+
+---
+
+## 3. Business and Capability Architecture
+
+### Core business capabilities now implemented
+
+| Capability Domain | Current Implementation Status | Notes |
+|---|---|---|
+| Strategy and portfolio alignment | Implemented | Goal hierarchy, KPI linkage, goal-to-project relationships |
+| Delivery execution | Implemented | Kanban/task management, assignment, checklist subtasks, status reporting |
+| Intake workflow | Implemented | Guided 4-stage intake flow with stage readiness and KPI strip |
+| Governance workflow | Implemented | Board/member/criteria config, voting, decisions, session mode, queue filters |
+| Intake-to-execution handoff | Implemented | Governance-aware conversion with kickoff task blueprints |
+| Executive oversight | Implemented | Executive Summary view, risk signals, report export |
+| Executive reporting automation | Implemented | Scheduled/manual executive packs, run history, due-run scheduler |
+| Multi-organization collaboration | Implemented | Project/goal sharing, request approvals, expiry and attestation |
+| Personal productivity | Implemented | My Work Hub with deep links into projects/intake/governance |
+
+### Value stream architecture (target-state in operation)
+
+1. **Request intake** (`Submission`)  
+2. **Operational triage** (`Triage`)  
+3. **Governance scoring/decision** (`Governance`)  
+4. **Conversion/closure** (`Resolution`)  
+5. **Execution tracking + benefits realization** (`Projects`)  
+6. **Executive monitoring + pack automation** (`Executive Summary` + `Reports`)
+
+---
+
+## 4. System Context and Runtime Architecture
 
 ```mermaid
 graph TB
-    subgraph "Client Tier"
-        A["React SPA<br/>Vite 7 + React 19"]
+    subgraph Client["Client Tier"]
+        SPA["React SPA (Vite)"]
     end
 
-    subgraph "Identity Provider"
-        B["Microsoft Entra ID<br/>(Azure AD)"]
+    subgraph Identity["Identity Tier"]
+        ENTRA["Microsoft Entra ID"]
     end
 
-    subgraph "API Tier"
-        C["Express.js API Server<br/>Node.js 20+"]
+    subgraph Api["Application Tier"]
+        API["Node.js + Express API"]
+        SCHED["In-process Executive Pack Scheduler"]
+        RBAC["RBAC + Permission Catalog"]
     end
 
-    subgraph "Data Tier"
-        D["SQL Server 2022"]
+    subgraph Data["Data Tier"]
+        SQL["SQL Server"]
     end
 
-    A -->|"HTTPS + Bearer JWT"| C
-    A -->|"MSAL 2.0<br/>OAuth 2.0 / OIDC"| B
-    B -->|"JWT Token<br/>(RS256 signed)"| A
-    C -->|"JWKS Validation"| B
-    C -->|"mssql Connection Pool"| D
+    SPA -->|HTTPS + JWT| API
+    SPA -->|OIDC / OAuth2 (MSAL)| ENTRA
+    API -->|JWKS token validation| ENTRA
+    API --> SQL
+    SCHED --> SQL
+    RBAC --> SQL
 ```
 
-### Technology Stack
+### Runtime boundaries
 
-| Layer | Technology | Version | Purpose |
-|---|---|---|---|
-| **Frontend Framework** | React | 19.2 | Component-based UI |
-| **Build Tooling** | Vite | 7.2 | Dev server, HMR, production bundling |
-| **Authentication (Client)** | @azure/msal-browser + msal-react | 5.x | OAuth 2.0 / OIDC token acquisition |
-| **Icons** | Lucide React | 0.563 | Consistent iconography |
-| **PDF Export** | html2pdf.js | 0.14 | Client-side PDF generation |
-| **API Server** | Express.js | 4.18 | RESTful API |
-| **Runtime** | Node.js | 20+ | Server runtime |
-| **Authentication (Server)** | passport-jwt + jwks-rsa | 4.x / 3.x | JWT validation via JWKS endpoint |
-| **Database Driver** | mssql | 10.x | SQL Server connectivity |
-| **Security Middleware** | Helmet | 8.x | HTTP security headers |
-| **Rate Limiting** | express-rate-limit | 8.x | Request throttling |
-| **Compression** | compression | 1.x | gzip response compression |
-| **Caching** | node-cache | 5.x | In-memory TTL cache |
-| **Database** | Microsoft SQL Server | 2022 | Relational data store |
+- **Presentation tier:** React SPA with module-based feature pages.
+- **Application tier:** Express route domains for business workflows.
+- **Data tier:** SQL Server with canonical schema and migration path for upgrades.
+- **Identity tier:** Entra ID for authentication and role claims.
 
 ---
 
-## 4. Architecture Design
+## 5. Application Architecture
 
-### Architecture Pattern
+### 5.1 Frontend architecture
 
-The system follows a **classic three-tier architecture** with clear separation of concerns:
+Primary navigation/workspaces:
+
+- My Work
+- Executive Summary
+- Goals
+- Metrics
+- Project Dashboard
+- Projects
+- Reports
+- Intake
+- Admin
+
+Key architecture characteristics:
+
+- URL/query driven view and stage persistence (`view`, `stage`, admin sub-tabs).
+- Shared filtering patterns through reusable UI (`FilterBar` and related controls).
+- Context-based global state (`DataContext`, `ThemeContext`, `ToastContext`).
+- Route-level lazy loading for heavier modules.
+- Governance and intake UX aligned to staged process patterns.
+
+### 5.2 Backend architecture
+
+Backend route domains:
+
+- `dashboard`
+- `goals`
+- `kpis`
+- `projects`
+- `tasks`
+- `tags`
+- `intake`
+- `governance`
+- `reports`
+- `users`
+- `admin`
+
+Architecture patterns in use:
+
+- Route-level auth + permission middleware enforcement.
+- Parameterized SQL access through `mssql` request bindings.
+- Domain-specific utilities for auth, SQL helpers, cache, audit logging.
+- In-process scheduler for due executive pack execution.
+
+### 5.3 Authorization convergence
+
+Current implementation uses:
+
+- backend permission checks as source of truth,
+- frontend permission helpers for UX gating,
+- shared governance helper logic for vote/decision eligibility messaging.
+
+This is materially improved over older dual-check drift patterns, but should be further formalized into a documented effective-permissions contract endpoint.
+
+---
+
+## 6. Data Architecture
+
+### 6.1 Canonical schema status
+
+The canonical schema (`server/scripts/schema.sql`) contains the current feature set and includes **33 tables** across portfolio, governance, intake, reporting, sharing, and admin domains.
+
+### 6.2 Domain-oriented data model
+
+| Domain | Key Tables |
+|---|---|
+| Portfolio and execution | `Goals`, `KPIs`, `Projects`, `ProjectGoals`, `Tasks`, `TaskChecklistItems`, `StatusReports`, `ProjectBenefitRealization` |
+| Taxonomy | `TagGroups`, `Tags`, `TagAliases`, `ProjectTags` |
+| Intake and governance | `IntakeForms`, `IntakeSubmissions`, `GovernanceSettings`, `GovernanceBoard`, `GovernanceMembership`, `GovernanceCriteriaVersion`, `GovernanceReview`, `GovernanceReviewParticipant`, `GovernanceVote`, `GovernanceSession`, `WorkflowSlaPolicy` |
+| Executive reporting automation | `ExecutiveReportPack`, `ExecutiveReportPackRun` |
+| Organizations and sharing | `Organizations`, `ProjectOrgAccess`, `GoalOrgAccess`, `OrgSharingRequest` |
+| Identity and access | `Users`, `RolePermissions`, `ProjectWatchers`, `AuditLog` |
+
+### 6.3 Migration and setup strategy
+
+- **Fresh install:** `setup-db:full` applies canonical schema + seeds permissions.
+- **Legacy upgrade:** `upgrade-db` runs ordered SQL migration manifest:
+  - governance phase0-3,
+  - multi-org and sharing v2,
+  - project-goals, watchlist, task-tracking,
+  - wave2 and wave3 migrations.
+
+This strategy is currently practical and explicit. Longer term, migration observability and rollback semantics should be strengthened.
+
+### 6.4 Data governance observations
+
+Strengths:
+
+- Relational integrity for core entities.
+- Governance and sharing auditability.
+- Expiry-aware org-sharing controls.
+
+Gaps to address:
+
+- Formal data retention policy by table (especially `AuditLog`, `StatusReports`, `ExecutiveReportPackRun`).
+- Data classification matrix for PII sensitivity boundaries.
+- Archival strategy for high-churn operational tables.
+
+---
+
+## 7. Security and Identity Architecture
+
+### 7.1 Authentication
+
+- JWT bearer tokens validated against Entra JWKS.
+- Tenant-specific enforcement (`AZURE_TENANT_ID` not `common`).
+- Audience and issuer validation are enforced.
+- First-login user auto-provisioning into `Users` table.
+
+### 7.2 Authorization
+
+- Permission-driven RBAC with seeded defaults and admin-managed overrides.
+- Current seeded business roles:
+  - `Viewer`
+  - `Editor`
+  - `IntakeManager`
+  - `IntakeSubmit`
+  - `ExecView`
+  - `GovernanceMember`
+  - `GovernanceChair`
+  - `GovernanceAdmin`
+- `Admin` role retains full-access behavior.
+
+### 7.3 API hardening controls
+
+- `helmet` security headers
+- `cors` origin controls
+- global and workflow-specific rate limiters
+- parameterized SQL (injection protection)
+- centralized error handling patterns
+
+### 7.4 Security findings
+
+- **Strength:** solid baseline for internal enterprise app posture.
+- **Gap:** no formalized centralized policy-as-code layer (for example, single effective permission service + machine-readable policy metadata).
+- **Gap:** secret rotation and managed identity posture not documented in this artifact.
+
+---
+
+## 8. API and Integration Architecture
+
+### 8.1 API style
+
+- Resource-driven REST with action endpoints where process semantics require them (for example governance start/vote/decide/session actions).
+- JSON request/response patterns with route-level authz.
+
+### 8.2 Integration boundaries
+
+- External identity integration: Entra ID only.
+- No external event bus or workflow engine currently in runtime.
+- Background automation is handled in-process (executive pack scheduler).
+
+### 8.3 API governance findings
+
+- Contract tests exist (`server/tests/contracts`) and are a strong baseline.
+- OpenAPI/Swagger contract publishing is not yet present.
+- Request/response schema validation appears primarily route-handled rather than centralized schema middleware.
+
+Recommendation: adopt OpenAPI + schema-first validation for critical workflow routes.
+
+---
+
+## 9. Deployment and Operations Architecture
+
+### 9.1 Current operating model
+
+- Frontend: Vite dev server in local environments.
+- API: Node.js Express process.
+- Database: SQL Server (local Docker in dev, production target typically managed SQL).
+- Scheduler: in-process timer started with API process.
+
+### 9.2 Target production reference architecture
 
 ```mermaid
 graph LR
-    subgraph "Presentation Tier"
-        SPA["Single-Page Application"]
-        SPA --> Contexts["React Context API<br/>DataContext · ThemeContext · ToastContext"]
-        Contexts --> Components["Component Modules<br/>Goals · Kanban · Metrics · Reports<br/>Dashboard · Intake · Admin"]
-    end
-
-    subgraph "Application Tier"
-        API["Express REST API"]
-        API --> Auth["Auth Middleware<br/>Passport JWT · RBAC"]
-        API --> Cache["In-Memory Cache<br/>60s TTL"]
-        API --> ErrorHandler["Centralized Error Handler"]
-    end
-
-    subgraph "Data Tier"
-        DB["SQL Server 2022<br/>12 Tables · Indexes · FK Constraints"]
-    end
-
-    SPA -->|"HTTPS REST"| API
-    API -->|"Connection Pool"| DB
+    FE["Static SPA Hosting + CDN"] --> API["API Service (2+ instances)"]
+    API --> SQL["Managed SQL Server/Azure SQL"]
+    API --> LOG["Centralized Logs + Metrics + Traces"]
+    JOB["Dedicated Job Runner"] --> SQL
 ```
 
-### Design Principles
+### 9.3 Operations findings
 
-| Principle | Implementation |
-|---|---|
-| **Separation of Concerns** | Frontend (React) ↔ API (Express) ↔ Data (SQL Server) with clear boundaries |
-| **Defense in Depth** | Authentication → Rate Limiting → Authorization → Input Validation → Parameterized Queries |
-| **Fail Closed** | Permission checks default to deny; errors during auth return 403/500 |
-| **Least Privilege** | 6 distinct app roles with granular, DB-configurable permissions |
-| **Convention over Configuration** | Consistent API patterns (`GET`, `POST`, `PUT`, `DELETE`) per resource domain |
-| **Progressive Enhancement** | Lazy loading of project details; cached aggregations for dashboards |
+Primary operational architecture risk is scheduler duplication in multi-instance API deployments. A dedicated single-runner architecture (queue/lock/job service) is recommended.
 
 ---
 
-## 5. Data Architecture
+## 10. Performance and Scalability
 
-### Entity-Relationship Diagram
+### Current strengths
 
-```mermaid
-erDiagram
-    Goals ||--o{ Goals : "parentId"
-    Goals ||--o{ KPIs : "goalId"
-    Goals ||--o{ Projects : "goalId"
-    Goals ||--o{ IntakeForms : "defaultGoalId"
-    Projects ||--o{ Tasks : "projectId"
-    Projects ||--o{ StatusReports : "projectId"
-    Projects ||--o{ ProjectTags : "projectId"
-    Tags ||--o{ ProjectTags : "tagId"
-    Tags ||--o{ TagAliases : "tagId"
-    TagGroups ||--o{ Tags : "groupId"
-    IntakeForms ||--o{ IntakeSubmissions : "formId"
-    IntakeSubmissions ||--o| Projects : "convertedProjectId"
+- Server-backed pagination for high-volume views (projects/governance queue).
+- Indexed relational schema for primary join/filter paths.
+- Selective in-memory caching.
+- Route-level filtering with scoped queries.
 
-    Goals {
-        INT id PK
-        NVARCHAR title
-        NVARCHAR type "org, div, dept, branch"
-        INT parentId FK
-        DATETIME2 createdAt
-    }
+### Scaling risks
 
-    KPIs {
-        INT id PK
-        INT goalId FK
-        NVARCHAR name
-        DECIMAL target
-        DECIMAL currentValue
-        NVARCHAR unit
-    }
+- In-memory cache does not scale horizontally.
+- Scheduler is process-local and not HA-safe by default.
+- Large report/export flows can become memory-intensive under concurrency.
 
-    Projects {
-        INT id PK
-        NVARCHAR title
-        NVARCHAR description
-        NVARCHAR status "active, on-hold, completed"
-        INT goalId FK
-        DATETIME2 createdAt
-    }
+### Recommended performance actions
 
-    Tasks {
-        INT id PK
-        INT projectId FK
-        NVARCHAR title
-        NVARCHAR status "todo, in-progress, review, done"
-        NVARCHAR priority "low, medium, high"
-        NVARCHAR description
-        DATE startDate
-        DATE endDate
-    }
+1. Introduce distributed cache if multi-instance scale is required.
+2. Add DB performance telemetry and slow-query reporting.
+3. Benchmark executive report generation and governance queue APIs with realistic data volumes.
 
-    StatusReports {
-        INT id PK
-        INT projectId FK
-        INT version
-        NVARCHAR reportData "JSON blob"
-        NVARCHAR createdBy
-        INT restoredFrom
-        DATETIME2 createdAt
-    }
+---
 
-    TagGroups {
-        INT id PK
-        NVARCHAR name
-        NVARCHAR slug UK
-        BIT requirePrimary
-        INT sortOrder
-    }
+## 11. Reliability and Quality Baseline
 
-    Tags {
-        INT id PK
-        INT groupId FK
-        NVARCHAR name
-        NVARCHAR slug
-        NVARCHAR status "active, deprecated, draft"
-        NVARCHAR color
-        INT sortOrder
-    }
+### Current baseline
 
-    ProjectTags {
-        INT projectId PK_FK
-        INT tagId PK_FK
-        BIT isPrimary
-    }
+- Frontend linting (`npm run lint`)
+- Backend contract tests (`npm run test:contracts`)
+- RBAC catalog checks (`npm run lint:rbac`)
 
-    TagAliases {
-        INT id PK
-        INT tagId FK
-        NVARCHAR alias
-    }
+### Gaps
 
-    IntakeForms {
-        INT id PK
-        NVARCHAR name
-        NVARCHAR description
-        NVARCHAR fields "JSON"
-        INT defaultGoalId FK
-    }
+- No comprehensive E2E smoke suite across critical business flows.
+- No formal SLOs/SLIs documented (availability, p95 latency, workflow completion time).
+- Limited documented incident response playbook.
 
-    IntakeSubmissions {
-        INT id PK
-        INT formId FK
-        NVARCHAR formData "JSON"
-        NVARCHAR status "pending, info-requested, approved, rejected"
-        NVARCHAR infoRequests "JSON"
-        INT convertedProjectId FK
-    }
+### Recommended quality actions
 
-    RolePermissions {
-        INT id PK
-        NVARCHAR role
-        NVARCHAR permission
-        BIT isAllowed
-    }
-```
+- Add E2E smoke tests for:
+  - intake submit -> governance vote -> decision -> conversion,
+  - sharing request lifecycle,
+  - executive pack create/run flows.
+- Define and publish SLOs for API and workflow processing.
 
-### Table Summary
+---
 
-| Table | Records (Expected) | Purpose |
+## 12. Holistic Findings and Recommendations
+
+### 12.1 Strengths
+
+| Area | Finding |
+|---|---|
+| Workflow architecture | Intake, governance, and execution are now connected end-to-end |
+| Data model | Canonical schema reflects wave2/wave3 capabilities and traceability needs |
+| Access model | Entra + DB RBAC with role normalization and seeded defaults is mature |
+| UX architecture | Staged workflow patterns and filter consistency improved usability |
+| Multi-org control | Sharing requests + expiry + attestation strengthen governance |
+
+### 12.2 Priority recommendations
+
+| Priority | Recommendation | Why it matters |
 |---|---|---|
-| `Goals` | 50 – 200 | Hierarchical strategic goals (org → div → dept → branch) |
-| `KPIs` | 100 – 500 | Key Performance Indicators linked to goals |
-| `Projects` | 50 – 300 | Tracked initiatives with status and goal alignment |
-| `Tasks` | 500 – 5,000 | Actionable work items with kanban-style workflow |
-| `StatusReports` | 200 – 2,000 | Versioned JSON status reports with audit trail |
-| `TagGroups` | 7 (seed) | Taxonomy facets (Domain, Capability, Work Type, etc.) |
-| `Tags` | 30+ (seed) | Taxonomy values with color coding and lifecycle status |
-| `ProjectTags` | 100 – 2,000 | Many-to-many project ↔ tag assignments |
-| `TagAliases` | 50+ | Synonym support for tag search |
-| `IntakeForms` | 5 – 20 | Configurable intake form definitions |
-| `IntakeSubmissions` | 50 – 500 | Submitted intake requests with workflow status |
-| `RolePermissions` | 50 – 100 | Dynamic RBAC permission assignments |
-
-### Indexing Strategy
-
-```sql
--- Foreign key and query-optimized indexes
-IX_Goals_ParentId       ON Goals(parentId)
-IX_KPIs_GoalId          ON KPIs(goalId)
-IX_Projects_GoalId      ON Projects(goalId)
-IX_Tasks_ProjectId      ON Tasks(projectId)
-IX_Tasks_Status         ON Tasks(status)
-IX_StatusReports_ProjectId ON StatusReports(projectId)
-IX_IntakeSubmissions_FormId ON IntakeSubmissions(formId)
-IX_IntakeSubmissions_Status ON IntakeSubmissions(status)
-IX_Tags_GroupId         ON Tags(groupId)
-IX_Tags_Status          ON Tags(status)
-IX_ProjectTags_TagId    ON ProjectTags(tagId)
-IX_TagAliases_TagId     ON TagAliases(tagId)
-```
+| P1 | Externalize scheduler coordination (single-run guarantee) | Prevent duplicate executive pack runs in scaled API deployments |
+| P1 | Publish OpenAPI contracts + schema validation middleware | Reduce drift, improve integration confidence, support contract governance |
+| P1 | Add centralized observability (structured logs, trace IDs, metrics dashboards) | Required for production troubleshooting and ARB auditability |
+| P1 | Add E2E smoke automation for core cross-domain flows | Protect release quality across intake-governance-project lifecycle |
+| P2 | Define data retention/classification policies by table | Required for compliance, storage management, and legal defensibility |
+| P2 | Formalize effective-permission API contract | Further reduce UI/API authorization drift risk |
+| P3 | Evaluate event-driven integration for notifications and downstream consumers | Improves extensibility as ecosystem integration needs grow |
 
 ---
 
-## 6. Security Architecture
+## 13. Roadmap Alignment and Next Architecture Steps
 
-### Authentication Flow
+### Implemented capability waves (current state)
 
-```mermaid
-sequenceDiagram
-    participant User as User (Browser)
-    participant SPA as React SPA
-    participant Entra as Microsoft Entra ID
-    participant API as Express API
-    participant DB as SQL Server
+- **Wave 1:** My Work Hub, intake-to-execution blueprint, permission convergence improvements, URL/state routing, baseline contract testing.
+- **Wave 2:** SLA aging policy, governance session mode, executive pack automation, sharing request workflow with expiry.
+- **Wave 3:** Capacity-aware governance inputs, intake effort estimates, benefits realization loop, executive pack org scoping, predictive risk surfaces.
 
-    User->>SPA: Navigate to app
-    SPA->>Entra: MSAL loginRedirect()
-    Entra->>User: Azure AD Login Page
-    User->>Entra: Credentials (MFA)
-    Entra->>SPA: ID Token + Access Token (JWT, RS256)
-    SPA->>API: API Request + Bearer Token
-    API->>Entra: Validate JWT via JWKS endpoint
-    Entra-->>API: Public Keys
-    API->>API: Verify signature, issuer, audience, tenant
-    API->>DB: Execute authorized query
-    DB-->>API: Result
-    API-->>SPA: JSON Response
-```
+### Recommended next architecture wave
 
-### Authentication Details
-
-| Aspect | Implementation |
-|---|---|
-| **Protocol** | OAuth 2.0 / OpenID Connect |
-| **Identity Provider** | Microsoft Entra ID (Azure AD) |
-| **Token Type** | JWT (RS256 signed) |
-| **Token Validation** | JWKS-based key rotation via `jwks-rsa` library |
-| **Tenant Lock** | Application is locked to a specific Azure AD tenant (not `common`) |
-| **Audience Validation** | Accepts both `clientId` and `api://<clientId>` |
-| **Issuer Validation** | v1.0 and v2.0 Azure AD issuers accepted |
-| **Client Library** | `@azure/msal-browser` v5 with redirect flow |
-| **Rate Limiting on Auth** | Applied before authentication to prevent brute-force attacks |
-
-### Authorization Model
-
-#### Azure AD App Roles
-
-| Role | Value | Description |
-|---|---|---|
-| Administrator | `Admin` | Full access to all features, bypasses permission checks |
-| Editor | `Editor` | Create/edit projects, tasks, goals, reports |
-| Viewer | `Viewer` | Read-only access to dashboards and reports |
-| Intake Manager | `IntakeManager` | Manage intake form submissions (approve/reject/request info) |
-| Executive View | `ExecView` | Access to executive summary dashboard |
-| Intake Submitter | `IntakeSubmit` | Submit new intake requests |
-
-#### Granular Permission System
-
-Beyond app roles, the system uses a **database-driven permission matrix** (`RolePermissions` table) for fine-grained control:
-
-| Permission Key | Scope |
-|---|---|
-| `can_create_goal` | Create strategic goals |
-| `can_edit_goal` | Modify existing goals |
-| `can_delete_goal` | Remove goals |
-| `can_view_projects` | View project portfolio |
-| `can_create_project` | Create new projects |
-| `can_edit_project` | Modify project details |
-| `can_delete_project` | Remove projects |
-| `can_manage_kpis` | Create/edit/delete KPIs |
-| `can_manage_tags` | Administer taxonomy (Admin only) |
-| `can_manage_intake_forms` | Create/modify intake forms |
-| `can_view_exec_dashboard` | Access executive summary |
-
-**Security Properties:**
-
-- **Admin Bypass:** Users with the `Admin` role automatically pass all permission checks
-- **Fail Closed:** If permission check encounters an error, access is denied (HTTP 500)
-- **Cache-Accelerated:** Permissions are cached in-memory for 60 seconds to reduce DB load
-- **Cache Invalidation:** Cache is explicitly invalidated when permissions are updated via the Admin panel
-
-### HTTP Security Headers (Helmet)
-
-| Header/Policy | Configuration |
-|---|---|
-| `Content-Security-Policy` | Restricts script/connect/style/font sources to trusted domains |
-| `X-Content-Type-Options` | `nosniff` |
-| `X-Frame-Options` | `DENY` |
-| `Strict-Transport-Security` | Enabled (HSTS) |
-| `Cross-Origin-Resource-Policy` | `cross-origin` |
-| `X-XSS-Protection` | Enabled |
-
-### SQL Injection Prevention
-
-All database queries use **parameterized queries** via the `mssql` library's `request.input()` API. No string concatenation of user input into SQL.
-
-```javascript
-// Example: Parameterized query pattern
-const pool = await getPool();
-await pool.request()
-    .input('id', sql.Int, parseInt(req.params.id))
-    .input('title', sql.NVarChar, req.body.title)
-    .query('UPDATE Projects SET title = @title WHERE id = @id');
-```
-
----
-
-## 7. API Design
-
-### API Resource Domains
-
-The REST API is organized into 8 resource domains with consistent CRUD patterns:
-
-| Domain | Base Path | Endpoints | Auth Required |
-|---|---|---|---|
-| **Goals** | `/api/goals` | GET, POST, PUT, DELETE | ✅ (Permission-based) |
-| **KPIs** | `/api/kpis` | POST, PUT, DELETE | ✅ (`can_manage_kpis`) |
-| **Tags** | `/api/tags` | GET | ✅ (View permission) |
-| **Tag Admin** | `/api/admin/tag-groups`, `/api/admin/tags` | CRUD | ✅ (`can_manage_tags`) |
-| **Projects** | `/api/projects` | GET, POST, PUT, DELETE | ✅ (Permission-based) |
-| **Tasks** | `/api/projects/:id/tasks` | POST, PUT, DELETE | ✅ (Permission-based) |
-| **Status Reports** | `/api/projects/:id/reports` | GET, POST | ✅ (varies) |
-| **Intake** | `/api/intake-forms`, `/api/intake-submissions` | CRUD | ✅ (Role-based) |
-| **Permissions** | `/api/admin/permissions` | GET, PUT | ✅ (`Admin` role) |
-
-### Request/Response Format
-
-- **Content-Type:** `application/json`
-- **Authentication:** `Authorization: Bearer <JWT>`
-- **Error Responses:** `{ "error": "<message>" }` with appropriate HTTP status codes
-- **Success Responses:** Resource object or `{ "success": true }`
-
-### Middleware Pipeline
-
-```mermaid
-graph LR
-    A["Incoming Request"] --> B["Helmet<br/>(Security Headers)"]
-    B --> C["CORS Validation"]
-    C --> D["Compression"]
-    D --> E["JSON Body Parser"]
-    E --> F["Request Logger"]
-    F --> G["Rate Limiter<br/>(5000/15min dev, 100/15min prod)"]
-    G --> H["JWT Authentication<br/>(Passport)"]
-    H --> I["Permission Check<br/>(RBAC Middleware)"]
-    I --> J["Route Handler"]
-    J --> K["Error Handler"]
-```
-
----
-
-## 8. Frontend Architecture
-
-### Component Module Structure
-
-```
-src/
-├── App.jsx                    # Root: Auth gating (Authenticated/Unauthenticated templates)
-├── components/
-│   ├── AppContent.jsx         # Navigation, view switching, filter state management
-│   ├── Auth/                  # LoginPage
-│   ├── Layout/                # Sidebar navigation, theme toggle
-│   ├── Dashboard/             # Executive summary with filterable status table
-│   ├── Goals/                 # Hierarchical goal tree with CRUD, KPI indicators
-│   ├── Kanban/                # Project grid → Kanban board → Task detail
-│   │   ├── KanbanView.jsx     # Project card grid with filtering
-│   │   ├── KanbanBoard.jsx    # Task board (Kanban / Table / Gantt / Calendar views)
-│   │   ├── TaskTableView.jsx  # Tabular task list
-│   │   ├── GanttView.jsx      # Timeline visualization
-│   │   ├── CalendarView.jsx   # Calendar task view
-│   │   └── TaskDetailPanel.jsx# Side-panel task editor
-│   ├── Metrics/               # KPI dashboard with goal filtering
-│   ├── Reports/               # Multi-project report builder with PDF export
-│   ├── StatusReport/          # Per-project status report editor and viewer
-│   ├── Intake/                # Intake form builder, submission list, review workflow
-│   ├── Admin/                 # RBAC permission management panel
-│   └── UI/                    # Shared components (Modal, CascadingGoalFilter, ProjectTagSelector, Toast)
-├── context/
-│   ├── DataContext.jsx        # Central data store: API integration, computed state, CRUD operations
-│   ├── ThemeContext.jsx       # Dark/light theme management
-│   └── ToastContext.jsx       # Notification system
-└── hooks/
-    └── useAuth.js             # Authentication state and role-checking utilities
-```
-
-### State Management
-
-The application uses **React Context API** for global state (no external state library):
-
-| Context | Responsibilities |
-|---|---|
-| `DataContext` | All domain data (goals, projects, tasks, tags, metrics), API calls, computed values (project completion, goal progress) |
-| `ThemeContext` | Dark/light mode toggle with localStorage persistence |
-| `ToastContext` | Transient notification messages |
-
-### Navigation Architecture
-
-- **Single-page navigation** managed by `AppContent.jsx` using `currentView` state
-- **View persistence** via `localStorage` (survives page reload)
-- **Cross-module navigation** for contextual workflows (e.g., Goal KPI indicator → Metrics page with filter pre-applied)
-- **Lazy loading** of project details (initial list → on-demand task/report fetch)
-
----
-
-## 9. Deployment Architecture
-
-### Current Environment
-
-```mermaid
-graph TB
-    subgraph "Client"
-        B["Web Browser<br/>Chrome / Edge / Firefox"]
-    end
-
-    subgraph "Application Server"
-        V["Vite Dev Server<br/>(HTTPS, port 5173)"]
-        N["Node.js Express API<br/>(port 3001)"]
-    end
-
-    subgraph "Database Server"
-        S["SQL Server 2022"]
-    end
-
-    subgraph "Identity"
-        AD["Microsoft Entra ID"]
-    end
-
-    B -->|HTTPS| V
-    B -->|HTTPS REST| N
-    B -->|OAuth 2.0| AD
-    N -->|TCP 1433| S
-    N -->|JWKS| AD
-```
-
-### Production Deployment Recommendations
-
-| Component | Recommended Platform | Notes |
-|---|---|---|
-| **Frontend SPA** | Azure Static Web Apps or Azure Blob Storage + CDN | Vite production build (`vite build`) → static assets |
-| **API Server** | Azure App Service (Node.js) or Azure Container Apps | Express process with PM2 or Docker container |
-| **Database** | Azure SQL Database (Managed) | Elastic pool for cost optimization; geo-replication for DR |
-| **Identity** | Microsoft Entra ID | Already configured; no changes needed |
-| **TLS** | Azure-managed certificates | End-to-end HTTPS |
-| **CI/CD** | Azure DevOps or GitHub Actions | Build, test, deploy pipeline |
-
-### Environment Configuration
-
-| Variable | Scope | Purpose |
-|---|---|---|
-| `AZURE_TENANT_ID` | Server | Azure AD tenant (must be specific, not `common`) |
-| `AZURE_CLIENT_ID` | Server + Client | App registration client ID |
-| `DB_USER` | Server | SQL Server username |
-| `DB_PASSWORD` | Server | SQL Server password |
-| `DB_SERVER` | Server | Database hostname |
-| `DB_NAME` | Server | Database name (default: `ProjectKanban`) |
-| `NODE_ENV` | Server | `production` or `development` |
-| `CORS_ORIGIN` | Server | Allowed frontend origin (production URL) |
-
----
-
-## 10. Performance & Scalability
-
-### Current Optimizations
-
-| Optimization | Implementation |
-|---|---|
-| **Response Compression** | gzip via `compression` middleware |
-| **In-Memory Cache** | `node-cache` with 60-second TTL for tags, tag groups, and project lists |
-| **Connection Pooling** | `mssql` pool (max 10 connections, 30s idle timeout) |
-| **Database Indexes** | 12 indexes covering all FK columns and common filter/sort columns |
-| **Lazy Loading** | Project list loads summaries; full task details fetched on-demand |
-| **Client-Side Memoization** | React `useMemo` for computed values (goal progress, filtered views, tree pruning) |
-| **Selective Cache Invalidation** | Tag and project caches invalidated only on write operations |
-
-### Scalability Considerations
-
-| Dimension | Current Capacity | Scaling Path |
-|---|---|---|
-| **Concurrent Users** | 50 – 100 | Horizontal: multiple API instances behind load balancer |
-| **Database Size** | < 1 GB | Azure SQL Elastic Pool; read replicas for reporting |
-| **API Throughput** | 100 req/15min (prod rate limit) | Adjust rate limits; add Redis for distributed caching |
-| **Static Assets** | Served via Vite/Node | CDN (Azure Front Door / CloudFlare) |
-
----
-
-## 11. Compliance & Standards
-
-### Healthcare Considerations
-
-| Area | Status | Notes |
-|---|---|---|
-| **PHI/PII** | ⚠️ Not designed for PHI storage | Application manages project metadata, not clinical data |
-| **Access Control** | ✅ RBAC via Azure AD | Tenant-locked, role-based, permission-configurable |
-| **Audit Trail** | ✅ Status report versioning | `createdBy` and `createdAt` on reports; `restoredFrom` for version tracking |
-| **Data Encryption at Rest** | Depends on hosting | SQL Server TDE; Azure SQL auto-encrypts |
-| **Data Encryption in Transit** | ✅ HTTPS/TLS | Enforced by Helmet HSTS and Vite SSL plugin |
-| **Session Management** | ✅ Token-based | No server-side sessions; JWT with Azure AD-managed expiry |
-
-### Code Quality
-
-| Practice | Implementation |
-|---|---|
-| **Linting** | ESLint with React Hooks and Refresh plugins |
-| **Error Handling** | Centralized `handleError()` with environment-aware detail exposure |
-| **Input Validation** | Server-side validation on all write endpoints (required fields, type checks) |
-| **SQL Safety** | 100% parameterized queries; no dynamic SQL concatenation |
-
----
-
-## 12. Risk Assessment
-
-| Risk | Severity | Likelihood | Mitigation |
-|---|---|---|---|
-| **Single API server instance** | Medium | Medium | Deploy behind load balancer with health checks; container orchestration |
-| **In-memory cache not distributed** | Low | Medium | Migrate to Redis for multi-instance deployments |
-| **Rate limit may be too restrictive in production** | Low | Medium | Monitor 429 responses; tune per-endpoint limits |
-| **No automated test suite** | Medium | High | Implement integration and E2E tests before production |
-| **`StatusReports.reportData` as JSON blob** | Low | Low | Consider structured columns if reporting queries become complex |
-| **Connection pool size (max 10)** | Medium | Low | Increase pool size and monitor connection wait times under load |
-| **No database migration framework** | Low | Medium | Adopt a migration tool (e.g., Knex, Flyway) for schema versioning |
-
----
-
-## 13. Future Roadmap
-
-| Feature | Priority | Complexity | Notes |
-|---|---|---|---|
-| **Automated Testing** | High | Medium | Unit, integration, and E2E tests (Vitest + Playwright) |
-| **CI/CD Pipeline** | High | Medium | GitHub Actions or Azure DevOps for automated build/deploy |
-| **Redis Cache Layer** | Medium | Low | Replace `node-cache` for distributed deployments |
-| **Email Notifications** | Medium | Medium | Status report reminders, intake submission updates |
-| **Activity Audit Log** | Medium | Medium | Track all CRUD operations with user, timestamp, and diff |
-| **Dashboard Analytics** | Low | High | Trend charts, velocity metrics, portfolio health scoring |
-| **Mobile Responsive** | Low | Medium | Optimize layout for tablet/mobile viewports |
+1. Production observability platform and SLOs.
+2. Scheduler and background processing architecture hardening.
+3. API governance modernization (OpenAPI + validation + versioning policy).
+4. Data lifecycle governance (retention, archival, data classification).
 
 ---
 
 ## 14. Appendix
 
-### A. Database Schema Script
+### A. Key scripts and operational commands
 
-Full schema available at: `server/schema.sql`  
-Tag system migration: `server/migrate_tags.sql`
+```bash
+# Fresh setup
+cd server
+npm run setup-db:full
 
-### B. Seed Data
+# Upgrade existing database
+npm run upgrade-db
 
-The tagging taxonomy is pre-seeded with 7 facet groups and 30+ tags covering:
+# Contract tests
+npm run test:contracts
 
-- Domain / Program (Virtual Care, Pharmacy, Lab, Privacy, Access & Navigation)
-- Capability / Platform (EHR, Integration, Identity, Data Platform, Network, ServiceNow)
-- Work Type (Implementation, Optimization, Replacement, Decommission, Policy)
-- Outcome / Benefit Theme (Patient Experience, Safety, Workforce, Cost Avoidance, Equity, Compliance)
-- Delivery / Change (Training, Workflow, Adoption, Clinical Engagement)
-- Risk / Constraint (Security, Privacy, Vendor Risk, Technical Debt, Regulatory)
-- Geography / Site (Province-wide, Regina, Rural/Remote, Facility Group)
+# RBAC catalog consistency
+npm run lint:rbac
+```
 
-### C. Dependency Inventory
+### B. Reviewed key artifacts
 
-#### Frontend (`package.json`)
-
-| Package | Version | License | Purpose |
-|---|---|---|---|
-| react | 19.2 | MIT | UI framework |
-| react-dom | 19.2 | MIT | DOM rendering |
-| @azure/msal-browser | 5.1 | MIT | Azure AD auth |
-| @azure/msal-react | 5.0 | MIT | React auth hooks |
-| lucide-react | 0.563 | ISC | Icons |
-| html2pdf.js | 0.14 | MIT | PDF export |
-
-#### Backend (`server/package.json`)
-
-| Package | Version | License | Purpose |
-|---|---|---|---|
-| express | 4.18 | MIT | HTTP framework |
-| mssql | 10.0 | MIT | SQL Server driver |
-| passport | 0.7 | MIT | Auth framework |
-| passport-jwt | 4.0 | MIT | JWT strategy |
-| jwks-rsa | 3.2 | MIT | JWKS key provider |
-| helmet | 8.1 | MIT | Security headers |
-| cors | 2.8 | MIT | CORS middleware |
-| express-rate-limit | 8.2 | MIT | Rate limiting |
-| compression | 1.8 | MIT | gzip compression |
-| node-cache | 5.1 | MIT | In-memory cache |
-| dotenv | 17.2 | BSD-2 | Environment variables |
+- `server/index.js`
+- `server/routes/*.js`
+- `server/utils/rbacCatalog.js`
+- `server/scripts/schema.sql`
+- `server/scripts/migration_manifest.js`
+- `server/scripts/migrate_wave2.sql`
+- `server/scripts/migrate_wave3.sql`
+- `src/components/*`
+- `src/context/DataContext.jsx`
 
 ---
 
-*End of Architecture Review Board Document*
+*End of ARB Architecture Review (Current State, March 2026)*

@@ -190,8 +190,10 @@ async function seedPerformanceData() {
                         summary: faker.lorem.paragraph(),
                         overallStatus: faker.helpers.arrayElement(['green', 'yellow', 'red']),
                         reportDate: faker.date.recent(),
-                        purpose: faker.lorem.sentence(),
+                        purpose: faker.lorem.paragraph(),
                         executiveSummary: faker.lorem.paragraph(),
+                        goodNews: faker.lorem.paragraph(),
+                        kpis: faker.lorem.paragraph(),
 
                         risks: Array.from({ length: faker.number.int({ min: 2, max: 4 }) }, () => ({
                             description: faker.lorem.sentence(),

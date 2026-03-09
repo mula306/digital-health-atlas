@@ -213,20 +213,41 @@ async function seedFakerData() {
                 const reportData = JSON.stringify({
                     summary: faker.lorem.paragraph(),
                     overallStatus: faker.helpers.arrayElement(['green', 'yellow', 'red']),
-                    risks: Array.from({ length: faker.number.int({ min: 1, max: 3 }) }, () => ({
+                    purpose: faker.lorem.paragraph(),
+                    executiveSummary: faker.lorem.paragraph(),
+                    goodNews: faker.lorem.paragraph(),
+                    kpis: faker.lorem.paragraph(),
+                    contacts: Array.from({ length: faker.number.int({ min: 4, max: 6 }) }, () => ({
+                        id: faker.string.uuid(),
+                        name: faker.person.fullName(),
+                        organization: faker.company.name()
+                    })),
+                    workstreams: Array.from({ length: faker.number.int({ min: 4, max: 6 }) }, () => ({
+                        id: faker.string.uuid(),
+                        name: faker.company.catchPhrase(),
+                        progressLastPeriod: faker.lorem.sentence(),
+                        workAhead: faker.lorem.sentence(),
+                        barriers: faker.lorem.sentence(),
+                        status: faker.helpers.arrayElement(['green', 'yellow', 'red'])
+                    })),
+                    risks: Array.from({ length: faker.number.int({ min: 4, max: 6 }) }, () => ({
+                        id: faker.string.uuid(),
                         description: faker.lorem.sentence(),
                         impact: faker.lorem.sentence(),
                         priority: faker.helpers.arrayElement(['low', 'medium', 'high']),
                         mitigation: faker.lorem.sentence(),
                         status: faker.helpers.arrayElement(['open', 'closed']),
-                        closedDate: faker.date.recent()
+                        closedDate: faker.date.recent(),
+                        closedRationale: faker.lorem.sentence()
                     })),
-                    milestones: Array.from({ length: faker.number.int({ min: 1, max: 4 }) }, () => ({
+                    milestones: Array.from({ length: faker.number.int({ min: 4, max: 6 }) }, () => ({
+                        id: faker.string.uuid(),
                         name: faker.company.buzzPhrase(),
                         date: faker.date.future(),
                         status: faker.helpers.arrayElement(['pending', 'in-progress', 'complete'])
                     })),
-                    decisions: Array.from({ length: faker.number.int({ min: 1, max: 3 }) }, () => ({
+                    decisions: Array.from({ length: faker.number.int({ min: 4, max: 6 }) }, () => ({
+                        id: faker.string.uuid(),
                         description: faker.lorem.sentence(),
                         priority: faker.helpers.arrayElement(['low', 'medium', 'high']),
                         status: faker.helpers.arrayElement(['pending', 'approved', 'rejected']),
