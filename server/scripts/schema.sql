@@ -216,6 +216,9 @@ CREATE TABLE IntakeSubmissions (
     infoRequests NVARCHAR(MAX) NULL,  -- JSON array
     convertedProjectId INT NULL,
     submittedAt DATETIME2 DEFAULT GETDATE(),
+    submitterId NVARCHAR(100) NULL,
+    submitterName NVARCHAR(255) NULL,
+    submitterEmail NVARCHAR(255) NULL,
     CONSTRAINT FK_IntakeSubmissions_Form FOREIGN KEY (formId) REFERENCES IntakeForms(id) ON DELETE CASCADE,
     CONSTRAINT FK_IntakeSubmissions_Project FOREIGN KEY (convertedProjectId) REFERENCES Projects(id) ON DELETE SET NULL
 );
@@ -237,6 +240,27 @@ BEGIN
     ALTER TABLE IntakeSubmissions
     ADD CONSTRAINT CK_IntakeSubmissions_EstimatedEffortHours
     CHECK (estimatedEffortHours IS NULL OR estimatedEffortHours > 0);
+END
+GO
+
+IF COL_LENGTH('IntakeSubmissions', 'submitterId') IS NULL
+BEGIN
+    ALTER TABLE IntakeSubmissions
+    ADD submitterId NVARCHAR(100) NULL;
+END
+GO
+
+IF COL_LENGTH('IntakeSubmissions', 'submitterName') IS NULL
+BEGIN
+    ALTER TABLE IntakeSubmissions
+    ADD submitterName NVARCHAR(255) NULL;
+END
+GO
+
+IF COL_LENGTH('IntakeSubmissions', 'submitterEmail') IS NULL
+BEGIN
+    ALTER TABLE IntakeSubmissions
+    ADD submitterEmail NVARCHAR(255) NULL;
 END
 GO
 
