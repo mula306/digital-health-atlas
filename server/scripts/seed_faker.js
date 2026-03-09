@@ -109,8 +109,44 @@ const ensureGoals = async (pool, orgId, goalsHaveOrgId) => {
     await insertGoal({ title: 'EHR Optimization', type: 'dept', parentId: div2 });
     await insertGoal({ title: 'Data and Reporting', type: 'dept', parentId: div2 });
 
-    const seededGoals = await pool.request().query('SELECT id FROM Goals');
-    return seededGoals.recordset.map((row) => row.id);
+    const seededGoalsResult = await pool.request().query('SELECT id FROM Goals');
+    const seededGoalIds = seededGoalsResult.recordset.map((row) => row.id);
+
+    // Create KPIs for existing goals
+    console.log('Seeding KPIs for goals...');
+    for (const goalId of seededGoalIds) {
+        const kpiCountResult = await pool.request()
+            .input('goalId', sql.Int, goalId)
+            .query('SELECT COUNT(*) as count FROM KPIs WHERE goalId = @goalId');
+
+        const currentCount = kpiCountResult.recordset[0].count;
+        const targetCount = faker.number.int({ min: 3, max: 5 });
+
+        if (currentCount < targetCount) {
+            const needed = targetCount - currentCount;
+            const table = new sql.Table('KPIs');
+            table.create = false;
+            table.columns.add('goalId', sql.Int, { nullable: false });
+            table.columns.add('name', sql.NVarChar(255), { nullable: false });
+            table.columns.add('target', sql.Decimal(18, 2), { nullable: true });
+            table.columns.add('currentValue', sql.Decimal(18, 2), { nullable: true });
+            table.columns.add('unit', sql.NVarChar(20), { nullable: true });
+
+            for (let i = 0; i < needed; i++) {
+                table.rows.add(
+                    goalId,
+                    faker.company.buzzPhrase(),
+                    faker.number.float({ min: 80, max: 100, precision: 0.1 }),
+                    faker.number.float({ min: 50, max: 95, precision: 0.1 }),
+                    '%'
+                );
+            }
+            const request = new sql.Request(pool);
+            await request.bulk(table);
+        }
+    }
+
+    return seededGoalIds;
 };
 
 const maybeSeedProjectGoals = async (pool, hasProjectGoals, projectId, goalId) => {
@@ -169,6 +205,37 @@ async function seedFakerData() {
             const projectId = projectResult.recordset[0].id;
             createdProjectIds.push(projectId);
             await maybeSeedProjectGoals(pool, hasProjectGoals, projectId, goalId);
+
+            // Fetch PDEs (KPIs) for this project's Goal
+            const kpisResult = await pool.request()
+                .input('goalId', sql.Int, goalId)
+                .query('SELECT id, name FROM KPIs WHERE goalId = @goalId');
+
+            const availableKpis = kpisResult.recordset;
+            if (availableKpis.length > 0) {
+                // Determine how many benefits to seed (e.g. 1 to 3, but not more than available KPIs)
+                const benefitCount = Math.min(
+                    faker.number.int({ min: 1, max: 3 }),
+                    availableKpis.length
+                );
+                const selectedKpis = faker.helpers.arrayElements(availableKpis, benefitCount);
+
+                for (const kpi of selectedKpis) {
+                    await pool.request()
+                        .input('projectId', sql.Int, projectId)
+                        .input('title', sql.NVarChar(255), kpi.name)
+                        .input('linkedKpiId', sql.Int, kpi.id)
+                        .input('baselineValue', sql.Decimal(18, 2), faker.number.float({ min: 10, max: 50, precision: 0.1 }))
+                        .input('targetValue', sql.Decimal(18, 2), faker.number.float({ min: 80, max: 100, precision: 0.1 }))
+                        .input('currentValue', sql.Decimal(18, 2), faker.number.float({ min: 50, max: 95, precision: 0.1 }))
+                        .input('unit', sql.NVarChar(50), '%')
+                        .input('status', sql.NVarChar(50), faker.helpers.arrayElement(['planned', 'in-progress', 'realized', 'at-risk', 'not-realized']))
+                        .query(`
+                            INSERT INTO ProjectBenefitRealization (projectId, title, linkedKpiId, baselineValue, targetValue, currentValue, unit, status)
+                            VALUES (@projectId, @title, @linkedKpiId, @baselineValue, @targetValue, @currentValue, @unit, @status)
+                        `);
+                }
+            }
         }
         console.log(`Created projects: ${createdProjectIds.length}`);
 
