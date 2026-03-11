@@ -82,6 +82,9 @@ export function GovernanceConfig({ initialTab = null, onTabChange = null }) {
     const [selectedBoardDefaultSubmissionEffortHours, setSelectedBoardDefaultSubmissionEffortHours] = useState('40');
     const [newBoardName, setNewBoardName] = useState('');
     const [newBoardActive, setNewBoardActive] = useState(true);
+    const [newBoardWeeklyCapacityHours, setNewBoardWeeklyCapacityHours] = useState('');
+    const [newBoardWipLimit, setNewBoardWipLimit] = useState('');
+    const [newBoardDefaultSubmissionEffortHours, setNewBoardDefaultSubmissionEffortHours] = useState('40');
     const [boardSearch, setBoardSearch] = useState('');
     const [boardCriteriaMeta, setBoardCriteriaMeta] = useState({});
 
@@ -585,6 +588,23 @@ export function GovernanceConfig({ initialTab = null, onTabChange = null }) {
             toast.error('Board name is required');
             return;
         }
+        const parsedWeeklyCapacity = newBoardWeeklyCapacityHours === '' ? null : Number(newBoardWeeklyCapacityHours);
+        const parsedWipLimit = newBoardWipLimit === '' ? null : Number(newBoardWipLimit);
+        const parsedDefaultEffort = Number(newBoardDefaultSubmissionEffortHours);
+        if (boardCapacityReady) {
+            if (parsedWeeklyCapacity !== null && (!Number.isFinite(parsedWeeklyCapacity) || parsedWeeklyCapacity <= 0)) {
+                toast.error('Weekly capacity hours must be empty or a number greater than 0');
+                return;
+            }
+            if (parsedWipLimit !== null && (!Number.isFinite(parsedWipLimit) || parsedWipLimit < 1)) {
+                toast.error('WIP limit must be empty or an integer greater than or equal to 1');
+                return;
+            }
+            if (!Number.isFinite(parsedDefaultEffort) || parsedDefaultEffort <= 0) {
+                toast.error('Default submission effort must be greater than 0');
+                return;
+            }
+        }
         try {
             setBoardSaving(true);
             const createPayload = {
@@ -593,9 +613,9 @@ export function GovernanceConfig({ initialTab = null, onTabChange = null }) {
             };
             if (boardCapacityReady) {
                 createPayload.boardCapacity = {
-                    weeklyCapacityHours: null,
-                    wipLimit: null,
-                    defaultSubmissionEffortHours: 40
+                    weeklyCapacityHours: parsedWeeklyCapacity,
+                    wipLimit: parsedWipLimit === null ? null : Math.trunc(parsedWipLimit),
+                    defaultSubmissionEffortHours: parsedDefaultEffort
                 };
             }
             const created = await createGovernanceBoard(createPayload);
@@ -605,6 +625,9 @@ export function GovernanceConfig({ initialTab = null, onTabChange = null }) {
             setSelectedBoardId(created.id);
             setNewBoardName('');
             setNewBoardActive(true);
+            setNewBoardWeeklyCapacityHours('');
+            setNewBoardWipLimit('');
+            setNewBoardDefaultSubmissionEffortHours('40');
             setBoardDirty(false);
             toast.success('Governance board created');
         } catch (err) {
@@ -1109,6 +1132,57 @@ export function GovernanceConfig({ initialTab = null, onTabChange = null }) {
                                         <Plus size={14} /> Create Board
                                     </button>
                                 </div>
+                                <div className="governance-grid" style={{ marginTop: '0.75rem' }}>
+                                    <div className="form-group">
+                                        <label>Weekly Capacity (hours, optional)</label>
+                                        <input
+                                            type="number"
+                                            min="1"
+                                            value={newBoardWeeklyCapacityHours}
+                                            onChange={(e) => {
+                                                setNewBoardWeeklyCapacityHours(e.target.value);
+                                                setBoardDirty(true);
+                                            }}
+                                            placeholder="No hard cap"
+                                            disabled={!boardCapacityReady}
+                                        />
+                                    </div>
+                                    <div className="form-group">
+                                        <label>WIP Limit (optional)</label>
+                                        <input
+                                            type="number"
+                                            min="1"
+                                            value={newBoardWipLimit}
+                                            onChange={(e) => {
+                                                setNewBoardWipLimit(e.target.value);
+                                                setBoardDirty(true);
+                                            }}
+                                            placeholder="No hard limit"
+                                            disabled={!boardCapacityReady}
+                                        />
+                                    </div>
+                                    <div className="form-group">
+                                        <label>Default Submission Effort (hours)</label>
+                                        <input
+                                            type="number"
+                                            min="1"
+                                            value={newBoardDefaultSubmissionEffortHours}
+                                            onChange={(e) => {
+                                                setNewBoardDefaultSubmissionEffortHours(e.target.value);
+                                                setBoardDirty(true);
+                                            }}
+                                            disabled={!boardCapacityReady}
+                                        />
+                                    </div>
+                                </div>
+                                <p className="governance-muted">
+                                    Capacity settings are optional at creation time, but surfacing them here avoids save-time validation surprises.
+                                </p>
+                                {!boardCapacityReady && (
+                                    <p className="governance-alert">
+                                        Capacity fields are unavailable until the canonical schema is applied (`npm run setup-db:full`) in `server`.
+                                    </p>
+                                )}
                             </div>
 
                             <div className="governance-board-list">
