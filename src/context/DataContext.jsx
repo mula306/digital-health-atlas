@@ -32,10 +32,14 @@ export function DataProvider({ children }) {
     const [loading, setLoading] = useState(true);
     const [loadingMore, setLoadingMore] = useState(false);
     const [error, setError] = useState(null);
+    const isTestAuthMock = String(import.meta.env.VITE_TEST_AUTH_MODE || '').toLowerCase() === 'mock';
 
 
     // Helper: Authenticated fetch wrapper using centralized client
     const authFetch = useCallback(async (url, options = {}) => {
+        if (isTestAuthMock) {
+            return fetchWithAuth(url, null, options);
+        }
         let token = null;
         try {
             const account = instance.getActiveAccount();
@@ -69,7 +73,7 @@ export function DataProvider({ children }) {
         }
 
         return fetchWithAuth(url, token, options);
-    }, [instance]);
+    }, [instance, isTestAuthMock]);
 
     const getApiErrorMessage = useCallback(async (response, fallbackMessage) => {
         const fallback = fallbackMessage || `Request failed (HTTP ${response?.status || 'unknown'})`;
@@ -214,7 +218,7 @@ export function DataProvider({ children }) {
                 }
 
                 // My Submissions - Always allowed for authenticated users
-                if (account) {
+                if (account || isTestAuthMock) {
                     secondaryPromises.push(authFetch(`${API_BASE}/intake/my-submissions`).then(r => r.json()).then(setMySubmissions).catch(e => console.warn('My Submissions failed', e)));
                 }
 
@@ -229,10 +233,12 @@ export function DataProvider({ children }) {
         }
 
         const account = instance.getActiveAccount();
-        if (account) {
+        if (account || isTestAuthMock) {
             fetchData();
+        } else {
+            setLoading(false);
         }
-    }, [instance, authFetch]);
+    }, [instance, authFetch, isTestAuthMock]);
 
 
     const updatePermissionsBulk = useCallback(async (updates) => {

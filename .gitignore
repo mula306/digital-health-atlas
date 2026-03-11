@@ -35,3 +35,9 @@ auth-debug.log
 
 # Backups
 server/backups/
+
+# Test artifacts
+coverage/
+playwright-report/
+playwright-results/
+test-results/

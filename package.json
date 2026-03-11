@@ -8,6 +8,19 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
+    "test:server": "npm --prefix server run test:all",
+    "test:ui": "vitest run",
+    "test:ui:coverage": "vitest run --coverage",
+    "test:ui:quarantine": "vitest run --config vitest.quarantine.config.js",
+    "test:ui:watch": "vitest",
+    "test:e2e:smoke": "playwright test e2e/smoke",
+    "test:e2e:critical": "playwright test e2e/critical",
+    "test:e2e:quarantine": "playwright test --config playwright.quarantine.config.js",
+    "test:e2e": "npm run test:e2e:smoke && npm run test:e2e:critical",
+    "test:phase-a": "npm run lint && npm --prefix server run test:phase-a && npm run test:e2e:smoke",
+    "test:phase-b": "npm run test:phase-a && npm run test:ui && npm --prefix server run test:security && npm --prefix server run test:unit",
+    "test:phase-c": "npm run test:phase-b && npm run test:ui:coverage && npm run test:e2e:critical",
+    "test:all": "npm run test:server && npm run test:ui",
     "db:up": "docker compose -f docker-compose.sqlserver.yml up -d",
     "db:down": "docker compose -f docker-compose.sqlserver.yml down"
   },
@@ -20,17 +33,26 @@
     "react-dom": "^19.2.0"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.11.0",
     "@eslint/js": "^9.39.1",
+    "@playwright/test": "^1.57.0",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.0",
+    "@testing-library/user-event": "^14.6.1",
     "@types/react": "^19.2.5",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-basic-ssl": "^2.1.4",
     "@vitejs/plugin-react": "^5.1.1",
+    "@vitest/coverage-v8": "^4.0.18",
     "eslint": "^9.39.1",
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.5.0",
     "eslint-plugin-unused-imports": "^4.4.1",
     "globals": "^17.3.0",
-    "vite": "^7.2.4"
+    "jsdom": "^27.2.0",
+    "msw": "^2.12.3",
+    "vite": "^7.2.4",
+    "vitest": "^4.0.4"
   }
 }

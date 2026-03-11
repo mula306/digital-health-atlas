@@ -7,13 +7,23 @@
     "scripts": {
         "start": "node index.js",
         "dev": "node --watch index.js",
+        "dev:test": "cross-env NODE_ENV=test TEST_AUTH_MODE=mock node index.js",
+        "dev:test:playwright": "cross-env NODE_ENV=test TEST_AUTH_MODE=mock PORT=3101 node index.js",
         "setup-db": "node scripts/setup_db.js",
         "setup-db:full": "npm run setup-db && npm run seed:permissions",
         "setup-db:with-faker": "npm run setup-db:full && npm run seed:faker",
         "seed:permissions": "node scripts/seed_permissions.js",
+        "seed:test-fixtures": "node scripts/seed_test_fixtures.js",
         "seed:faker": "node scripts/seed_faker.js",
         "seed:performance": "node scripts/seed_performance.js",
-        "test:contracts": "node --test tests/contracts/*.test.js",
+        "test:unit": "node --test --test-concurrency=1 --test-isolation=none tests/unit/**/*.test.js",
+        "test:integration": "node --test --test-concurrency=1 --test-isolation=none tests/integration/**/*.test.js",
+        "test:security": "node --test --test-concurrency=1 --test-isolation=none tests/security/**/*.test.js",
+        "test:contracts": "node --test --test-concurrency=1 --test-isolation=none tests/contracts/**/*.test.js",
+        "test:phase-a": "npm run test:contracts && npm run test:integration",
+        "test:phase-b": "npm run test:phase-a && npm run test:security && npm run test:unit",
+        "test:phase-c": "npm run test:phase-b",
+        "test:all": "npm run test:unit && npm run test:integration && npm run test:security && npm run test:contracts",
         "lint:rbac": "node scripts/check_permission_catalog.js"
     },
     "dependencies": {
@@ -29,5 +39,9 @@
         "node-cache": "^5.1.2",
         "passport": "^0.7.0",
         "passport-jwt": "^4.0.1"
+    },
+    "devDependencies": {
+        "cross-env": "^10.1.0",
+        "supertest": "^7.1.4"
     }
 }

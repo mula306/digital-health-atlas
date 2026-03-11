@@ -1,0 +1,312 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - develop
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  lint:
+    name: Lint (Phase A - Blocking)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install root deps
+        run: npm ci
+
+      - name: Run lint
+        run: npm run lint
+
+  backend-phase-a:
+    name: Backend Contracts + Integration (Phase A - Blocking)
+    runs-on: ubuntu-latest
+    services:
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: Y
+          MSSQL_SA_PASSWORD: YourStrongPassword123!
+        ports:
+          - 1433:1433
+    env:
+      DB_USER: sa
+      DB_PASSWORD: YourStrongPassword123!
+      DB_SERVER: 127.0.0.1
+      DB_PORT: 1433
+      DB_NAME: DHAtlas_test
+      DB_ENCRYPT: false
+      DB_TRUST_SERVER_CERT: true
+      AZURE_TENANT_ID: test-tenant-id
+      AZURE_CLIENT_ID: test-client-id
+      TEST_AUTH_MODE: mock
+      NODE_ENV: test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            server/package-lock.json
+
+      - name: Install root deps
+        run: npm ci
+
+      - name: Install server deps
+        run: npm --prefix server ci
+
+      - name: Setup test database
+        run: npm --prefix server run setup-db:full
+
+      - name: Seed deterministic test fixtures
+        run: npm --prefix server run seed:test-fixtures
+
+      - name: Run phase A server tests
+        run: npm --prefix server run test:phase-a
+
+  frontend-phase-b:
+    name: Frontend Unit/Integration (Phase B - Advisory)
+    runs-on: ubuntu-latest
+    continue-on-error: ${{ vars.ENFORCE_PHASE_B != 'true' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install root deps
+        run: npm ci
+
+      - name: Run frontend tests
+        run: npm run test:ui
+
+  backend-phase-b:
+    name: Backend Security + Unit (Phase B - Advisory)
+    runs-on: ubuntu-latest
+    continue-on-error: ${{ vars.ENFORCE_PHASE_B != 'true' }}
+    services:
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: Y
+          MSSQL_SA_PASSWORD: YourStrongPassword123!
+        ports:
+          - 1433:1433
+    env:
+      DB_USER: sa
+      DB_PASSWORD: YourStrongPassword123!
+      DB_SERVER: 127.0.0.1
+      DB_PORT: 1433
+      DB_NAME: DHAtlas_test
+      DB_ENCRYPT: false
+      DB_TRUST_SERVER_CERT: true
+      AZURE_TENANT_ID: test-tenant-id
+      AZURE_CLIENT_ID: test-client-id
+      TEST_AUTH_MODE: mock
+      NODE_ENV: test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            server/package-lock.json
+
+      - name: Install root deps
+        run: npm ci
+
+      - name: Install server deps
+        run: npm --prefix server ci
+
+      - name: Setup test database
+        run: npm --prefix server run setup-db:full
+
+      - name: Seed deterministic test fixtures
+        run: npm --prefix server run seed:test-fixtures
+
+      - name: Run backend security and unit tests
+        run: npm --prefix server run test:security && npm --prefix server run test:unit
+
+  frontend-coverage-phase-c:
+    name: Frontend Coverage (Phase C - Advisory)
+    runs-on: ubuntu-latest
+    continue-on-error: ${{ vars.ENFORCE_PHASE_C != 'true' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install root deps
+        run: npm ci
+
+      - name: Run frontend coverage gate
+        run: npm run test:ui:coverage
+
+      - name: Upload frontend coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage
+          path: coverage/ui
+          if-no-files-found: ignore
+
+  e2e-smoke:
+    name: Playwright Smoke (Phase A - Blocking)
+    runs-on: ubuntu-latest
+    services:
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: Y
+          MSSQL_SA_PASSWORD: YourStrongPassword123!
+        ports:
+          - 1433:1433
+    env:
+      DB_USER: sa
+      DB_PASSWORD: YourStrongPassword123!
+      DB_SERVER: 127.0.0.1
+      DB_PORT: 1433
+      DB_NAME: DHAtlas_test
+      DB_ENCRYPT: false
+      DB_TRUST_SERVER_CERT: true
+      AZURE_TENANT_ID: test-tenant-id
+      AZURE_CLIENT_ID: test-client-id
+      TEST_AUTH_MODE: mock
+      NODE_ENV: test
+      VITE_TEST_AUTH_MODE: mock
+      VITE_TEST_USER: admin
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            server/package-lock.json
+
+      - name: Install root deps
+        run: npm ci
+
+      - name: Install server deps
+        run: npm --prefix server ci
+
+      - name: Setup test database
+        run: npm --prefix server run setup-db:full
+
+      - name: Seed deterministic test fixtures
+        run: npm --prefix server run seed:test-fixtures
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Run smoke e2e
+        run: npm run test:e2e:smoke
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-smoke-report
+          path: playwright-report
+          if-no-files-found: ignore
+
+  e2e-critical-phase-c:
+    name: Playwright Critical (Phase C - Advisory)
+    runs-on: ubuntu-latest
+    continue-on-error: ${{ vars.ENFORCE_PHASE_C != 'true' }}
+    services:
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: Y
+          MSSQL_SA_PASSWORD: YourStrongPassword123!
+        ports:
+          - 1433:1433
+    env:
+      DB_USER: sa
+      DB_PASSWORD: YourStrongPassword123!
+      DB_SERVER: 127.0.0.1
+      DB_PORT: 1433
+      DB_NAME: DHAtlas_test
+      DB_ENCRYPT: false
+      DB_TRUST_SERVER_CERT: true
+      AZURE_TENANT_ID: test-tenant-id
+      AZURE_CLIENT_ID: test-client-id
+      TEST_AUTH_MODE: mock
+      NODE_ENV: test
+      VITE_TEST_AUTH_MODE: mock
+      VITE_TEST_USER: admin
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            server/package-lock.json
+
+      - name: Install root deps
+        run: npm ci
+
+      - name: Install server deps
+        run: npm --prefix server ci
+
+      - name: Setup test database
+        run: npm --prefix server run setup-db:full
+
+      - name: Seed deterministic test fixtures
+        run: npm --prefix server run seed:test-fixtures
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Run critical e2e
+        run: npm run test:e2e:critical
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-critical-report
+          path: playwright-report
+          if-no-files-found: ignore

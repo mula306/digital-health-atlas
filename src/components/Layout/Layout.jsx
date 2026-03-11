@@ -518,6 +518,8 @@ export function Layout({ children, currentView, onViewChange }) {
                     <button
                         className="toggle-sidebar-btn"
                         onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+                        aria-label={isSidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
+                        title={isSidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
                     >
                         {isSidebarOpen ? <X size={20} /> : <Menu size={20} />}
                     </button>

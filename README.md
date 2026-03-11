@@ -102,7 +102,16 @@ Digital Health Atlas is an intake, governance, and portfolio execution platform 
 ### Quality baseline
 
 - Frontend linting: `npm run lint`
-- API contract tests: `cd server && npm run test:contracts`
+- Backend contracts/integration/security/unit suites:
+  - `cd server && npm run test:phase-a`
+  - `cd server && npm run test:phase-b`
+  - `cd server && npm run test:all`
+- Frontend unit/integration suites: `npm run test:ui`
+- Frontend coverage gate: `npm run test:ui:coverage`
+- Playwright smoke/critical suites:
+  - `npm run test:e2e:smoke`
+  - `npm run test:e2e:critical`
+  - `npm run test:e2e:quarantine`
 - RBAC catalog lint/check: `cd server && npm run lint:rbac`
 
 ### Repository structure
@@ -110,7 +119,9 @@ Digital Health Atlas is an intake, governance, and portfolio execution platform 
 - `src/`: React frontend
 - `server/`: Express API
 - `server/scripts/`: schema, setup and seed scripts
-- `server/tests/contracts/`: backend contract/schema tests
+- `server/tests/`: backend unit, integration, security, and contract tests
+- `src/tests/`: frontend unit and integration tests
+- `e2e/`: Playwright smoke and critical tests
 - `docker-compose.sqlserver.yml`: local SQL Server container
 
 ## Setup
@@ -150,6 +161,11 @@ Required values:
 
 - `server/.env`: `DB_USER`, `DB_PASSWORD`, `DB_SERVER`, `DB_PORT`, `DB_NAME`, `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`
 - `.env`: `VITE_AZURE_CLIENT_ID`, `VITE_AZURE_TENANT_ID`, `VITE_AZURE_API_SCOPE`
+
+Test-only values (optional):
+
+- `.env`: `VITE_TEST_AUTH_MODE=mock`, `VITE_TEST_USER=admin`
+- `server/.env`: `TEST_AUTH_MODE=mock`
 
 ### 3. Start SQL Server container
 
@@ -233,6 +249,15 @@ URLs:
 npm run dev
 npm run build
 npm run lint
+npm run test:ui
+npm run test:ui:coverage
+npm run test:ui:quarantine
+npm run test:e2e:smoke
+npm run test:e2e:critical
+npm run test:e2e:quarantine
+npm run test:phase-a
+npm run test:phase-b
+npm run test:phase-c
 npm run db:up
 npm run db:down
 ```
@@ -244,11 +269,55 @@ cd server
 npm run setup-db
 npm run setup-db:full
 npm run seed:permissions
+npm run seed:test-fixtures
 npm run seed:faker
 npm run setup-db:with-faker
+npm run test:phase-a
+npm run test:phase-b
 npm run test:contracts
+npm run test:integration
+npm run test:security
+npm run test:unit
+npm run test:all
 npm run lint:rbac
 ```
+
+## Test Auth Contract
+
+When `TEST_AUTH_MODE=mock` (backend) and `VITE_TEST_AUTH_MODE=mock` (frontend):
+
+- API requests use `x-test-user` personas for deterministic auth.
+- Supported personas:
+  - `admin`
+  - `viewer`
+  - `editor`
+  - `intake_manager`
+  - `governance_member`
+  - `governance_chair`
+  - `org2_editor`
+- Mock mode is blocked in production.
+
+## CI Gate Phases
+
+GitHub Actions workflow: `.github/workflows/ci.yml`
+Detailed test architecture and runbook: `docs/testing-strategy.md`
+
+- Phase A (blocking): lint + backend contracts/integration + Playwright smoke.
+- Phase B (advisory by default): frontend tests + backend security/unit.
+  - Set repository variable `ENFORCE_PHASE_B=true` to make Phase B blocking.
+- Phase C (advisory by default): Playwright critical.
+  - Frontend coverage thresholds are enforced during Phase C.
+  - Initial frontend thresholds: `40%` lines, `35%` statements, `25%` functions, `30%` branches.
+  - Set repository variable `ENFORCE_PHASE_C=true` to make Phase C blocking.
+
+## Quarantine Policy
+
+- Frontend flaky tests should use a `.quarantined.test.jsx` or `.quarantined.test.js` suffix.
+- Playwright flaky tests should include `@quarantined` in the test title.
+- Blocking runs exclude quarantined tests by default.
+- Run quarantined suites separately with:
+  - `npm run test:ui:quarantine`
+  - `npm run test:e2e:quarantine`
 
 ## SQL Server Container Management
 

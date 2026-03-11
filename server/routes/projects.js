@@ -533,10 +533,12 @@ router.get('/', checkPermission(['can_view_projects', 'can_view_exec_dashboard']
         const requestParams = {
             offset,
             limit,
-            viewerOid
+            viewerOid,
+            orgId: req.orgId ?? null
         };
         const countParams = {
-            viewerOid
+            viewerOid,
+            orgId: req.orgId ?? null
         };
 
         // Build WHERE clause for filtering
@@ -629,10 +631,24 @@ router.get('/', checkPermission(['can_view_projects', 'can_view_exec_dashboard']
                 p.description,
                 p.status,
                 p.createdAt,
+                CASE
+                    WHEN @orgId IS NULL OR p.orgId = @orgId THEN 'owner'
+                    WHEN poa.accessLevel = 'write' THEN 'write'
+                    WHEN poa.accessLevel = 'read' THEN 'read'
+                    ELSE 'none'
+                END AS accessLevel,
+                CAST(CASE
+                    WHEN @orgId IS NULL OR p.orgId = @orgId OR poa.accessLevel = 'write' THEN 1
+                    ELSE 0
+                END AS BIT) AS hasWriteAccess,
                 CAST(CASE WHEN pw.projectId IS NULL THEN 0 ELSE 1 END AS BIT) AS isWatched
             FROM Projects p
             ${tagJoin}
             ${statusJoin}
+            LEFT JOIN ProjectOrgAccess poa
+                ON poa.projectId = p.id
+               AND poa.orgId = @orgId
+               AND (poa.expiresAt IS NULL OR poa.expiresAt > GETDATE())
             LEFT JOIN ProjectWatchers pw ON pw.projectId = p.id AND pw.userOid = @viewerOid
             ${whereClause}
             ORDER BY p.id
@@ -801,6 +817,8 @@ router.get('/', checkPermission(['can_view_projects', 'can_view_exec_dashboard']
                 reportCount: reportCountMap.get(project.id) || 0,
                 latestReport: latestReportMap.get(String(project.id)) || null,
                 tags: projectTagMap.get(project.id) || [],
+                accessLevel: project.accessLevel || 'owner',
+                hasWriteAccess: !!project.hasWriteAccess,
                 isWatched: !!project.isWatched
             };
         });
@@ -1065,6 +1083,8 @@ router.get('/:id', checkPermission('can_view_projects'), withSharedScope, checkP
             tasks,
             reportCount: reportsResult.recordset[0].count,
             latestReport,
+            accessLevel: req.projectAccess || 'owner',
+            hasWriteAccess: !!req.hasWriteAccess,
             isWatched
         });
     } catch (err) {

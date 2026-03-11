@@ -2,6 +2,7 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import basicSsl from '@vitejs/plugin-basic-ssl'
 
+const proxyTarget = process.env.VITE_API_PROXY_TARGET || 'http://localhost:3001'
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -14,7 +15,7 @@ export default defineConfig({
     https: true,
     proxy: {
       '/api': {
-        target: 'http://localhost:3001',
+        target: proxyTarget,
         changeOrigin: true,
         secure: false, // In case backend had self-signed certs (though it's http)
       }

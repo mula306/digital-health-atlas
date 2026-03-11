@@ -50,4 +50,14 @@ export async function getPool() {
     return pool;
 }
 
+export async function closePool() {
+    if (pool) {
+        try {
+            await pool.close();
+        } finally {
+            pool = null;
+        }
+    }
+}
+
 export { sql };

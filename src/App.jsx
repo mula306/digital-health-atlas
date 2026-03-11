@@ -5,6 +5,9 @@ import { AuthenticatedTemplate, UnauthenticatedTemplate } from '@azure/msal-reac
 import { LoginPage } from './components/Auth/LoginPage';
 import { AppContent } from './components/AppContent';
 
+const TEST_AUTH_MODE = String(import.meta.env.VITE_TEST_AUTH_MODE || '').toLowerCase();
+const IS_TEST_AUTH_MOCK = TEST_AUTH_MODE === 'mock';
+
 function MainAppContent() {
   return (
     <ThemeProvider>
@@ -18,6 +21,10 @@ function MainAppContent() {
 }
 
 function App() {
+  if (IS_TEST_AUTH_MOCK) {
+    return <MainAppContent />;
+  }
+
   return (
     <>
       <AuthenticatedTemplate>

@@ -38,8 +38,9 @@ export function KanbanBoard({ project, onBack, goalTitle }) {
         currentUser,
         hasPermission
     } = useData();
-    const canEditProject = hasPermission('can_edit_project');
-    const canDeleteProject = hasPermission('can_delete_project');
+    const projectHasWriteAccess = project?.hasWriteAccess !== false;
+    const canEditProject = hasPermission('can_edit_project') && projectHasWriteAccess;
+    const canDeleteProject = hasPermission('can_delete_project') && projectHasWriteAccess;
     const canManageProject = canEditProject || canDeleteProject;
     const [showAddModal, setShowAddModal] = useState(false);
     const [showEditModal, setShowEditModal] = useState(false);
@@ -267,6 +268,12 @@ export function KanbanBoard({ project, onBack, goalTitle }) {
                         <span className="meta-item">🎯 {goalTitle || 'Unlinked'}</span>
                         <span className="meta-divider">•</span>
                         <span className="meta-item">{project.completion}% Complete</span>
+                        {!projectHasWriteAccess && (
+                            <>
+                                <span className="meta-divider">•</span>
+                                <span className="meta-item">Read-only shared access</span>
+                            </>
+                        )}
                     </div>
                 </div>
 

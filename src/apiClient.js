@@ -7,6 +7,33 @@
 // avoiding Mixed Content (HTTPS -> HTTP) blockers.
 export const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
+const readMockAuthUserOverride = () => {
+    if (typeof window === 'undefined') return null;
+
+    const candidates = [];
+    if (typeof window.__DHA_TEST_USER__ === 'string') {
+        candidates.push(window.__DHA_TEST_USER__);
+    }
+
+    try {
+        candidates.push(window.localStorage?.getItem('dha_test_user'));
+    } catch {
+        // Ignore storage access errors in locked-down environments.
+    }
+
+    try {
+        candidates.push(window.sessionStorage?.getItem('dha_test_user'));
+    } catch {
+        // Ignore storage access errors in locked-down environments.
+    }
+
+    const resolved = candidates
+        .map((value) => String(value || '').trim())
+        .find(Boolean);
+
+    return resolved || null;
+};
+
 export class ApiError extends Error {
     constructor(status, message, data) {
         super(message);
@@ -24,9 +51,15 @@ export class ApiError extends Error {
  */
 export async function fetchWithAuth(url, token, options = {}) {
     const headers = new Headers(options.headers || {});
+    const mockAuthMode = String(import.meta.env.VITE_TEST_AUTH_MODE || '').toLowerCase() === 'mock';
+    const mockAuthUser = readMockAuthUserOverride()
+        || (String(import.meta.env.VITE_TEST_USER || 'admin').trim() || 'admin');
 
     if (token) {
         headers.set('Authorization', `Bearer ${token}`);
+    }
+    if (mockAuthMode) {
+        headers.set('x-test-user', mockAuthUser);
     }
 
     if (!headers.has('Content-Type') && !(options.body instanceof FormData)) {

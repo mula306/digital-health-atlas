@@ -7,7 +7,7 @@ import unusedImports from 'eslint-plugin-unused-imports'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-  globalIgnores(['dist']),
+  globalIgnores(['dist', 'playwright-report', 'test-results', 'coverage']),
   {
     files: ['**/*.{js,jsx}'],
     extends: [
