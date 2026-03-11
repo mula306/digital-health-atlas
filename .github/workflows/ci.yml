@@ -40,6 +40,11 @@ jobs:
         env:
           ACCEPT_EULA: Y
           MSSQL_SA_PASSWORD: YourStrongPassword123!
+        options: >-
+          --health-cmd "bash -c 'cat < /dev/null > /dev/tcp/127.0.0.1/1433'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
         ports:
           - 1433:1433
     env:
@@ -54,6 +59,8 @@ jobs:
       AZURE_CLIENT_ID: test-client-id
       TEST_AUTH_MODE: mock
       NODE_ENV: test
+      DB_CONNECT_RETRIES: 60
+      DB_CONNECT_DELAY_MS: 2000
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -72,6 +79,19 @@ jobs:
 
       - name: Install server deps
         run: npm --prefix server ci
+
+      - name: Wait for SQL Server
+        run: |
+          for i in {1..60}; do
+            if (echo > /dev/tcp/127.0.0.1/1433) >/dev/null 2>&1; then
+              echo "SQL Server is accepting TCP connections."
+              exit 0
+            fi
+            echo "Waiting for SQL Server... attempt $i/60"
+            sleep 2
+          done
+          echo "SQL Server did not become ready in time."
+          exit 1
 
       - name: Setup test database
         run: npm --prefix server run setup-db:full
@@ -112,6 +132,11 @@ jobs:
         env:
           ACCEPT_EULA: Y
           MSSQL_SA_PASSWORD: YourStrongPassword123!
+        options: >-
+          --health-cmd "bash -c 'cat < /dev/null > /dev/tcp/127.0.0.1/1433'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
         ports:
           - 1433:1433
     env:
@@ -126,6 +151,8 @@ jobs:
       AZURE_CLIENT_ID: test-client-id
       TEST_AUTH_MODE: mock
       NODE_ENV: test
+      DB_CONNECT_RETRIES: 60
+      DB_CONNECT_DELAY_MS: 2000
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -144,6 +171,19 @@ jobs:
 
       - name: Install server deps
         run: npm --prefix server ci
+
+      - name: Wait for SQL Server
+        run: |
+          for i in {1..60}; do
+            if (echo > /dev/tcp/127.0.0.1/1433) >/dev/null 2>&1; then
+              echo "SQL Server is accepting TCP connections."
+              exit 0
+            fi
+            echo "Waiting for SQL Server... attempt $i/60"
+            sleep 2
+          done
+          echo "SQL Server did not become ready in time."
+          exit 1
 
       - name: Setup test database
         run: npm --prefix server run setup-db:full
@@ -191,6 +231,11 @@ jobs:
         env:
           ACCEPT_EULA: Y
           MSSQL_SA_PASSWORD: YourStrongPassword123!
+        options: >-
+          --health-cmd "bash -c 'cat < /dev/null > /dev/tcp/127.0.0.1/1433'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
         ports:
           - 1433:1433
     env:
@@ -207,6 +252,8 @@ jobs:
       NODE_ENV: test
       VITE_TEST_AUTH_MODE: mock
       VITE_TEST_USER: admin
+      DB_CONNECT_RETRIES: 60
+      DB_CONNECT_DELAY_MS: 2000
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -225,6 +272,19 @@ jobs:
 
       - name: Install server deps
         run: npm --prefix server ci
+
+      - name: Wait for SQL Server
+        run: |
+          for i in {1..60}; do
+            if (echo > /dev/tcp/127.0.0.1/1433) >/dev/null 2>&1; then
+              echo "SQL Server is accepting TCP connections."
+              exit 0
+            fi
+            echo "Waiting for SQL Server... attempt $i/60"
+            sleep 2
+          done
+          echo "SQL Server did not become ready in time."
+          exit 1
 
       - name: Setup test database
         run: npm --prefix server run setup-db:full
@@ -256,6 +316,11 @@ jobs:
         env:
           ACCEPT_EULA: Y
           MSSQL_SA_PASSWORD: YourStrongPassword123!
+        options: >-
+          --health-cmd "bash -c 'cat < /dev/null > /dev/tcp/127.0.0.1/1433'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
         ports:
           - 1433:1433
     env:
@@ -272,6 +337,8 @@ jobs:
       NODE_ENV: test
       VITE_TEST_AUTH_MODE: mock
       VITE_TEST_USER: admin
+      DB_CONNECT_RETRIES: 60
+      DB_CONNECT_DELAY_MS: 2000
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -290,6 +357,19 @@ jobs:
 
       - name: Install server deps
         run: npm --prefix server ci
+
+      - name: Wait for SQL Server
+        run: |
+          for i in {1..60}; do
+            if (echo > /dev/tcp/127.0.0.1/1433) >/dev/null 2>&1; then
+              echo "SQL Server is accepting TCP connections."
+              exit 0
+            fi
+            echo "Waiting for SQL Server... attempt $i/60"
+            sleep 2
+          done
+          echo "SQL Server did not become ready in time."
+          exit 1
 
       - name: Setup test database
         run: npm --prefix server run setup-db:full
