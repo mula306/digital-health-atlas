@@ -169,14 +169,17 @@ Required values:
 
 Notes:
 
+- Normal application startup uses Entra ID by default on both frontend and backend.
+- Leave all `*_TEST_AUTH_MODE` settings commented out unless you intentionally want local mock auth for deterministic testing.
 - `npm run setup-db` and `npm run setup-db:full` read `DB_*` values on every invocation.
 - Locally, the expected source is `server/.env` unless you deliberately override with shell environment variables.
 - If Docker SQL is recreated with a different `MSSQL_SA_PASSWORD`, update `server/.env` `DB_PASSWORD` to match before rerunning setup.
 
 Test-only values (optional):
 
-- `.env`: `VITE_TEST_AUTH_MODE=mock`, `VITE_TEST_USER=admin`
-- `server/.env`: `TEST_AUTH_MODE=mock`
+- `.env`: uncomment `VITE_TEST_AUTH_MODE=mock` and `VITE_TEST_USER=admin`
+- `server/.env`: uncomment `TEST_AUTH_MODE=mock`
+- Restart the frontend and backend dev servers after switching auth modes.
 
 ### 3. Start SQL Server container
 
@@ -257,6 +260,11 @@ URLs:
 - Frontend: `https://localhost:5173`
 - Backend API: `http://localhost:3001`
 
+Auth mode note:
+
+- `npm run dev` and `cd server && npm run dev` expect Entra ID configuration and do not enable mock auth by default.
+- Mock auth is only used when you explicitly uncomment the env settings above or run test-specific scripts such as `cd server && npm run dev:test`.
+
 ## Common Commands
 
 ### Root
@@ -312,6 +320,7 @@ When `TEST_AUTH_MODE=mock` (backend) and `VITE_TEST_AUTH_MODE=mock` (frontend):
   - `governance_chair`
   - `org2_editor`
 - Mock mode is blocked in production.
+- Automated Playwright and CI runs intentionally force mock auth so test personas stay deterministic; that does not change the default runtime setup for local development.
 
 ## CI Gate Phases
 
