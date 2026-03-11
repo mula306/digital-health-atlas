@@ -1049,12 +1049,12 @@ export function GovernanceConfig({ initialTab = null, onTabChange = null }) {
                     </div>
                     {!phase3Ready && (
                         <p className="governance-alert">
-                            Phase 3 schema is not installed yet. Run `npm run migrate:governance:phase2` in `server`.
+                            Governance schema is incomplete. Run `npm run setup-db:full` in `server`.
                         </p>
                     )}
                     {phase3Ready && !boardPolicyReady && (
                         <p className="governance-alert">
-                            Board-level policy overrides are not installed yet. Run `npm run migrate:governance:phase3` in `server`.
+                            Board-level policy overrides are not installed yet. Run `npm run setup-db:full` in `server`.
                         </p>
                     )}
                 </section>
@@ -1381,7 +1381,7 @@ export function GovernanceConfig({ initialTab = null, onTabChange = null }) {
 
                                             {!boardPolicyReady && phase3Ready && (
                                                 <p className="governance-alert">
-                                                    Board override fields are unavailable until `npm run migrate:governance:phase3` is applied in `server`.
+                                                    Board override fields are unavailable until the canonical schema is applied (`npm run setup-db:full`) in `server`.
                                                 </p>
                                             )}
                                         </div>
@@ -1435,7 +1435,7 @@ export function GovernanceConfig({ initialTab = null, onTabChange = null }) {
                                             </p>
                                             {!boardCapacityReady && (
                                                 <p className="governance-alert">
-                                                    Capacity fields are unavailable until `npm run migrate:wave3` is applied in `server`.
+                                                    Capacity fields are unavailable until the canonical schema is applied (`npm run setup-db:full`) in `server`.
                                                 </p>
                                             )}
                                         </div>

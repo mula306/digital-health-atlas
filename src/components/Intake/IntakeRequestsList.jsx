@@ -1018,7 +1018,7 @@ export function IntakeRequestsList({ initialFilter = 'all', showFilterTabs = tru
                             ) : !sessionSchemaReady ? (
                                 <div className="governance-session-warning">
                                     <AlertTriangle size={14} />
-                                    Session mode tables are not installed. Run `npm run migrate:wave2` in `server`.
+                                    Session mode tables are not installed. Run `npm run setup-db:full` in `server`.
                                 </div>
                             ) : loadingGovernanceSession ? (
                                 <div className="governance-session-empty">Loading session state...</div>

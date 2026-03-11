@@ -12,46 +12,35 @@ const readScript = (filename) => {
     return fs.readFileSync(absolutePath, 'utf8');
 };
 
-test('migration script includes all wave3 schema elements', () => {
-    const migration = readScript('migrate_wave3.sql');
-    assert.match(migration, /GovernanceBoard/);
-    assert.match(migration, /weeklyCapacityHours/);
-    assert.match(migration, /wipLimit/);
-    assert.match(migration, /defaultSubmissionEffortHours/);
-    assert.match(migration, /IntakeSubmissions/);
-    assert.match(migration, /estimatedEffortHours/);
-    assert.match(migration, /ProjectBenefitRealization/);
-    assert.match(migration, /ExecutiveReportPack/);
-    assert.match(migration, /scopeOrgId/);
-});
-
-test('canonical schema contains wave3 objects', () => {
+test('canonical schema contains wave3 and governance capacity objects', () => {
     const schema = readScript('schema.sql');
+    assert.match(schema, /GovernanceBoard/);
+    assert.match(schema, /weeklyCapacityHours/);
+    assert.match(schema, /wipLimit/);
+    assert.match(schema, /defaultSubmissionEffortHours/);
     assert.match(schema, /ProjectBenefitRealization/);
     assert.match(schema, /CK_ProjectBenefitRealization_Status/);
+    assert.match(schema, /ExecutiveReportPack/);
+    assert.match(schema, /scopeOrgId/);
     assert.match(schema, /estimatedEffortHours/);
-    assert.match(schema, /defaultSubmissionEffortHours/);
     assert.match(schema, /IX_ExecutiveReportPack_ScopeOrg/);
 });
 
-test('migration manifest stays aligned with upgrade runner coverage', () => {
-    const manifest = readScript('migration_manifest.js');
-    assert.match(manifest, /migrate_governance_phase0\.sql/);
-    assert.match(manifest, /migrate_governance_phase1\.sql/);
-    assert.match(manifest, /migrate_governance_phase2\.sql/);
-    assert.match(manifest, /migrate_governance_phase3\.sql/);
-    assert.match(manifest, /migrate_multi_org\.sql/);
-    assert.match(manifest, /migrate_org_sharing_v2\.sql/);
-    assert.match(manifest, /migrate_project_goals\.sql/);
-    assert.match(manifest, /migrate_project_watchlist\.sql/);
-    assert.match(manifest, /migrate_task_tracking_phase1\.sql/);
-    assert.match(manifest, /migrate_wave2\.sql/);
-    assert.match(manifest, /migrate_wave3\.sql/);
+test('canonical schema includes multi-org sharing and workflow session objects', () => {
+    const schema = readScript('schema.sql');
+    assert.match(schema, /CREATE TABLE Organizations/);
+    assert.match(schema, /CREATE TABLE ProjectOrgAccess/);
+    assert.match(schema, /CREATE TABLE GoalOrgAccess/);
+    assert.match(schema, /CREATE TABLE OrgSharingRequest/);
+    assert.match(schema, /CREATE TABLE GovernanceSession/);
+    assert.match(schema, /CREATE TABLE WorkflowSlaPolicy/);
+    assert.match(schema, /CREATE TABLE ProjectWatchers/);
 });
 
-test('single migration runner supports DB_NAME-safe execution path', () => {
-    const runner = readScript('run_migration.js');
-    assert.match(runner, /assertSafeDbName/);
-    assert.match(runner, /connectMasterWithRetry/);
-    assert.match(runner, /runSqlFile/);
+test('setup script uses schema-only initialization path', () => {
+    const setupScript = readScript('setup_db.js');
+    assert.match(setupScript, /SQL_FILES_IN_ORDER/);
+    assert.match(setupScript, /'schema\.sql'/);
+    assert.doesNotMatch(setupScript, /migrate_/);
+    assert.doesNotMatch(setupScript, /upgrade_db/);
 });

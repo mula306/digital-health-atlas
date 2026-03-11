@@ -1107,7 +1107,7 @@ router.put('/sla/policies', requireAuth, async (req, res) => {
 
         const pool = await getPool();
         if (!(await hasWorkflowSlaSchema(pool))) {
-            return res.status(409).json({ error: 'Workflow SLA schema is not installed. Run `npm run migrate:wave2` in `server`.' });
+            return res.status(409).json({ error: 'Workflow SLA schema is not installed. Run `npm run setup-db:full` in `server`.' });
         }
 
         const tx = new sql.Transaction(pool);
@@ -1299,7 +1299,7 @@ router.post('/submissions/:id/sla/nudge', requireAuth, async (req, res) => {
 
         const pool = await getPool();
         if (!(await hasWorkflowSlaSchema(pool))) {
-            return res.status(409).json({ error: 'Workflow SLA schema is not installed. Run `npm run migrate:wave2` in `server`.' });
+            return res.status(409).json({ error: 'Workflow SLA schema is not installed. Run `npm run setup-db:full` in `server`.' });
         }
 
         const phase1Ready = await hasGovernancePhase1Schema(pool);

@@ -57,8 +57,7 @@ This review was completed against the current repository state as of March 9, 20
 - Frontend architecture and workflow implementations (`src/components/*`, `src/context/*`, `src/utils/*`)
 - Backend service and route architecture (`server/index.js`, `server/routes/*`, `server/utils/*`)
 - Security and RBAC model (`server/utils/rbacCatalog.js`, auth middleware, seeded permissions)
-- Canonical schema and migration strategy (`server/scripts/schema.sql`, `server/scripts/migration_manifest.js`)
-- Wave feature migrations (`migrate_wave2.sql`, `migrate_wave3.sql`)
+- Canonical schema and setup strategy (`server/scripts/schema.sql`, `server/scripts/setup_db.js`)
 - Existing documentation and implementation plans (`docs/*`)
 
 Review objectives:
@@ -130,7 +129,7 @@ graph TB
 
 - **Presentation tier:** React SPA with module-based feature pages.
 - **Application tier:** Express route domains for business workflows.
-- **Data tier:** SQL Server with canonical schema and migration path for upgrades.
+- **Data tier:** SQL Server with canonical schema-driven setup.
 - **Identity tier:** Entra ID for authentication and role claims.
 
 ---
@@ -211,16 +210,10 @@ The canonical schema (`server/scripts/schema.sql`) contains the current feature 
 | Organizations and sharing | `Organizations`, `ProjectOrgAccess`, `GoalOrgAccess`, `OrgSharingRequest` |
 | Identity and access | `Users`, `RolePermissions`, `ProjectWatchers`, `AuditLog` |
 
-### 6.3 Migration and setup strategy
+### 6.3 Schema and setup strategy
 
 - **Fresh install:** `setup-db:full` applies canonical schema + seeds permissions.
-- **Legacy upgrade:** `upgrade-db` runs ordered SQL migration manifest:
-  - governance phase0-3,
-  - multi-org and sharing v2,
-  - project-goals, watchlist, task-tracking,
-  - wave2 and wave3 migrations.
-
-This strategy is currently practical and explicit. Longer term, migration observability and rollback semantics should be strengthened.
+- **Operational model:** schema-first bootstrap only; migrations are not required for environment setup.
 
 ### 6.4 Data governance observations
 
@@ -424,9 +417,6 @@ Primary operational architecture risk is scheduler duplication in multi-instance
 cd server
 npm run setup-db:full
 
-# Upgrade existing database
-npm run upgrade-db
-
 # Contract tests
 npm run test:contracts
 
@@ -440,9 +430,7 @@ npm run lint:rbac
 - `server/routes/*.js`
 - `server/utils/rbacCatalog.js`
 - `server/scripts/schema.sql`
-- `server/scripts/migration_manifest.js`
-- `server/scripts/migrate_wave2.sql`
-- `server/scripts/migrate_wave3.sql`
+- `server/scripts/setup_db.js`
 - `src/components/*`
 - `src/context/DataContext.jsx`
 

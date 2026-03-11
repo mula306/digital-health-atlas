@@ -96,8 +96,7 @@ Digital Health Atlas is an intake, governance, and portfolio execution platform 
 ### Data model and schema
 
 - Canonical schema: `server/scripts/schema.sql`
-- Fresh installs use canonical schema and do not require wave migrations
-- Upgrade path for legacy databases via ordered manifest migrations
+- Fresh installs use canonical schema only; migration scripts are not required
 - Included feature tables cover governance phases, multi-org sharing, project watchlist, task tracking, wave2, and wave3 additions
 
 ### Quality baseline
@@ -110,7 +109,7 @@ Digital Health Atlas is an intake, governance, and portfolio execution platform 
 
 - `src/`: React frontend
 - `server/`: Express API
-- `server/scripts/`: schema, migrations, setup and seed scripts
+- `server/scripts/`: schema, setup and seed scripts
 - `server/tests/contracts/`: backend contract/schema tests
 - `docker-compose.sqlserver.yml`: local SQL Server container
 
@@ -186,16 +185,7 @@ npm run setup-db:full
 
 This command is idempotent and safe to re-run.
 
-### 5. Upgrade existing older database (only if needed)
-
-```bash
-cd server
-npm run upgrade-db
-```
-
-`upgrade-db` applies the ordered migration manifest, including governance phases, multi-org, watchlist/task-tracking, wave2, and wave3 scripts.
-
-### 6. Optional fake data seed
+### 5. Optional fake data seed
 
 ```bash
 cd server
@@ -215,7 +205,7 @@ Performance seed:
 npm run seed:performance
 ```
 
-### 7. Run the application
+### 6. Run the application
 
 Terminal 1:
 
@@ -253,29 +243,11 @@ npm run db:down
 cd server
 npm run setup-db
 npm run setup-db:full
-npm run upgrade-db
-npm run migrate:all
 npm run seed:permissions
 npm run seed:faker
 npm run setup-db:with-faker
 npm run test:contracts
 npm run lint:rbac
-```
-
-Wave/feature migration entry points (for targeted rollout only):
-
-```bash
-npm run migrate:governance:phase0
-npm run migrate:governance:phase1
-npm run migrate:governance:phase2
-npm run migrate:governance:phase3
-npm run migrate:multi-org
-npm run migrate:org-sharing-v2
-npm run migrate:project-goals
-npm run migrate:project-watchlist
-npm run migrate:task-tracking:phase1
-npm run migrate:wave2
-npm run migrate:wave3
 ```
 
 ## SQL Server Container Management

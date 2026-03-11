@@ -1223,7 +1223,7 @@ router.post('/:id/benefits', checkPermission('can_edit_project'), withSharedScop
         const pool = await getPool();
         const schemaReady = await hasProjectBenefitSchema(pool);
         if (!schemaReady) {
-            return res.status(409).json({ error: 'Project benefit schema is not installed. Run `npm run migrate:wave3` in `server`.' });
+            return res.status(409).json({ error: 'Project benefit schema is not installed. Run `npm run setup-db:full` in `server`.' });
         }
 
         const user = getAuthUser(req);
@@ -1289,7 +1289,7 @@ router.put('/:id/benefits/:benefitId', checkPermission('can_edit_project'), with
         const pool = await getPool();
         const schemaReady = await hasProjectBenefitSchema(pool);
         if (!schemaReady) {
-            return res.status(409).json({ error: 'Project benefit schema is not installed. Run `npm run migrate:wave3` in `server`.' });
+            return res.status(409).json({ error: 'Project benefit schema is not installed. Run `npm run setup-db:full` in `server`.' });
         }
 
         const existing = await pool.request()
@@ -1458,7 +1458,7 @@ router.delete('/:id/benefits/:benefitId', checkPermission('can_edit_project'), w
         const pool = await getPool();
         const schemaReady = await hasProjectBenefitSchema(pool);
         if (!schemaReady) {
-            return res.status(409).json({ error: 'Project benefit schema is not installed. Run `npm run migrate:wave3` in `server`.' });
+            return res.status(409).json({ error: 'Project benefit schema is not installed. Run `npm run setup-db:full` in `server`.' });
         }
 
         const existing = await pool.request()

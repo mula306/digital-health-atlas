@@ -707,7 +707,7 @@ router.use(async (req, res, next) => {
         const ready = await hasGovernanceSchema(pool);
         if (!ready) {
             return res.status(503).json({
-                error: 'Governance schema not installed. Run migration: npm run migrate:governance:phase0 (from /server).'
+                error: 'Governance schema not installed. Run `npm run setup-db:full` in `server`.'
             });
         }
         return next();
@@ -1065,12 +1065,12 @@ router.post('/boards', checkPermission('can_manage_governance'), governanceConfi
         const parsedBoardCapacity = parseBoardCapacityPayload(req.body?.boardCapacity);
         if (parsedBoardPolicy && !boardPolicyReady) {
             return res.status(409).json({
-                error: 'Board policy overrides are not available yet. Run `npm run migrate:governance:phase3` in `server`.'
+                error: 'Board policy overrides are not available yet. Run `npm run setup-db:full` in `server`.'
             });
         }
         if (parsedBoardCapacity && !boardCapacityReady) {
             return res.status(409).json({
-                error: 'Board capacity fields are not available yet. Run `npm run migrate:wave3` in `server`.'
+                error: 'Board capacity fields are not available yet. Run `npm run setup-db:full` in `server`.'
             });
         }
 
@@ -1256,12 +1256,12 @@ router.put('/boards/:id', checkPermission('can_manage_governance'), governanceCo
         const parsedBoardCapacity = parseBoardCapacityPayload(req.body?.boardCapacity);
         if (parsedBoardPolicy && !boardPolicyReady) {
             return res.status(409).json({
-                error: 'Board policy overrides are not available yet. Run `npm run migrate:governance:phase3` in `server`.'
+                error: 'Board policy overrides are not available yet. Run `npm run setup-db:full` in `server`.'
             });
         }
         if (parsedBoardCapacity && !boardCapacityReady) {
             return res.status(409).json({
-                error: 'Board capacity fields are not available yet. Run `npm run migrate:wave3` in `server`.'
+                error: 'Board capacity fields are not available yet. Run `npm run setup-db:full` in `server`.'
             });
         }
 
@@ -1821,7 +1821,7 @@ router.post('/boards/:id/sessions', checkPermission(['can_manage_governance_sess
 
         const pool = await getPool();
         if (!(await hasGovernanceSessionSchema(pool))) {
-            return res.status(409).json({ error: 'Governance session mode is not installed. Run `npm run migrate:wave2` in `server`.' });
+            return res.status(409).json({ error: 'Governance session mode is not installed. Run `npm run setup-db:full` in `server`.' });
         }
 
         const boardResult = await pool.request()
@@ -1894,7 +1894,7 @@ router.put('/sessions/:id/agenda', checkPermission(['can_manage_governance_sessi
 
         const pool = await getPool();
         if (!(await hasGovernanceSessionSchema(pool))) {
-            return res.status(409).json({ error: 'Governance session mode is not installed. Run `npm run migrate:wave2` in `server`.' });
+            return res.status(409).json({ error: 'Governance session mode is not installed. Run `npm run setup-db:full` in `server`.' });
         }
 
         const sessionResult = await pool.request()
@@ -1949,7 +1949,7 @@ router.post('/sessions/:id/start', checkPermission(['can_manage_governance_sessi
 
         const pool = await getPool();
         if (!(await hasGovernanceSessionSchema(pool))) {
-            return res.status(409).json({ error: 'Governance session mode is not installed. Run `npm run migrate:wave2` in `server`.' });
+            return res.status(409).json({ error: 'Governance session mode is not installed. Run `npm run setup-db:full` in `server`.' });
         }
 
         const sessionResult = await pool.request()
@@ -2019,7 +2019,7 @@ router.post('/sessions/:id/close', checkPermission(['can_manage_governance_sessi
 
         const pool = await getPool();
         if (!(await hasGovernanceSessionSchema(pool))) {
-            return res.status(409).json({ error: 'Governance session mode is not installed. Run `npm run migrate:wave2` in `server`.' });
+            return res.status(409).json({ error: 'Governance session mode is not installed. Run `npm run setup-db:full` in `server`.' });
         }
 
         const sessionResult = await pool.request()

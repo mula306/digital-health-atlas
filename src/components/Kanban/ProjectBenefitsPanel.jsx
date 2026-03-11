@@ -194,7 +194,7 @@ export function ProjectBenefitsPanel({ projectId, canEditProject }) {
             {!schemaReady && (
                 <div className="project-benefits-warning">
                     <AlertTriangle size={15} />
-                    Benefits schema is unavailable. Run `npm run migrate:wave3` in `server`.
+                    Benefits schema is unavailable. Run `npm run setup-db:full` in `server`.
                 </div>
             )}
 

@@ -1,5 +1,6 @@
--- Project Kanban Database Schema
--- Run this against SQL Server 2022 Docker container
+﻿-- Digital Health Atlas Canonical SQL Server Schema
+-- Fresh installs should run this via `npm run setup-db` (or `npm run setup-db:full` for RBAC seed data).
+-- Includes governance phases 0-3, multi-org sharing, watchlists, task tracking, wave2 session/SLA, and wave3 benefits/capacity features.
 
 -- Create database
 IF NOT EXISTS (SELECT * FROM sys.databases WHERE name = 'DHAtlas')
@@ -11,7 +12,7 @@ GO
 USE DHAtlas;
 GO
 
--- Goals table (hierarchical with Org→Div→Dept→Branch)
+-- Goals table (hierarchical with Org -> Div -> Dept -> Branch)
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'Goals')
 CREATE TABLE Goals (
     id INT IDENTITY(1,1) PRIMARY KEY,
@@ -1182,7 +1183,7 @@ BEGIN
 END
 GO
 
--- Project ↔ Tag junction
+-- Project â†” Tag junction
 IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'ProjectTags')
 BEGIN
     CREATE TABLE ProjectTags (
