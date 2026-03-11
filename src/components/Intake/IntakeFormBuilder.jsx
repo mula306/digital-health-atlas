@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Plus, Trash2, Copy, Check, FileText, ChevronUp, ChevronDown } from 'lucide-react';
 import { useData } from '../../context/DataContext';
+import { ensureRequiredIntakeFields, INTAKE_SYSTEM_FIELDS } from '../../../shared/intakeSystemFields.js';
 import './Intake.css';
 
 const FIELD_TYPES = [
@@ -12,6 +13,32 @@ const FIELD_TYPES = [
     { value: 'select', label: 'Dropdown' }
 ];
 
+const parseSelectOptions = (value) => String(value || '')
+    .split(',')
+    .map((option) => option.trim())
+    .filter(Boolean);
+
+const withOptionsText = (field) => ({
+    ...field,
+    optionsText: field.type === 'select'
+        ? (typeof field.optionsText === 'string' ? field.optionsText : (field.options || []).join(', '))
+        : ''
+});
+
+const buildEditableFields = (sourceFields) => ensureRequiredIntakeFields(sourceFields).map(withOptionsText);
+
+const serializeField = (field) => ({
+    id: field.id,
+    type: field.type,
+    label: field.label,
+    required: !!field.required,
+    options: field.type === 'select'
+        ? parseSelectOptions(typeof field.optionsText === 'string' ? field.optionsText : (field.options || []).join(', '))
+        : [],
+    systemKey: field.systemKey || null,
+    locked: !!field.locked
+});
+
 export function IntakeFormBuilder({ form, onClose }) {
     const { addIntakeForm, updateIntakeForm, goals, fetchGovernanceBoards, hasPermission } = useData();
     const isEditing = !!form;
@@ -19,7 +46,7 @@ export function IntakeFormBuilder({ form, onClose }) {
 
     const [name, setName] = useState(form?.name || '');
     const [description, setDescription] = useState(form?.description || '');
-    const [fields, setFields] = useState(form?.fields || []);
+    const [fields, setFields] = useState(() => buildEditableFields(form?.fields || []));
     const [defaultGoalId, setDefaultGoalId] = useState(form?.defaultGoalId || '');
     const [governanceMode, setGovernanceMode] = useState(form?.governanceMode || 'off');
     const [governanceBoardId, setGovernanceBoardId] = useState(form?.governanceBoardId || '');
@@ -45,13 +72,14 @@ export function IntakeFormBuilder({ form, onClose }) {
     }, [canManageGovernance, fetchGovernanceBoards]);
 
     const addField = () => {
-        setFields([...fields, {
+        setFields(buildEditableFields([...fields, {
             id: `f-${Date.now()}`,
             type: 'text',
             label: '',
             required: false,
-            options: []
-        }]);
+            options: [],
+            optionsText: ''
+        }]));
     };
 
     const updateField = (id, updates) => {
@@ -59,6 +87,8 @@ export function IntakeFormBuilder({ form, onClose }) {
     };
 
     const removeField = (id) => {
+        const fieldToRemove = fields.find((field) => field.id === id);
+        if (fieldToRemove?.locked) return;
         setFields(fields.filter(f => f.id !== id));
     };
 
@@ -66,6 +96,7 @@ export function IntakeFormBuilder({ form, onClose }) {
         const newFields = [...fields];
         const newIndex = index + direction;
         if (newIndex < 0 || newIndex >= fields.length) return;
+        if (fields[index]?.locked || fields[newIndex]?.locked) return;
         [newFields[index], newFields[newIndex]] = [newFields[newIndex], newFields[index]];
         setFields(newFields);
     };
@@ -79,7 +110,7 @@ export function IntakeFormBuilder({ form, onClose }) {
         const formData = {
             name,
             description,
-            fields,
+            fields: fields.map(serializeField),
             defaultGoalId: defaultGoalId || null
         };
         if (canManageGovernance) {
@@ -107,18 +138,12 @@ export function IntakeFormBuilder({ form, onClose }) {
     };
 
     const hasMissingLabels = fields.some(f => !f.label || !f.label.trim());
-    const hasTextField = fields.some(f => f.type === 'text');
-    const hasTextareaField = fields.some(f => f.type === 'textarea');
+    const missingSystemFields = INTAKE_SYSTEM_FIELDS.filter((systemField) => (
+        !fields.some((field) => String(field.systemKey || '').toLowerCase() === systemField.key)
+    ));
     const hasGovernanceError = canManageGovernance && governanceMode !== 'off' && !governanceBoardId;
 
-    // Valid forms require:
-    // 1. A Name
-    // 2. At least one field total
-    // 3. No missing field labels
-    // 4. At least one Text field (for Project Name fallback)
-    // 5. At least one Long Text field (for Project Description fallback)
-    // 6. Valid governance settings
-    const isInvalid = !name || fields.length === 0 || hasMissingLabels || !hasTextField || !hasTextareaField || hasGovernanceError;
+    const isInvalid = !name || hasMissingLabels || missingSystemFields.length > 0 || hasGovernanceError;
 
     return (
         <form onSubmit={handleSubmit} className="intake-form-builder">
@@ -224,7 +249,7 @@ export function IntakeFormBuilder({ form, onClose }) {
                                 <button
                                     type="button"
                                     onClick={() => moveField(index, -1)}
-                                    disabled={index === 0}
+                                    disabled={index === 0 || field.locked || fields[index - 1]?.locked}
                                     className="move-btn"
                                     aria-label="Move field up"
                                 >
@@ -233,7 +258,7 @@ export function IntakeFormBuilder({ form, onClose }) {
                                 <button
                                     type="button"
                                     onClick={() => moveField(index, 1)}
-                                    disabled={index === fields.length - 1}
+                                    disabled={index === fields.length - 1 || field.locked || fields[index + 1]?.locked}
                                     className="move-btn"
                                     aria-label="Move field down"
                                 >
@@ -248,12 +273,14 @@ export function IntakeFormBuilder({ form, onClose }) {
                                     onChange={(e) => updateField(field.id, { label: e.target.value })}
                                     placeholder="Field label"
                                     className="form-input field-label-input"
+                                    disabled={field.locked}
                                 />
 
                                 <select
                                     value={field.type}
                                     onChange={(e) => updateField(field.id, { type: e.target.value })}
                                     className="form-select field-type-select"
+                                    disabled={field.locked}
                                 >
                                     {FIELD_TYPES.map(t => (
                                         <option key={t.value} value={t.value}>{t.label}</option>
@@ -265,14 +292,16 @@ export function IntakeFormBuilder({ form, onClose }) {
                                         type="checkbox"
                                         checked={field.required}
                                         onChange={(e) => updateField(field.id, { required: e.target.checked })}
+                                        disabled={field.locked}
                                     />
-                                    Required
+                                    {field.locked ? 'Required system field' : 'Required'}
                                 </label>
 
                                 <button
                                     type="button"
                                     onClick={() => removeField(field.id)}
                                     className="btn-icon-danger"
+                                    disabled={field.locked}
                                 >
                                     <Trash2 size={16} />
                                 </button>
@@ -282,9 +311,10 @@ export function IntakeFormBuilder({ form, onClose }) {
                                 <div className="field-options">
                                     <input
                                         type="text"
-                                        value={(field.options || []).join(', ')}
+                                        value={field.optionsText || ''}
                                         onChange={(e) => updateField(field.id, {
-                                            options: e.target.value.split(',').map(o => o.trim()).filter(Boolean)
+                                            optionsText: e.target.value,
+                                            options: parseSelectOptions(e.target.value)
                                         })}
                                         placeholder="Options (comma-separated)"
                                         className="form-input"
@@ -315,10 +345,8 @@ export function IntakeFormBuilder({ form, onClose }) {
                         <strong>Cannot save form yet. Please fix the following:</strong>
                         <ul style={{ margin: '0.5rem 0 0 1.25rem', padding: 0 }}>
                             {!name && <li>Form Name is required</li>}
-                            {fields.length === 0 && <li>At least one field is required</li>}
                             {hasMissingLabels && <li>All fields must have a label</li>}
-                            {fields.length > 0 && !hasTextField && <li>At least one Text field is required (used for Project Name fallback)</li>}
-                            {fields.length > 0 && !hasTextareaField && <li>At least one Long Text field is required (used for Project Description fallback)</li>}
+                            {missingSystemFields.length > 0 && <li>Your Name, Project Name, and Description are required system fields on every intake form</li>}
                             {hasGovernanceError && <li>Governance Board must be selected when policy is Optional or Required</li>}
                         </ul>
                     </div>

@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Clock, MessageSquare, Send, CheckCircle, XCircle } from 'lucide-react';
 import { useData } from '../../context/DataContext';
 import { Modal } from '../UI/Modal';
+import { getIntakeSystemField, INTAKE_SYSTEM_FIELD_KEYS } from '../../../shared/intakeSystemFields.js';
 import './Intake.css';
 
 const INTAKE_FOCUS_STORAGE_KEY = 'dha_intake_focus_submission_payload';
@@ -148,6 +149,7 @@ export function MySubmissionsList() {
             <div className="submissions-list">
                 {sortedSubmissions.map(submission => {
                     const form = getForm(submission.formId);
+                    const projectNameField = form ? getIntakeSystemField(form.fields, INTAKE_SYSTEM_FIELD_KEYS.PROJECT_NAME) : null;
                     const unreadCount = getUnreadCount(submission);
                     const isActionRequired = submission.status === 'awaiting-response';
 
@@ -157,7 +159,9 @@ export function MySubmissionsList() {
                                 <div className="submission-main-info">
                                     {/* Primary: Project Name (or Form Name if no fields) */}
                                     <h4 className="submission-title">
-                                        {form?.fields?.[0] ? (submission.formData?.[form.fields[0].id] || 'Untitled Request') : (form?.name || 'Unknown Request')}
+                                        {projectNameField
+                                            ? (submission.formData?.[projectNameField.id] || 'Untitled Request')
+                                            : (form?.fields?.[0] ? (submission.formData?.[form.fields[0].id] || 'Untitled Request') : (form?.name || 'Unknown Request'))}
                                     </h4>
 
                                     {/* Secondary: Form Type */}

@@ -10,6 +10,7 @@ import {
 } from '../middleware/rateLimiters.js';
 import { handleError } from '../utils/errorHandler.js';
 import { logAudit } from '../utils/auditLogger.js';
+import { ensureRequiredIntakeFields } from '../../shared/intakeSystemFields.js';
 
 const router = express.Router();
 
@@ -534,6 +535,7 @@ router.get('/forms', requireAuth, async (req, res) => {
 router.post('/forms', checkPermission('can_manage_intake_forms'), async (req, res) => {
     try {
         const { name, description, fields, defaultGoalId, governanceMode, governanceBoardId } = req.body;
+        const normalizedFields = ensureRequiredIntakeFields(fields);
         const pool = await getPool();
         const schemaReady = await hasGovernanceSchema(pool);
         const normalizedMode = normalizeGovernanceMode(governanceMode, 'off');
@@ -559,7 +561,7 @@ router.post('/forms', checkPermission('can_manage_intake_forms'), async (req, re
         const request = pool.request()
             .input('name', sql.NVarChar, name)
             .input('description', sql.NVarChar, description)
-            .input('fields', sql.NVarChar, JSON.stringify(fields))
+            .input('fields', sql.NVarChar, JSON.stringify(normalizedFields))
             .input('defaultGoalId', sql.Int, defaultGoalId ? parseInt(defaultGoalId, 10) : null);
 
         let result;
@@ -600,7 +602,7 @@ router.post('/forms', checkPermission('can_manage_intake_forms'), async (req, re
             id: newId,
             name,
             description,
-            fields,
+            fields: normalizedFields,
             defaultGoalId,
             governanceMode: schemaReady ? normalizedMode : 'off',
             governanceBoardId: schemaReady && parsedBoardId !== null ? String(parsedBoardId) : null,
@@ -615,6 +617,7 @@ router.post('/forms', checkPermission('can_manage_intake_forms'), async (req, re
 router.put('/forms/:id', checkPermission('can_manage_intake_forms'), async (req, res) => {
     try {
         const { name, description, fields, defaultGoalId, governanceMode, governanceBoardId } = req.body;
+        const normalizedFields = ensureRequiredIntakeFields(fields);
         const id = parseInt(req.params.id);
         const pool = await getPool();
         const schemaReady = await hasGovernanceSchema(pool);
@@ -648,7 +651,7 @@ router.put('/forms/:id', checkPermission('can_manage_intake_forms'), async (req,
             .input('id', sql.Int, id)
             .input('name', sql.NVarChar, name)
             .input('description', sql.NVarChar, description)
-            .input('fields', sql.NVarChar, JSON.stringify(fields))
+            .input('fields', sql.NVarChar, JSON.stringify(normalizedFields))
             .input('defaultGoalId', sql.Int, defaultGoalId ? parseInt(defaultGoalId, 10) : null);
 
         if (schemaReady) {

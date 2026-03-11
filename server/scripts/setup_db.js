@@ -2,6 +2,11 @@
 // Usage:
 //   node scripts/setup_db.js
 //   npm run setup-db
+//
+// Environment resolution:
+// - reads DB_* values from the current process environment
+// - also loads `.env` via `server/db.js` (`dotenv/config`) on each invocation
+// - `server/.env` is the expected local source for repeatable setup-db runs
 
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -74,7 +79,7 @@ async function setupDatabase() {
         console.error('\nDatabase setup failed:', err.message);
         console.error('\nCheck:');
         console.error('  1. Docker SQL Server container is running');
-        console.error('  2. server/.env has valid DB_* settings');
+        console.error('  2. server/.env has valid DB_* settings (or DB_* is exported in your shell)');
         console.error('  3. SA password meets SQL Server complexity rules');
         process.exit(1);
     } finally {

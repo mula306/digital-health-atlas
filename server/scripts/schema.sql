@@ -202,12 +202,18 @@ CREATE TABLE ProjectBenefitRealization (
 GO
 
 -- Intake Forms
+-- `fields` stores a JSON array of field definitions.
+-- Current intake contract requires three system fields on all forms:
+--   1. Your Name        -> { systemKey: 'requester_name', type: 'text', required: true }
+--   2. Project Name     -> { systemKey: 'project_name', type: 'text', required: true }
+--   3. Description      -> { systemKey: 'project_description', type: 'textarea', required: true }
+-- Additional custom fields may follow after these locked system fields.
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'IntakeForms')
 CREATE TABLE IntakeForms (
     id INT IDENTITY(1,1) PRIMARY KEY,
     name NVARCHAR(255) NOT NULL,
     description NVARCHAR(MAX) NULL,
-    fields NVARCHAR(MAX) NULL,  -- JSON array of field definitions
+    fields NVARCHAR(MAX) NULL,  -- JSON field definitions including optional `systemKey` / `locked` metadata
     defaultGoalId INT NULL,
     createdAt DATETIME2 DEFAULT GETDATE(),
     CONSTRAINT FK_IntakeForms_Goal FOREIGN KEY (defaultGoalId) REFERENCES Goals(id) ON DELETE SET NULL

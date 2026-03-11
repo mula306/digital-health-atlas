@@ -16,6 +16,10 @@ Digital Health Atlas is an intake, governance, and portfolio execution platform 
 
 - Guided 4-step intake flow: `Submission -> Triage -> Governance -> Resolution`.
 - Stage readiness/completion badges with stage-level KPI cards.
+- Intake forms normalize to three required system fields on every form:
+  - `Your Name` (auto-populated from the logged-in requester)
+  - `Project Name` (authoritative source for project title during conversion)
+  - `Description` (authoritative source for converted project description)
 - Governance routing with structured reason templates (apply/skip governance) and validation.
 - Governance queue with server-backed pagination, board/status/decision filters, `My pending votes`, and `Needs chair decision`.
 - Voting and decision UX gated by true review state (eligible voter checks, deadline checks, quorum/chair rules, clear blocker text).
@@ -98,6 +102,7 @@ Digital Health Atlas is an intake, governance, and portfolio execution platform 
 - Canonical schema: `server/scripts/schema.sql`
 - Fresh installs use canonical schema only; migration scripts are not required
 - Included feature tables cover governance phases, multi-org sharing, project watchlist, task tracking, wave2, and wave3 additions
+- `IntakeForms.fields` is a JSON contract, not a separate relational table. It now carries optional `systemKey` and `locked` metadata for required system fields.
 
 ### Quality baseline
 
@@ -162,6 +167,12 @@ Required values:
 - `server/.env`: `DB_USER`, `DB_PASSWORD`, `DB_SERVER`, `DB_PORT`, `DB_NAME`, `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`
 - `.env`: `VITE_AZURE_CLIENT_ID`, `VITE_AZURE_TENANT_ID`, `VITE_AZURE_API_SCOPE`
 
+Notes:
+
+- `npm run setup-db` and `npm run setup-db:full` read `DB_*` values on every invocation.
+- Locally, the expected source is `server/.env` unless you deliberately override with shell environment variables.
+- If Docker SQL is recreated with a different `MSSQL_SA_PASSWORD`, update `server/.env` `DB_PASSWORD` to match before rerunning setup.
+
 Test-only values (optional):
 
 - `.env`: `VITE_TEST_AUTH_MODE=mock`, `VITE_TEST_USER=admin`
@@ -198,6 +209,11 @@ npm run setup-db:full
 - creates database if missing
 - applies canonical `schema.sql`
 - seeds default RBAC role-permission entries
+
+Operational note:
+
+- The setup scripts are stateless and start a fresh Node process each run, so they re-read `server/.env` each time by design.
+- That is expected behavior, not a one-time bootstrap cache.
 
 This command is idempotent and safe to re-run.
 

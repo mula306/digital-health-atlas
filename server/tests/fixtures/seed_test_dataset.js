@@ -138,7 +138,7 @@ export const seedTestDataset = async () => {
                     ${FIXTURE_IDS.FORM_1},
                     'Test Intake Form',
                     'Deterministic intake form for integration tests',
-                    '[{"id":"requestName","type":"text","label":"Request Name","required":true}]',
+                    '[{"id":"requesterName","type":"text","label":"Your Name","required":true,"systemKey":"requester_name","locked":true},{"id":"projectName","type":"text","label":"Project Name","required":true,"systemKey":"project_name","locked":true},{"id":"projectDescription","type":"textarea","label":"Description","required":true,"systemKey":"project_description","locked":true}]',
                     ${FIXTURE_IDS.GOAL_1},
                     ${FIXTURE_IDS.ORG_1},
                     'required',
@@ -155,7 +155,7 @@ export const seedTestDataset = async () => {
                 (
                     ${FIXTURE_IDS.SUBMISSION_1},
                     ${FIXTURE_IDS.FORM_1},
-                    '{"requestName":"Governance review request"}',
+                    '{"requesterName":"Editor User","projectName":"Governance review request","projectDescription":"Deterministic governance-backed project request"}',
                     'pending',
                     GETDATE(),
                     '${TEST_PERSONAS.editor.oid}',
@@ -171,7 +171,7 @@ export const seedTestDataset = async () => {
                 (
                     ${FIXTURE_IDS.SUBMISSION_2},
                     ${FIXTURE_IDS.FORM_1},
-                    '{"requestName":"Direct intake request"}',
+                    '{"requesterName":"Intake Manager","projectName":"Direct intake request","projectDescription":"Deterministic direct intake request"}',
                     'pending',
                     GETDATE(),
                     '${TEST_PERSONAS.intake_manager.oid}',
@@ -187,7 +187,7 @@ export const seedTestDataset = async () => {
                 (
                     ${FIXTURE_IDS.SUBMISSION_3},
                     ${FIXTURE_IDS.FORM_1},
-                    '{"requestName":"Admin self-submitted request"}',
+                    '{"requesterName":"Admin User","projectName":"Admin self-submitted request","projectDescription":"Deterministic admin intake request"}',
                     'pending',
                     GETDATE(),
                     '${TEST_PERSONAS.admin.oid}',

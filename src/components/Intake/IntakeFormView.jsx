@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { CheckCircle, AlertCircle, Send, MessageSquare } from 'lucide-react';
 import { useData } from '../../context/DataContext';
 import { useAuth } from '../../hooks/useAuth';
+import { getIntakeSystemField, INTAKE_SYSTEM_FIELD_KEYS } from '../../../shared/intakeSystemFields.js';
 import './Intake.css';
 
 export function IntakeFormView({ formId, submissionId }) {
@@ -44,10 +45,10 @@ export function IntakeFormView({ formId, submissionId }) {
         const initialData = {};
         form.fields.forEach(field => {
             if (account) {
-                const labelLower = field.label.toLowerCase();
-                if (labelLower.includes('name') && !labelLower.includes('project')) {
+                const systemKey = String(field.systemKey || '').toLowerCase();
+                if (systemKey === INTAKE_SYSTEM_FIELD_KEYS.REQUESTER_NAME) {
                     initialData[field.id] = account.name || '';
-                } else if (labelLower.includes('email')) {
+                } else if (field.type === 'email') {
                     initialData[field.id] = account.username || '';
                 } else {
                     initialData[field.id] = '';
@@ -191,6 +192,10 @@ export function IntakeFormView({ formId, submissionId }) {
         );
     }
 
+    const requesterNameField = getIntakeSystemField(form.fields, INTAKE_SYSTEM_FIELD_KEYS.REQUESTER_NAME);
+    const projectNameField = getIntakeSystemField(form.fields, INTAKE_SYSTEM_FIELD_KEYS.PROJECT_NAME);
+    const projectDescriptionField = getIntakeSystemField(form.fields, INTAKE_SYSTEM_FIELD_KEYS.PROJECT_DESCRIPTION);
+
     // Regular form submission mode
     const handleChange = (fieldId, value) => {
         setFormData(prev => ({ ...prev, [fieldId]: value }));
@@ -245,11 +250,20 @@ export function IntakeFormView({ formId, submissionId }) {
     return (
         <div className="intake-public-page">
             <div className="intake-public-card">
-                <div className="intake-public-header">
-                    <div className="intake-header-brand">Digital Health Atlas</div>
-                    <h1>{form.name}</h1>
-                    {form.description && <p>{form.description}</p>}
-                </div>
+                    <div className="intake-public-header">
+                        <div className="intake-header-brand">Digital Health Atlas</div>
+                        <h1>{form.name}</h1>
+                        {form.description && <p>{form.description}</p>}
+                        {(projectNameField || projectDescriptionField || requesterNameField) && (
+                            <p style={{ marginTop: '0.5rem', fontSize: '0.9rem', opacity: 0.85 }}>
+                                Required fields: {[
+                                    requesterNameField ? 'Your Name' : null,
+                                    projectNameField ? 'Project Name' : null,
+                                    projectDescriptionField ? 'Description' : null
+                                ].filter(Boolean).join(', ')}
+                            </p>
+                        )}
+                    </div>
 
                 <form className="intake-public-form" onSubmit={handleSubmit}>
                     {form.fields.map(field => (

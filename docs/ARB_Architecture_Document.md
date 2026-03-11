@@ -76,9 +76,9 @@ Review objectives:
 |---|---|---|
 | Strategy and portfolio alignment | Implemented | Goal hierarchy, KPI linkage, goal-to-project relationships |
 | Delivery execution | Implemented | Kanban/task management, assignment, checklist subtasks, status reporting |
-| Intake workflow | Implemented | Guided 4-stage intake flow with stage readiness and KPI strip |
+| Intake workflow | Implemented | Guided 4-stage intake flow with stage readiness, KPI strip, and normalized required system fields on forms |
 | Governance workflow | Implemented | Board/member/criteria config, voting, decisions, session mode, queue filters |
-| Intake-to-execution handoff | Implemented | Governance-aware conversion with kickoff task blueprints |
+| Intake-to-execution handoff | Implemented | Governance-aware conversion with kickoff task blueprints and explicit Project Name / Description mapping |
 | Executive oversight | Implemented | Executive Summary view, risk signals, report export |
 | Executive reporting automation | Implemented | Scheduled/manual executive packs, run history, due-run scheduler |
 | Multi-organization collaboration | Implemented | Project/goal sharing, request approvals, expiry and attestation |
@@ -214,6 +214,8 @@ The canonical schema (`server/scripts/schema.sql`) contains the current feature 
 
 - **Fresh install:** `setup-db:full` applies canonical schema + seeds permissions.
 - **Operational model:** schema-first bootstrap only; migrations are not required for environment setup.
+- **Intake form contract:** `IntakeForms.fields` is JSON-backed and now reserves three required system fields (`requester_name`, `project_name`, `project_description`) to stabilize requester prefill and intake-to-project conversion semantics.
+- **Setup behavior:** `setup-db` scripts re-read `DB_*` configuration from `server/.env` or the shell environment on every invocation; they are intentionally stateless.
 
 ### 6.4 Data governance observations
 
@@ -222,6 +224,7 @@ Strengths:
 - Relational integrity for core entities.
 - Governance and sharing auditability.
 - Expiry-aware org-sharing controls.
+- Stable intake form semantics through explicit system-field metadata rather than positional fallback rules.
 
 Gaps to address:
 

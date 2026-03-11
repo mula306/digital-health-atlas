@@ -4,6 +4,7 @@ import { useData } from '../../context/DataContext';
 import { useToast } from '../../context/ToastContext';
 import { Modal } from '../UI/Modal';
 import { canRouteGovernanceSubmission, getGovernanceReviewPermissions } from '../../utils/governanceAccess';
+import { getIntakeSystemField, INTAKE_SYSTEM_FIELD_KEYS } from '../../../shared/intakeSystemFields.js';
 import './Intake.css';
 
 const STATUS_LABELS = {
@@ -711,8 +712,10 @@ export function IntakeRequestsList({ initialFilter = 'all', showFilterTabs = tru
             toast.error('Form definition not found');
             return;
         }
-        const nameField = form.fields.find(f => f.type === 'text');
-        const descField = form.fields.find(f => f.type === 'textarea');
+        const nameField = getIntakeSystemField(form.fields, INTAKE_SYSTEM_FIELD_KEYS.PROJECT_NAME)
+            || form.fields.find(f => f.type === 'text');
+        const descField = getIntakeSystemField(form.fields, INTAKE_SYSTEM_FIELD_KEYS.PROJECT_DESCRIPTION)
+            || form.fields.find(f => f.type === 'textarea');
 
         const projectData = {
             title: selectedSubmission.formData?.[nameField?.id] || 'New Project',
