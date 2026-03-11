@@ -107,6 +107,7 @@ router.get('/', checkPermission(['can_view_goals', 'can_view_exec_dashboard']), 
             return {
                 id: goal.id.toString(),
                 title: goal.title,
+                description: goal.description || null,
                 type: goal.type,
                 parentId: goal.parentId ? goal.parentId.toString() : null,
                 createdAt: goal.createdAt,
@@ -133,21 +134,34 @@ router.get('/', checkPermission(['can_view_goals', 'can_view_exec_dashboard']), 
 // Create goal
 router.post('/', checkPermission('can_create_goal'), withSharedScope, async (req, res) => {
     try {
-        const { title, type, parentId } = req.body;
+        const { title, description, type, parentId } = req.body;
         if (!title || !type) {
             return res.status(400).json({ error: 'Missing required fields: title, type' });
         }
         const pool = await getPool();
         const result = await pool.request()
             .input('title', sql.NVarChar, title)
+            .input('description', sql.NVarChar(sql.MAX), description || null)
             .input('type', sql.NVarChar, type)
             .input('parentId', sql.Int, parentId ? parseInt(parentId) : null)
             .input('orgId', sql.Int, req.orgId)
-            .query('INSERT INTO Goals (title, type, parentId, orgId) OUTPUT INSERTED.id VALUES (@title, @type, @parentId, @orgId)');
+            .query(`
+                INSERT INTO Goals (title, description, type, parentId, orgId)
+                OUTPUT INSERTED.id
+                VALUES (@title, @description, @type, @parentId, @orgId)
+            `);
 
         const newId = result.recordset[0].id.toString();
-        logAudit({ action: 'goal.create', entityType: 'goal', entityId: newId, entityTitle: title, user: getAuthUser(req), after: { title, type, parentId }, req });
-        res.json({ id: newId, title, type, parentId, kpis: [] });
+        logAudit({
+            action: 'goal.create',
+            entityType: 'goal',
+            entityId: newId,
+            entityTitle: title,
+            user: getAuthUser(req),
+            after: { title, description: description || null, type, parentId },
+            req
+        });
+        res.json({ id: newId, title, description: description || null, type, parentId, kpis: [] });
     } catch (err) {
         handleError(res, 'creating goal', err);
     }
@@ -156,18 +170,28 @@ router.post('/', checkPermission('can_create_goal'), withSharedScope, async (req
 // Update goal
 router.put('/:id', checkPermission('can_edit_goal'), withSharedScope, checkGoalAccess(), requireGoalWriteAccess, async (req, res) => {
     try {
-        const { title, type } = req.body;
+        const { title, description, type } = req.body;
         const id = parseInt(req.params.id);
         const pool = await getPool();
-        const prev = await pool.request().input('id', sql.Int, id).query('SELECT title, type FROM Goals WHERE id = @id');
+        const prev = await pool.request().input('id', sql.Int, id).query('SELECT title, description, type FROM Goals WHERE id = @id');
         const beforeState = prev.recordset[0];
         await pool.request()
             .input('id', sql.Int, id)
             .input('title', sql.NVarChar, title)
+            .input('description', sql.NVarChar(sql.MAX), description || null)
             .input('type', sql.NVarChar, type)
-            .query('UPDATE Goals SET title = @title, type = @type WHERE id = @id');
+            .query('UPDATE Goals SET title = @title, description = @description, type = @type WHERE id = @id');
 
-        logAudit({ action: 'goal.update', entityType: 'goal', entityId: id, entityTitle: title, user: getAuthUser(req), before: beforeState, after: { title, type }, req });
+        logAudit({
+            action: 'goal.update',
+            entityType: 'goal',
+            entityId: id,
+            entityTitle: title,
+            user: getAuthUser(req),
+            before: beforeState,
+            after: { title, description: description || null, type },
+            req
+        });
         res.json({ success: true });
     } catch (err) {
         handleError(res, 'updating goal', err);

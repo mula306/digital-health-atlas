@@ -19,6 +19,7 @@
         "migrate:governance:phase1": "node scripts/run_migration.js migrate_governance_phase1.sql",
         "migrate:governance:phase2": "node scripts/run_migration.js migrate_governance_phase2.sql",
         "migrate:governance:phase3": "node scripts/run_migration.js migrate_governance_phase3.sql",
+        "migrate:goal-description": "node scripts/run_migration.js migrate_goal_description.sql",
         "migrate:multi-org": "node scripts/run_migration.js migrate_multi_org.sql",
         "migrate:org-sharing-v2": "node scripts/run_migration.js migrate_org_sharing_v2.sql",
         "migrate:project-goals": "node scripts/run_migration.js migrate_project_goals.sql",

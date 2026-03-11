@@ -40,6 +40,15 @@ const LAST_LOGIN_UPDATE_INTERVAL_MS = Number.isFinite(AUTH_LAST_LOGIN_UPDATE_MS)
     : 300000;
 const DUPLICATE_KEY_ERROR_CODES = new Set([2601, 2627]);
 const EXEC_PACK_SCHEDULER_INTERVAL_MS = Number.parseInt(process.env.EXEC_PACK_SCHEDULER_INTERVAL_MS || '60000', 10);
+const parsePositiveInt = (value, fallback) => {
+    const parsed = Number.parseInt(value, 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+const API_RATE_LIMIT_WINDOW_MS = parsePositiveInt(process.env.API_RATE_LIMIT_WINDOW_MS, 15 * 60 * 1000);
+const API_RATE_LIMIT_MAX = parsePositiveInt(
+    process.env.API_RATE_LIMIT_MAX,
+    IS_DEVELOPMENT ? 5000 : 1500
+);
 const configuredCorsOrigins = (process.env.CORS_ALLOWED_ORIGINS || '')
     .split(',')
     .map((origin) => origin.trim())
@@ -84,8 +93,8 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // Rate Limiting
 const limiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 500, // Limit each IP to 500 requests per windowMs
+    windowMs: API_RATE_LIMIT_WINDOW_MS,
+    max: API_RATE_LIMIT_MAX,
     standardHeaders: true,
     legacyHeaders: false,
 });

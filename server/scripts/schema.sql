@@ -16,11 +16,18 @@ IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'Goals')
 CREATE TABLE Goals (
     id INT IDENTITY(1,1) PRIMARY KEY,
     title NVARCHAR(255) NOT NULL,
+    description NVARCHAR(MAX) NULL,
     type NVARCHAR(20) NOT NULL,  -- 'org', 'div', 'dept', 'branch'
     parentId INT NULL,
     createdAt DATETIME2 DEFAULT GETDATE(),
     CONSTRAINT FK_Goals_Parent FOREIGN KEY (parentId) REFERENCES Goals(id)
 );
+GO
+
+IF COL_LENGTH('Goals', 'description') IS NULL
+BEGIN
+    ALTER TABLE Goals ADD description NVARCHAR(MAX) NULL;
+END
 GO
 
 -- KPIs (linked to Goals)

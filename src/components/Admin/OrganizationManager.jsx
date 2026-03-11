@@ -24,7 +24,6 @@ export function OrganizationManager({
         assignUserToOrg, unshareProject,
         fetchOrgSharingSummary, bulkShareProjects, bulkUnshareProjects,
         bulkShareGoals, bulkUnshareGoals,
-        fetchSharingRequests, createSharingRequest, approveSharingRequest, rejectSharingRequest, revokeSharingRequest,
         authFetch, currentUser, hasPermission
     } = useData();
     const { success, error: showError } = useToast();
@@ -59,15 +58,6 @@ export function OrganizationManager({
     const [shareAccessLevel, setShareAccessLevel] = useState('read');
     const [shareExpiresAt, setShareExpiresAt] = useState('');
     const [bulkActionLoading, setBulkActionLoading] = useState(false);
-    const [sharingRequests, setSharingRequests] = useState([]);
-    const [loadingSharingRequests, setLoadingSharingRequests] = useState(false);
-    const [requestActionLoading, setRequestActionLoading] = useState(false);
-    const [requestEntityType, setRequestEntityType] = useState('project');
-    const [requestEntityId, setRequestEntityId] = useState('');
-    const [requestAccessLevel, setRequestAccessLevel] = useState('read');
-    const [requestReason, setRequestReason] = useState('');
-    const [requestExpiresAt, setRequestExpiresAt] = useState('');
-    const [requestOwnerAttested, setRequestOwnerAttested] = useState(true);
 
     // ─── All projects/goals for sharing (fetched directly, not paginated) ───
     const [allProjects, setAllProjects] = useState([]);
@@ -296,9 +286,6 @@ export function OrganizationManager({
         setProjectSearch('');
         setGoalSearch('');
         setShareExpiresAt('');
-        setRequestEntityId('');
-        setRequestReason('');
-        setRequestExpiresAt('');
     };
 
     const toggleUserSelection = (userId) => {
@@ -395,30 +382,14 @@ export function OrganizationManager({
         }
     }, [fetchOrgSharingSummary, showError]);
 
-    const loadSharingRequests = useCallback(async (orgId) => {
-        if (!orgId) return;
-        setLoadingSharingRequests(true);
-        try {
-            const requests = await fetchSharingRequests({ targetOrgId: orgId });
-            setSharingRequests(Array.isArray(requests) ? requests : []);
-        } catch {
-            showError('Failed to load sharing requests');
-            setSharingRequests([]);
-        } finally {
-            setLoadingSharingRequests(false);
-        }
-    }, [fetchSharingRequests, showError]);
-
     useEffect(() => {
         if (activeSection !== 'sharing') return;
         if (!sharingTargetOrg) {
             setSharingSummary({ projects: [], goals: [] });
-            setSharingRequests([]);
             return;
         }
         loadSharingSummary(sharingTargetOrg);
-        loadSharingRequests(sharingTargetOrg);
-    }, [activeSection, sharingTargetOrg, loadSharingSummary, loadSharingRequests]);
+    }, [activeSection, sharingTargetOrg, loadSharingSummary]);
 
     // Project list: owner projects only (not from target org)
     const sharingTargetOrgObj = useMemo(() =>
@@ -476,31 +447,6 @@ export function OrganizationManager({
         });
     }, [allGoals, goalSearch, sharedGoalIds]);
 
-    const requestEntityOptions = useMemo(() => {
-        if (requestEntityType === 'goal') {
-            return rootGoals.map((goal) => ({
-                id: String(goal.id),
-                label: goal.title
-            }));
-        }
-        return filteredProjects.map((project) => ({
-            id: String(project.id),
-            label: project.title
-        }));
-    }, [filteredProjects, requestEntityType, rootGoals]);
-
-    const sortedSharingRequests = useMemo(() => {
-        return [...sharingRequests].sort((left, right) => {
-            const leftDate = new Date(left.updatedAt || left.requestedAt || 0).getTime();
-            const rightDate = new Date(right.updatedAt || right.requestedAt || 0).getTime();
-            return rightDate - leftDate;
-        });
-    }, [sharingRequests]);
-
-    useEffect(() => {
-        setRequestEntityId('');
-    }, [requestEntityType, sharingTargetOrg]);
-
     // Selection handlers
     const toggleProjectSelect = (id) => {
         setSelectedProjectIds(prev => {
@@ -549,7 +495,6 @@ export function OrganizationManager({
             setSelectedProjectIds(new Set());
             setShareExpiresAt('');
             loadSharingSummary(sharingTargetOrg);
-            loadSharingRequests(sharingTargetOrg);
         } catch {
             showError('Failed to share projects');
         } finally {
@@ -565,7 +510,6 @@ export function OrganizationManager({
             success(`${selectedProjectIds.size} project${selectedProjectIds.size > 1 ? 's' : ''} unshared`);
             setSelectedProjectIds(new Set());
             loadSharingSummary(sharingTargetOrg);
-            loadSharingRequests(sharingTargetOrg);
         } catch {
             showError('Failed to unshare projects');
         } finally {
@@ -588,7 +532,6 @@ export function OrganizationManager({
             setSelectedGoalIds(new Set());
             setShareExpiresAt('');
             loadSharingSummary(sharingTargetOrg);
-            loadSharingRequests(sharingTargetOrg);
         } catch {
             showError('Failed to share goals');
         } finally {
@@ -604,83 +547,10 @@ export function OrganizationManager({
             success(`Goals unshared`);
             setSelectedGoalIds(new Set());
             loadSharingSummary(sharingTargetOrg);
-            loadSharingRequests(sharingTargetOrg);
         } catch {
             showError('Failed to unshare goals');
         } finally {
             setBulkActionLoading(false);
-        }
-    };
-
-    const handleSubmitSharingRequest = async () => {
-        if (!sharingTargetOrg) return;
-        if (!requestEntityId) {
-            showError('Select a project or goal before submitting a sharing request');
-            return;
-        }
-
-        try {
-            setRequestActionLoading(true);
-            await createSharingRequest({
-                entityType: requestEntityType,
-                entityId: parseInt(requestEntityId, 10),
-                targetOrgId: parseInt(sharingTargetOrg, 10),
-                requestedAccessLevel: requestAccessLevel,
-                reason: requestReason.trim() || null,
-                expiresAt: toIsoOrNull(requestExpiresAt),
-                ownerAttested: requestOwnerAttested
-            });
-            success('Sharing request submitted');
-            setRequestReason('');
-            setRequestEntityId('');
-            setRequestExpiresAt('');
-            setRequestOwnerAttested(true);
-            loadSharingRequests(sharingTargetOrg);
-        } catch (err) {
-            showError(err?.message || 'Failed to submit sharing request');
-        } finally {
-            setRequestActionLoading(false);
-        }
-    };
-
-    const handleApproveRequest = async (requestId) => {
-        try {
-            setRequestActionLoading(true);
-            await approveSharingRequest(requestId, {});
-            success('Sharing request approved');
-            loadSharingRequests(sharingTargetOrg);
-            loadSharingSummary(sharingTargetOrg);
-        } catch (err) {
-            showError(err?.message || 'Failed to approve sharing request');
-        } finally {
-            setRequestActionLoading(false);
-        }
-    };
-
-    const handleRejectRequest = async (requestId) => {
-        try {
-            setRequestActionLoading(true);
-            await rejectSharingRequest(requestId, {});
-            success('Sharing request rejected');
-            loadSharingRequests(sharingTargetOrg);
-        } catch (err) {
-            showError(err?.message || 'Failed to reject sharing request');
-        } finally {
-            setRequestActionLoading(false);
-        }
-    };
-
-    const handleRevokeRequest = async (requestId) => {
-        try {
-            setRequestActionLoading(true);
-            await revokeSharingRequest(requestId, {});
-            success('Sharing request revoked');
-            loadSharingRequests(sharingTargetOrg);
-            loadSharingSummary(sharingTargetOrg);
-        } catch (err) {
-            showError(err?.message || 'Failed to revoke sharing request');
-        } finally {
-            setRequestActionLoading(false);
         }
     };
 
@@ -690,7 +560,6 @@ export function OrganizationManager({
             await unshareProject(projectId, sharingTargetOrg);
             success('Project unshared');
             loadSharingSummary(sharingTargetOrg);
-            loadSharingRequests(sharingTargetOrg);
         } catch {
             showError('Failed to unshare project');
         }
@@ -738,7 +607,7 @@ export function OrganizationManager({
             complete: activeOrgs > 1 && selectedOrgSharedCount > 0,
             counter: selectedOrgId ? `${selectedOrgSharedCount} shared` : 'Select org',
             blocker: !canManageSharingRequests
-                ? 'Requires sharing request management permission.'
+                ? 'Requires data sharing management permission.'
                 : (activeOrgs > 1 ? '' : 'Activate at least two organizations to enable sharing.')
         }
     ]), [activeOrgs, canManageOrganizations, canManageSharingRequests, organizations.length, orgsWithMembersCount, selectedOrgId, selectedOrgSharedCount]);
@@ -1225,118 +1094,6 @@ export function OrganizationManager({
                                             <span className="org-sharing-summary-badge">
                                                 {sharingSummary.goals.length} goal{sharingSummary.goals.length !== 1 ? 's' : ''} shared
                                             </span>
-                                        </div>
-                                    </div>
-
-                                    <div className="org-sharing-requests-panel">
-                                        <div className="org-sharing-requests-header">
-                                            <strong>Sharing Requests</strong>
-                                            <span>{sortedSharingRequests.length} request{sortedSharingRequests.length === 1 ? '' : 's'}</span>
-                                        </div>
-
-                                        <div className="org-sharing-request-form">
-                                            <div className="org-sharing-request-grid">
-                                                <label>
-                                                    Entity Type
-                                                    <select value={requestEntityType} onChange={(e) => setRequestEntityType(e.target.value)}>
-                                                        <option value="project">Project</option>
-                                                        <option value="goal">Goal</option>
-                                                    </select>
-                                                </label>
-                                                <label>
-                                                    {requestEntityType === 'project' ? 'Project' : 'Goal'}
-                                                    <select value={requestEntityId} onChange={(e) => setRequestEntityId(e.target.value)}>
-                                                        <option value="">Select...</option>
-                                                        {requestEntityOptions.map((option) => (
-                                                            <option key={option.id} value={option.id}>{option.label}</option>
-                                                        ))}
-                                                    </select>
-                                                </label>
-                                                <label>
-                                                    Access Level
-                                                    <select value={requestAccessLevel} onChange={(e) => setRequestAccessLevel(e.target.value)}>
-                                                        <option value="read">Read</option>
-                                                        <option value="write">Write</option>
-                                                    </select>
-                                                </label>
-                                                <label>
-                                                    Expires At (optional)
-                                                    <input
-                                                        type="datetime-local"
-                                                        value={requestExpiresAt}
-                                                        onChange={(e) => setRequestExpiresAt(e.target.value)}
-                                                    />
-                                                </label>
-                                            </div>
-                                            <label className="org-sharing-request-reason">
-                                                Reason (optional)
-                                                <textarea
-                                                    value={requestReason}
-                                                    onChange={(e) => setRequestReason(e.target.value)}
-                                                    placeholder="Why this access is needed..."
-                                                />
-                                            </label>
-                                            <div className="org-sharing-request-actions">
-                                                <label className="org-sharing-request-checkbox">
-                                                    <input
-                                                        type="checkbox"
-                                                        checked={requestOwnerAttested}
-                                                        onChange={(e) => setRequestOwnerAttested(e.target.checked)}
-                                                    />
-                                                    Owner attestation complete
-                                                </label>
-                                                <button
-                                                    className="btn-primary btn-sm"
-                                                    onClick={handleSubmitSharingRequest}
-                                                    disabled={requestActionLoading || !requestEntityId}
-                                                >
-                                                    {requestActionLoading ? 'Submitting...' : 'Submit Request'}
-                                                </button>
-                                            </div>
-                                        </div>
-
-                                        <div className="org-sharing-request-list">
-                                            {loadingSharingRequests ? (
-                                                <div className="org-member-hint">Loading sharing requests...</div>
-                                            ) : sortedSharingRequests.length === 0 ? (
-                                                <div className="org-member-hint">No sharing requests for this organization.</div>
-                                            ) : (
-                                                sortedSharingRequests.slice(0, 8).map((request) => (
-                                                    <div key={request.id} className="org-sharing-request-row">
-                                                        <div className="org-sharing-request-main">
-                                                            <div className="org-sharing-request-title">
-                                                                {request.entityType}: {request.entityTitle || request.entityId}
-                                                            </div>
-                                                            <div className="org-sharing-request-meta">
-                                                                {request.requestedAccessLevel} - requested {formatDateTime(request.requestedAt)}
-                                                                {request.expiresAt ? ` - expires ${formatDateTime(request.expiresAt)}` : ''}
-                                                                {request.ownerAttested ? ' - attested' : ''}
-                                                            </div>
-                                                        </div>
-                                                        <div className="org-sharing-request-controls">
-                                                            <span className={`org-sharing-request-status ${request.status || 'pending'}`}>
-                                                                {request.status || 'pending'}
-                                                            </span>
-                                                            {request.status === 'pending' && canManageSharingRequests && (
-                                                                <>
-                                                                    <button className="org-action-btn success" onClick={() => handleApproveRequest(request.id)} disabled={requestActionLoading}>
-                                                                        Approve
-                                                                    </button>
-                                                                    <button className="org-action-btn danger" onClick={() => handleRejectRequest(request.id)} disabled={requestActionLoading}>
-                                                                        Reject
-                                                                    </button>
-                                                                </>
-                                                            )}
-                                                            {(request.status === 'pending' || request.status === 'approved') &&
-                                                                (canManageSharingRequests || request.requestedByOid === currentUser?.oid) && (
-                                                                    <button className="org-action-btn danger" onClick={() => handleRevokeRequest(request.id)} disabled={requestActionLoading}>
-                                                                        {request.status === 'pending' ? 'Withdraw' : 'Revoke'}
-                                                                    </button>
-                                                                )}
-                                                        </div>
-                                                    </div>
-                                                ))
-                                            )}
                                         </div>
                                     </div>
 
