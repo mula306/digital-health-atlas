@@ -5,6 +5,7 @@ import { handleError } from '../utils/errorHandler.js';
 import { logAudit } from '../utils/auditLogger.js';
 import { invalidateTagCache, invalidateProjectCache } from '../utils/cache.js';
 import { getRbacCatalogResponse, isKnownPermission, isKnownRole } from '../utils/rbacCatalog.js';
+import { buildInClause, addParams } from '../utils/sqlHelpers.js';
 
 const router = express.Router();
 
@@ -20,6 +21,93 @@ const parseNullableExpiry = (value) => {
 };
 
 const getScopedEntityAccessPredicate = () => '(expiresAt IS NULL OR expiresAt > GETDATE())';
+
+const createRequest = (dbOrTx) => (
+    dbOrTx instanceof sql.Transaction
+        ? new sql.Request(dbOrTx)
+        : dbOrTx.request()
+);
+
+const normalizeProjectIds = (projectIds) => (
+    [...new Set((Array.isArray(projectIds) ? projectIds : [])
+        .map((id) => Number.parseInt(id, 10))
+        .filter((id) => !Number.isNaN(id)))]
+);
+
+const fetchLinkedGoalIdsForProjects = async (dbOrTx, projectIds) => {
+    const normalizedProjectIds = normalizeProjectIds(projectIds);
+    if (normalizedProjectIds.length === 0) return [];
+
+    const { text, params } = buildInClause('projectId', normalizedProjectIds);
+    const request = createRequest(dbOrTx);
+    addParams(request, params);
+
+    const result = await request.query(`
+        SELECT DISTINCT pg.goalId
+        FROM ProjectGoals pg
+        WHERE pg.projectId IN (${text})
+        UNION
+        SELECT DISTINCT p.goalId
+        FROM Projects p
+        WHERE p.id IN (${text})
+          AND p.goalId IS NOT NULL
+    `);
+
+    return [...new Set(result.recordset
+        .map((row) => Number.parseInt(row.goalId, 10))
+        .filter((id) => !Number.isNaN(id)))];
+};
+
+const ensureGoalSharesForProjects = async ({
+    dbOrTx,
+    projectIds,
+    orgId,
+    expiresAt,
+    grantedByOid
+}) => {
+    const linkedGoalIds = await fetchLinkedGoalIdsForProjects(dbOrTx, projectIds);
+    if (linkedGoalIds.length === 0) {
+        return { linkedGoalCount: 0, insertedGoalCount: 0, refreshedExpiredGoalCount: 0 };
+    }
+
+    let insertedGoalCount = 0;
+    let refreshedExpiredGoalCount = 0;
+
+    for (const goalId of linkedGoalIds) {
+        const mergeResult = await createRequest(dbOrTx)
+            .input('goalId', sql.Int, goalId)
+            .input('orgId', sql.Int, orgId)
+            .input('accessLevel', sql.NVarChar(20), 'read')
+            .input('expiresAt', sql.DateTime2, expiresAt || null)
+            .input('grantedByOid', sql.NVarChar(100), grantedByOid || null)
+            .query(`
+                MERGE GoalOrgAccess AS target
+                USING (SELECT @goalId AS goalId, @orgId AS orgId) AS source
+                ON target.goalId = source.goalId AND target.orgId = source.orgId
+                WHEN MATCHED AND target.expiresAt IS NOT NULL AND target.expiresAt <= GETDATE() THEN
+                    UPDATE SET
+                        accessLevel = @accessLevel,
+                        expiresAt = @expiresAt,
+                        grantedAt = GETDATE(),
+                        grantedByOid = @grantedByOid
+                WHEN NOT MATCHED THEN
+                    INSERT (goalId, orgId, accessLevel, expiresAt, grantedByOid)
+                    VALUES (@goalId, @orgId, @accessLevel, @expiresAt, @grantedByOid)
+                OUTPUT $action AS mergeAction;
+            `);
+
+        for (const row of mergeResult.recordset || []) {
+            if (row.mergeAction === 'INSERT') insertedGoalCount += 1;
+            if (row.mergeAction === 'UPDATE') refreshedExpiredGoalCount += 1;
+        }
+    }
+
+    return {
+        linkedGoalCount: linkedGoalIds.length,
+        insertedGoalCount,
+        refreshedExpiredGoalCount
+    };
+};
 
 // ==================== TAG GROUPS ====================
 
@@ -591,6 +679,7 @@ router.post('/projects/:projectId/sharing', checkPermission('can_manage_sharing_
     try {
         const projectId = parseInt(req.params.projectId);
         const { orgId, accessLevel, expiresAt } = req.body;
+        const shareLinkedGoals = req.body?.shareLinkedGoals !== false;
         if (!orgId) return res.status(400).json({ error: 'orgId is required' });
 
         const level = normalizeAccessLevel(accessLevel);
@@ -598,22 +687,62 @@ router.post('/projects/:projectId/sharing', checkPermission('can_manage_sharing_
         const user = getAuthUser(req);
         const pool = await getPool();
 
-        await pool.request()
-            .input('projectId', sql.Int, projectId)
-            .input('orgId', sql.Int, parseInt(orgId))
-            .input('accessLevel', sql.NVarChar(20), level)
-            .input('expiresAt', sql.DateTime2, parsedExpiresAt)
-            .input('grantedByOid', sql.NVarChar(100), user?.oid || null)
-            .query(`
-                MERGE ProjectOrgAccess AS target
-                USING (SELECT @projectId, @orgId) AS source (projectId, orgId)
-                ON target.projectId = source.projectId AND target.orgId = source.orgId
-                WHEN MATCHED THEN UPDATE SET accessLevel = @accessLevel, expiresAt = @expiresAt, grantedAt = GETDATE(), grantedByOid = @grantedByOid
-                WHEN NOT MATCHED THEN INSERT (projectId, orgId, accessLevel, expiresAt, grantedByOid) VALUES (@projectId, @orgId, @accessLevel, @expiresAt, @grantedByOid);
-            `);
+        const tx = new sql.Transaction(pool);
+        await tx.begin();
+        let linkedGoalShareStats = { linkedGoalCount: 0, insertedGoalCount: 0, refreshedExpiredGoalCount: 0 };
+        try {
+            await new sql.Request(tx)
+                .input('projectId', sql.Int, projectId)
+                .input('orgId', sql.Int, parseInt(orgId, 10))
+                .input('accessLevel', sql.NVarChar(20), level)
+                .input('expiresAt', sql.DateTime2, parsedExpiresAt)
+                .input('grantedByOid', sql.NVarChar(100), user?.oid || null)
+                .query(`
+                    MERGE ProjectOrgAccess AS target
+                    USING (SELECT @projectId, @orgId) AS source (projectId, orgId)
+                    ON target.projectId = source.projectId AND target.orgId = source.orgId
+                    WHEN MATCHED THEN UPDATE SET accessLevel = @accessLevel, expiresAt = @expiresAt, grantedAt = GETDATE(), grantedByOid = @grantedByOid
+                    WHEN NOT MATCHED THEN INSERT (projectId, orgId, accessLevel, expiresAt, grantedByOid) VALUES (@projectId, @orgId, @accessLevel, @expiresAt, @grantedByOid);
+                `);
 
-        logAudit({ action: 'project.share', entityType: 'project', entityId: projectId, entityTitle: 'Share', user, after: { orgId, accessLevel: level, expiresAt: parsedExpiresAt }, req });
-        res.json({ success: true });
+            if (shareLinkedGoals) {
+                linkedGoalShareStats = await ensureGoalSharesForProjects({
+                    dbOrTx: tx,
+                    projectIds: [projectId],
+                    orgId: parseInt(orgId, 10),
+                    expiresAt: parsedExpiresAt,
+                    grantedByOid: user?.oid || null
+                });
+            }
+
+            await tx.commit();
+        } catch (err) {
+            await tx.rollback();
+            throw err;
+        }
+
+        logAudit({
+            action: 'project.share',
+            entityType: 'project',
+            entityId: projectId,
+            entityTitle: 'Share',
+            user,
+            after: {
+                orgId,
+                accessLevel: level,
+                expiresAt: parsedExpiresAt,
+                shareLinkedGoals,
+                linkedGoalCount: linkedGoalShareStats.linkedGoalCount
+            },
+            req
+        });
+        res.json({
+            success: true,
+            shareLinkedGoals,
+            linkedGoalCount: linkedGoalShareStats.linkedGoalCount,
+            linkedGoalSharesInserted: linkedGoalShareStats.insertedGoalCount,
+            linkedGoalSharesRefreshed: linkedGoalShareStats.refreshedExpiredGoalCount
+        });
     } catch (err) {
         if (err?.message?.includes('expiresAt')) {
             return res.status(400).json({ error: err.message });
@@ -708,23 +837,55 @@ router.get('/organizations/:orgId/sharing-summary', checkPermission('can_manage_
                 ORDER BY p.title ASC
             `);
 
-        // GoalOrgAccess may not exist yet if migration hasn't been run
-        let goalsRecords = [];
-        try {
-            const goalsResult = await pool.request()
-                .input('orgId', sql.Int, orgId)
-                .query(`
-                    SELECT goa.goalId, goa.accessLevel, goa.grantedAt, goa.expiresAt, g.title AS goalTitle, g.type AS goalType, g.parentId
-                    FROM GoalOrgAccess goa
-                    INNER JOIN Goals g ON g.id = goa.goalId
-                    WHERE goa.orgId = @orgId
-                      AND ${getScopedEntityAccessPredicate()}
-                    ORDER BY g.title ASC
-                `);
-            goalsRecords = goalsResult.recordset;
-        } catch (_goalErr) {
-            // Table doesn't exist yet — that's OK, just return empty goals
-            console.log('GoalOrgAccess table not found — goal sharing will be empty until migration is run');
+        const goalsResult = await pool.request()
+            .input('orgId', sql.Int, orgId)
+            .query(`
+                SELECT goa.goalId, goa.accessLevel, goa.grantedAt, goa.expiresAt, g.title AS goalTitle, g.type AS goalType, g.parentId
+                FROM GoalOrgAccess goa
+                INNER JOIN Goals g ON g.id = goa.goalId
+                WHERE goa.orgId = @orgId
+                  AND ${getScopedEntityAccessPredicate()}
+                ORDER BY g.title ASC
+            `);
+        const goalsRecords = goalsResult.recordset;
+
+        const sharedProjectIds = projectsResult.recordset
+            .map((row) => Number.parseInt(row.projectId, 10))
+            .filter((id) => !Number.isNaN(id));
+        const projectGoalCoverageByProjectId = new Map();
+        if (sharedProjectIds.length > 0) {
+            const { text, params } = buildInClause('projectId', sharedProjectIds);
+            const coverageRequest = pool.request().input('orgId', sql.Int, orgId);
+            addParams(coverageRequest, params);
+            const coverageResult = await coverageRequest.query(`
+                WITH ProjectGoalLinks AS (
+                    SELECT pg.projectId, pg.goalId
+                    FROM ProjectGoals pg
+                    WHERE pg.projectId IN (${text})
+                    UNION
+                    SELECT p.id AS projectId, p.goalId
+                    FROM Projects p
+                    WHERE p.id IN (${text})
+                      AND p.goalId IS NOT NULL
+                )
+                SELECT
+                    pgl.projectId,
+                    COUNT(DISTINCT pgl.goalId) AS linkedGoalCount,
+                    SUM(CASE WHEN goa.goalId IS NULL THEN 0 ELSE 1 END) AS linkedGoalsSharedCount
+                FROM ProjectGoalLinks pgl
+                LEFT JOIN GoalOrgAccess goa
+                    ON goa.goalId = pgl.goalId
+                   AND goa.orgId = @orgId
+                   AND ${getScopedEntityAccessPredicate()}
+                GROUP BY pgl.projectId
+            `);
+
+            for (const row of coverageResult.recordset) {
+                projectGoalCoverageByProjectId.set(Number(row.projectId), {
+                    linkedGoalCount: Number(row.linkedGoalCount || 0),
+                    linkedGoalsSharedCount: Number(row.linkedGoalsSharedCount || 0)
+                });
+            }
         }
 
         res.json({
@@ -734,7 +895,24 @@ router.get('/organizations/:orgId/sharing-summary', checkPermission('can_manage_
                 accessLevel: r.accessLevel,
                 grantedAt: r.grantedAt,
                 expiresAt: r.expiresAt || null,
-                isExpired: !!(r.expiresAt && new Date(r.expiresAt).getTime() <= Date.now())
+                isExpired: !!(r.expiresAt && new Date(r.expiresAt).getTime() <= Date.now()),
+                linkedGoalCount: projectGoalCoverageByProjectId.get(Number(r.projectId))?.linkedGoalCount || 0,
+                linkedGoalsSharedCount: projectGoalCoverageByProjectId.get(Number(r.projectId))?.linkedGoalsSharedCount || 0,
+                goalContextStatus: (() => {
+                    const coverage = projectGoalCoverageByProjectId.get(Number(r.projectId));
+                    const linkedGoalCount = coverage?.linkedGoalCount || 0;
+                    const linkedGoalsSharedCount = coverage?.linkedGoalsSharedCount || 0;
+                    if (linkedGoalCount === 0) return 'no-goals-linked';
+                    if (linkedGoalsSharedCount === 0) return 'none-shared';
+                    if (linkedGoalsSharedCount < linkedGoalCount) return 'partial';
+                    return 'complete';
+                })(),
+                goalContextMissing: (() => {
+                    const coverage = projectGoalCoverageByProjectId.get(Number(r.projectId));
+                    const linkedGoalCount = coverage?.linkedGoalCount || 0;
+                    const linkedGoalsSharedCount = coverage?.linkedGoalsSharedCount || 0;
+                    return linkedGoalCount > 0 && linkedGoalsSharedCount === 0;
+                })()
             })),
             goals: goalsRecords.map(r => ({
                 goalId: r.goalId.toString(),
@@ -1002,6 +1180,8 @@ router.post('/sharing-requests/:id/approve', checkPermission('can_manage_sharing
         const decisionNote = typeof req.body?.decisionNote === 'string' ? req.body.decisionNote.trim() : null;
         const requestedAccessLevel = normalizeAccessLevel(sharingRequest.requestedAccessLevel);
         const approver = getAuthUser(req);
+        const shareLinkedGoals = req.body?.shareLinkedGoals !== false;
+        let linkedGoalShareStats = { linkedGoalCount: 0, insertedGoalCount: 0, refreshedExpiredGoalCount: 0 };
 
         const tx = new sql.Transaction(pool);
         await tx.begin();
@@ -1021,6 +1201,16 @@ router.post('/sharing-requests/:id/approve', checkPermission('can_manage_sharing
                         WHEN NOT MATCHED THEN INSERT (projectId, orgId, accessLevel, expiresAt, grantedByOid)
                             VALUES (@projectId, @orgId, @accessLevel, @expiresAt, @grantedByOid);
                     `);
+
+                if (shareLinkedGoals) {
+                    linkedGoalShareStats = await ensureGoalSharesForProjects({
+                        dbOrTx: tx,
+                        projectIds: [sharingRequest.entityId],
+                        orgId: sharingRequest.targetOrgId,
+                        expiresAt: overrideExpiry,
+                        grantedByOid: approver?.oid || null
+                    });
+                }
             } else {
                 await new sql.Request(tx)
                     .input('goalId', sql.Int, sharingRequest.entityId)
@@ -1070,7 +1260,9 @@ router.post('/sharing-requests/:id/approve', checkPermission('can_manage_sharing
             after: {
                 targetOrgId: sharingRequest.targetOrgId,
                 accessLevel: requestedAccessLevel,
-                expiresAt: overrideExpiry
+                expiresAt: overrideExpiry,
+                shareLinkedGoals: sharingRequest.entityType === 'project' ? shareLinkedGoals : false,
+                linkedGoalCount: linkedGoalShareStats.linkedGoalCount
             },
             req
         });
@@ -1215,8 +1407,14 @@ router.post('/sharing-requests/:id/revoke', requireAuth, async (req, res) => {
 router.post('/projects/bulk-share', checkPermission('can_manage_sharing_requests'), async (req, res) => {
     try {
         const { projectIds, orgId, accessLevel, expiresAt } = req.body;
+        const shareLinkedGoals = req.body?.shareLinkedGoals !== false;
         if (!Array.isArray(projectIds) || !orgId) {
             return res.status(400).json({ error: 'projectIds (array) and orgId are required' });
+        }
+
+        const normalizedProjectIds = normalizeProjectIds(projectIds);
+        if (normalizedProjectIds.length === 0) {
+            return res.status(400).json({ error: 'projectIds must include at least one valid project id' });
         }
 
         const level = normalizeAccessLevel(accessLevel);
@@ -1225,9 +1423,10 @@ router.post('/projects/bulk-share', checkPermission('can_manage_sharing_requests
         const pool = await getPool();
         const transaction = new sql.Transaction(pool);
         await transaction.begin();
+        let linkedGoalShareStats = { linkedGoalCount: 0, insertedGoalCount: 0, refreshedExpiredGoalCount: 0 };
 
         try {
-            for (const projectId of projectIds) {
+            for (const projectId of normalizedProjectIds) {
                 const request = new sql.Request(transaction);
                 await request
                     .input('projectId', sql.Int, parseInt(projectId))
@@ -1243,9 +1442,42 @@ router.post('/projects/bulk-share', checkPermission('can_manage_sharing_requests
                         WHEN NOT MATCHED THEN INSERT (projectId, orgId, accessLevel, expiresAt, grantedByOid) VALUES (@projectId, @orgId, @accessLevel, @expiresAt, @grantedByOid);
                     `);
             }
+
+            if (shareLinkedGoals) {
+                linkedGoalShareStats = await ensureGoalSharesForProjects({
+                    dbOrTx: transaction,
+                    projectIds: normalizedProjectIds,
+                    orgId: parseInt(orgId, 10),
+                    expiresAt: parsedExpiresAt,
+                    grantedByOid: user?.oid || null
+                });
+            }
+
             await transaction.commit();
-            logAudit({ action: 'project.bulk_share', entityType: 'project', entityId: null, entityTitle: `${projectIds.length} projects shared`, user, after: { orgId, accessLevel: level, expiresAt: parsedExpiresAt, count: projectIds.length }, req });
-            res.json({ success: true, count: projectIds.length });
+            logAudit({
+                action: 'project.bulk_share',
+                entityType: 'project',
+                entityId: null,
+                entityTitle: `${normalizedProjectIds.length} projects shared`,
+                user,
+                after: {
+                    orgId,
+                    accessLevel: level,
+                    expiresAt: parsedExpiresAt,
+                    count: normalizedProjectIds.length,
+                    shareLinkedGoals,
+                    linkedGoalCount: linkedGoalShareStats.linkedGoalCount
+                },
+                req
+            });
+            res.json({
+                success: true,
+                count: normalizedProjectIds.length,
+                shareLinkedGoals,
+                linkedGoalCount: linkedGoalShareStats.linkedGoalCount,
+                linkedGoalSharesInserted: linkedGoalShareStats.insertedGoalCount,
+                linkedGoalSharesRefreshed: linkedGoalShareStats.refreshedExpiredGoalCount
+            });
         } catch (err) {
             await transaction.rollback();
             throw err;

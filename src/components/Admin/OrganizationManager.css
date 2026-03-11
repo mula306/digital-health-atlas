@@ -806,6 +806,10 @@
     letter-spacing: 0.04em;
 }
 
+.org-access-badge-mini.warn {
+    color: #f59e0b;
+}
+
 /* ==========================================
    Data Sharing — New Styles
    ========================================== */

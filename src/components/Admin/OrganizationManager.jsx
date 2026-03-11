@@ -471,11 +471,21 @@ export function OrganizationManager({
         setSelectedProjectIds(new Set(unsharedFiltered.map(p => String(p.id))));
     };
 
+    const selectAllFilteredSharedProjects = () => {
+        const sharedFiltered = filteredProjects.filter(p => sharedProjectIds.has(String(p.id)));
+        setSelectedProjectIds(new Set(sharedFiltered.map(p => String(p.id))));
+    };
+
     const deselectAllProjects = () => setSelectedProjectIds(new Set());
 
     const selectAllFilteredGoals = () => {
         const unsharedFiltered = rootGoals.filter(g => !sharedGoalIds.has(String(g.id)));
         setSelectedGoalIds(new Set(unsharedFiltered.map(g => String(g.id))));
+    };
+
+    const selectAllFilteredSharedGoals = () => {
+        const sharedFiltered = rootGoals.filter(g => sharedGoalIds.has(String(g.id)));
+        setSelectedGoalIds(new Set(sharedFiltered.map(g => String(g.id))));
     };
 
     const deselectAllGoals = () => setSelectedGoalIds(new Set());
@@ -485,13 +495,19 @@ export function OrganizationManager({
         if (selectedProjectIds.size === 0 || !sharingTargetOrg) return;
         setBulkActionLoading(true);
         try {
-            await bulkShareProjects(
+            const result = await bulkShareProjects(
                 Array.from(selectedProjectIds),
                 sharingTargetOrg,
                 shareAccessLevel,
                 toIsoOrNull(shareExpiresAt)
             );
-            success(`${selectedProjectIds.size} project${selectedProjectIds.size > 1 ? 's' : ''} shared successfully`);
+            const linkedGoalCount = Number(result?.linkedGoalCount || 0);
+            const linkedGoalSharesInserted = Number(result?.linkedGoalSharesInserted || 0);
+            const linkedGoalSharesRefreshed = Number(result?.linkedGoalSharesRefreshed || 0);
+            const linkedGoalMessage = linkedGoalCount > 0
+                ? ` Linked goals ensured: ${linkedGoalCount} (${linkedGoalSharesInserted} new, ${linkedGoalSharesRefreshed} refreshed).`
+                : '';
+            success(`${selectedProjectIds.size} project${selectedProjectIds.size > 1 ? 's' : ''} shared successfully.${linkedGoalMessage}`);
             setSelectedProjectIds(new Set());
             setShareExpiresAt('');
             loadSharingSummary(sharingTargetOrg);
@@ -629,11 +645,21 @@ export function OrganizationManager({
         return unshared.length > 0 && unshared.every(p => selectedProjectIds.has(String(p.id)));
     }, [filteredProjects, sharedProjectIds, selectedProjectIds]);
 
+    const allFilteredSharedProjectsSelected = useMemo(() => {
+        const shared = filteredProjects.filter(p => sharedProjectIds.has(String(p.id)));
+        return shared.length > 0 && shared.every(p => selectedProjectIds.has(String(p.id)));
+    }, [filteredProjects, sharedProjectIds, selectedProjectIds]);
+
     const someProjectsSelected = selectedProjectIds.size > 0;
 
     const allFilteredUnsharedGoalsSelected = useMemo(() => {
         const unshared = rootGoals.filter(g => !sharedGoalIds.has(String(g.id)));
         return unshared.length > 0 && unshared.every(g => selectedGoalIds.has(String(g.id)));
+    }, [rootGoals, sharedGoalIds, selectedGoalIds]);
+
+    const allFilteredSharedGoalsSelected = useMemo(() => {
+        const shared = rootGoals.filter(g => sharedGoalIds.has(String(g.id)));
+        return shared.length > 0 && shared.every(g => selectedGoalIds.has(String(g.id)));
     }, [rootGoals, sharedGoalIds, selectedGoalIds]);
 
     const someGoalsSelected = selectedGoalIds.size > 0;
@@ -1142,6 +1168,13 @@ export function OrganizationManager({
                                                         {allFilteredUnsharedProjectsSelected ? <MinusSquare size={13} /> : <CheckSquare size={13} />}
                                                         {allFilteredUnsharedProjectsSelected ? 'Deselect All' : 'Select Unshared'}
                                                     </button>
+                                                    <button
+                                                        className="org-sharing-select-btn"
+                                                        onClick={allFilteredSharedProjectsSelected ? deselectAllProjects : selectAllFilteredSharedProjects}
+                                                    >
+                                                        {allFilteredSharedProjectsSelected ? <MinusSquare size={13} /> : <CheckSquare size={13} />}
+                                                        {allFilteredSharedProjectsSelected ? 'Deselect All' : 'Select Shared'}
+                                                    </button>
                                                 </div>
                                             </div>
 
@@ -1238,6 +1271,12 @@ export function OrganizationManager({
                                                                             {shareInfo?.expiresAt && (
                                                                                 <span className="org-access-badge-mini">expires {formatDateTime(shareInfo.expiresAt)}</span>
                                                                             )}
+                                                                            {shareInfo?.goalContextStatus === 'none-shared' && (
+                                                                                <span className="org-access-badge-mini warn">goal context missing</span>
+                                                                            )}
+                                                                            {shareInfo?.goalContextStatus === 'partial' && (
+                                                                                <span className="org-access-badge-mini warn">goal context partial</span>
+                                                                            )}
                                                                         </div>
                                                                         <button
                                                                             className="org-sharing-quick-remove"
@@ -1285,6 +1324,13 @@ export function OrganizationManager({
                                                     >
                                                         {allFilteredUnsharedGoalsSelected ? <MinusSquare size={13} /> : <CheckSquare size={13} />}
                                                         {allFilteredUnsharedGoalsSelected ? 'Deselect All' : 'Select Unshared'}
+                                                    </button>
+                                                    <button
+                                                        className="org-sharing-select-btn"
+                                                        onClick={allFilteredSharedGoalsSelected ? deselectAllGoals : selectAllFilteredSharedGoals}
+                                                    >
+                                                        {allFilteredSharedGoalsSelected ? <MinusSquare size={13} /> : <CheckSquare size={13} />}
+                                                        {allFilteredSharedGoalsSelected ? 'Deselect All' : 'Select Shared'}
                                                     </button>
                                                 </div>
                                             </div>
