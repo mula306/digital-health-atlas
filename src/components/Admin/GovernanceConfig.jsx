@@ -34,6 +34,28 @@ const normalizeCriteriaForSave = (criteria) => {
     }));
 };
 
+const parseOptionalOpenNumber = (value) => {
+    const normalized = value === undefined || value === null ? '' : String(value).trim();
+    if (!normalized) return null;
+    const parsed = Number(normalized);
+    if (!Number.isFinite(parsed)) return Number.NaN;
+    return parsed <= 0 ? null : parsed;
+};
+
+const parseOptionalOpenInteger = (value) => {
+    const normalized = value === undefined || value === null ? '' : String(value).trim();
+    if (!normalized) return null;
+    const parsed = Number(normalized);
+    if (!Number.isFinite(parsed)) return Number.NaN;
+    return parsed <= 0 ? null : Math.trunc(parsed);
+};
+
+const parseRequiredPositiveNumber = (value) => {
+    const normalized = value === undefined || value === null ? '' : String(value).trim();
+    if (!normalized) return Number.NaN;
+    return Number(normalized);
+};
+
 const GOVERNANCE_CONFIG_TABS = new Set(['settings', 'boards', 'members', 'criteria']);
 
 export function GovernanceConfig({ initialTab = null, onTabChange = null }) {
@@ -588,16 +610,16 @@ export function GovernanceConfig({ initialTab = null, onTabChange = null }) {
             toast.error('Board name is required');
             return;
         }
-        const parsedWeeklyCapacity = newBoardWeeklyCapacityHours === '' ? null : Number(newBoardWeeklyCapacityHours);
-        const parsedWipLimit = newBoardWipLimit === '' ? null : Number(newBoardWipLimit);
-        const parsedDefaultEffort = Number(newBoardDefaultSubmissionEffortHours);
+        const parsedWeeklyCapacity = parseOptionalOpenNumber(newBoardWeeklyCapacityHours);
+        const parsedWipLimit = parseOptionalOpenInteger(newBoardWipLimit);
+        const parsedDefaultEffort = parseRequiredPositiveNumber(newBoardDefaultSubmissionEffortHours);
         if (boardCapacityReady) {
-            if (parsedWeeklyCapacity !== null && (!Number.isFinite(parsedWeeklyCapacity) || parsedWeeklyCapacity <= 0)) {
-                toast.error('Weekly capacity hours must be empty or a number greater than 0');
+            if (Number.isNaN(parsedWeeklyCapacity)) {
+                toast.error('Leave weekly capacity blank for open capacity, or enter a number greater than 0');
                 return;
             }
-            if (parsedWipLimit !== null && (!Number.isFinite(parsedWipLimit) || parsedWipLimit < 1)) {
-                toast.error('WIP limit must be empty or an integer greater than or equal to 1');
+            if (Number.isNaN(parsedWipLimit)) {
+                toast.error('Leave WIP limit blank for no limit, or enter an integer greater than or equal to 1');
                 return;
             }
             if (!Number.isFinite(parsedDefaultEffort) || parsedDefaultEffort <= 0) {
@@ -614,7 +636,7 @@ export function GovernanceConfig({ initialTab = null, onTabChange = null }) {
             if (boardCapacityReady) {
                 createPayload.boardCapacity = {
                     weeklyCapacityHours: parsedWeeklyCapacity,
-                    wipLimit: parsedWipLimit === null ? null : Math.trunc(parsedWipLimit),
+                    wipLimit: parsedWipLimit,
                     defaultSubmissionEffortHours: parsedDefaultEffort
                 };
             }
@@ -647,9 +669,9 @@ export function GovernanceConfig({ initialTab = null, onTabChange = null }) {
         const canEditBoardPolicy = phase3Ready && boardPolicyReady;
         const canEditBoardCapacity = boardCapacityReady;
         const parsedBoardVoteWindow = selectedBoardVoteWindowDays === '' ? null : Number(selectedBoardVoteWindowDays);
-        const parsedWeeklyCapacity = selectedBoardWeeklyCapacityHours === '' ? null : Number(selectedBoardWeeklyCapacityHours);
-        const parsedWipLimit = selectedBoardWipLimit === '' ? null : Number(selectedBoardWipLimit);
-        const parsedDefaultEffort = Number(selectedBoardDefaultSubmissionEffortHours);
+        const parsedWeeklyCapacity = parseOptionalOpenNumber(selectedBoardWeeklyCapacityHours);
+        const parsedWipLimit = parseOptionalOpenInteger(selectedBoardWipLimit);
+        const parsedDefaultEffort = parseRequiredPositiveNumber(selectedBoardDefaultSubmissionEffortHours);
         if (canEditBoardPolicy && !selectedBoardUseGlobalPolicyDefaults) {
             const percent = Number(selectedBoardQuorumPercent);
             const minCount = Number(selectedBoardQuorumMinCount);
@@ -670,12 +692,12 @@ export function GovernanceConfig({ initialTab = null, onTabChange = null }) {
             }
         }
         if (canEditBoardCapacity) {
-            if (parsedWeeklyCapacity !== null && (!Number.isFinite(parsedWeeklyCapacity) || parsedWeeklyCapacity <= 0)) {
-                toast.error('Weekly capacity hours must be empty or a number greater than 0');
+            if (Number.isNaN(parsedWeeklyCapacity)) {
+                toast.error('Leave weekly capacity blank for open capacity, or enter a number greater than 0');
                 return;
             }
-            if (parsedWipLimit !== null && (!Number.isFinite(parsedWipLimit) || parsedWipLimit < 1)) {
-                toast.error('WIP limit must be empty or an integer greater than or equal to 1');
+            if (Number.isNaN(parsedWipLimit)) {
+                toast.error('Leave WIP limit blank for no limit, or enter an integer greater than or equal to 1');
                 return;
             }
             if (!Number.isFinite(parsedDefaultEffort) || parsedDefaultEffort <= 0) {
@@ -701,7 +723,7 @@ export function GovernanceConfig({ initialTab = null, onTabChange = null }) {
             if (canEditBoardCapacity) {
                 boardUpdatePayload.boardCapacity = {
                     weeklyCapacityHours: parsedWeeklyCapacity,
-                    wipLimit: parsedWipLimit === null ? null : Math.trunc(parsedWipLimit),
+                    wipLimit: parsedWipLimit,
                     defaultSubmissionEffortHours: parsedDefaultEffort
                 };
             }
@@ -1134,7 +1156,7 @@ export function GovernanceConfig({ initialTab = null, onTabChange = null }) {
                                 </div>
                                 <div className="governance-grid" style={{ marginTop: '0.75rem' }}>
                                     <div className="form-group">
-                                        <label>Weekly Capacity (hours, optional)</label>
+                                        <label>Weekly Capacity (hours, optional: leave blank for open)</label>
                                         <input
                                             type="number"
                                             min="1"
@@ -1143,12 +1165,12 @@ export function GovernanceConfig({ initialTab = null, onTabChange = null }) {
                                                 setNewBoardWeeklyCapacityHours(e.target.value);
                                                 setBoardDirty(true);
                                             }}
-                                            placeholder="No hard cap"
+                                            placeholder="Leave blank for open capacity"
                                             disabled={!boardCapacityReady}
                                         />
                                     </div>
                                     <div className="form-group">
-                                        <label>WIP Limit (optional)</label>
+                                        <label>WIP Limit (optional: leave blank for no limit)</label>
                                         <input
                                             type="number"
                                             min="1"
@@ -1157,7 +1179,7 @@ export function GovernanceConfig({ initialTab = null, onTabChange = null }) {
                                                 setNewBoardWipLimit(e.target.value);
                                                 setBoardDirty(true);
                                             }}
-                                            placeholder="No hard limit"
+                                            placeholder="Leave blank for no limit"
                                             disabled={!boardCapacityReady}
                                         />
                                     </div>
@@ -1176,7 +1198,7 @@ export function GovernanceConfig({ initialTab = null, onTabChange = null }) {
                                     </div>
                                 </div>
                                 <p className="governance-muted">
-                                    Capacity settings are optional at creation time, but surfacing them here avoids save-time validation surprises.
+                                    Leave capacity and WIP blank if you do not want to enforce a hard limit. If you do enter a value, it must be greater than 0.
                                 </p>
                                 {!boardCapacityReady && (
                                     <p className="governance-alert">
@@ -1463,7 +1485,7 @@ export function GovernanceConfig({ initialTab = null, onTabChange = null }) {
                                             <h5>Capacity Planning</h5>
                                             <div className="governance-grid">
                                                 <div className="form-group">
-                                                    <label>Weekly Capacity (hours, optional)</label>
+                                                    <label>Weekly Capacity (hours, optional: leave blank for open)</label>
                                                     <input
                                                         type="number"
                                                         min="1"
@@ -1472,12 +1494,12 @@ export function GovernanceConfig({ initialTab = null, onTabChange = null }) {
                                                             setSelectedBoardWeeklyCapacityHours(e.target.value);
                                                             setBoardDirty(true);
                                                         }}
-                                                        placeholder="No hard cap"
+                                                        placeholder="Leave blank for open capacity"
                                                         disabled={!boardCapacityReady}
                                                     />
                                                 </div>
                                                 <div className="form-group">
-                                                    <label>WIP Limit (optional)</label>
+                                                    <label>WIP Limit (optional: leave blank for no limit)</label>
                                                     <input
                                                         type="number"
                                                         min="1"
@@ -1486,7 +1508,7 @@ export function GovernanceConfig({ initialTab = null, onTabChange = null }) {
                                                             setSelectedBoardWipLimit(e.target.value);
                                                             setBoardDirty(true);
                                                         }}
-                                                        placeholder="No hard limit"
+                                                        placeholder="Leave blank for no limit"
                                                         disabled={!boardCapacityReady}
                                                     />
                                                 </div>
@@ -1505,7 +1527,7 @@ export function GovernanceConfig({ initialTab = null, onTabChange = null }) {
                                                 </div>
                                             </div>
                                             <p className="governance-muted">
-                                                Queue scenario modeling uses these values to estimate approve-now impact.
+                                                Leave capacity and WIP blank if you do not want to enforce a hard limit. If you do enter a value, it must be greater than 0.
                                             </p>
                                             {!boardCapacityReady && (
                                                 <p className="governance-alert">

@@ -301,13 +301,21 @@ const parseBoardCapacityPayload = (rawCapacity) => {
         throw new Error('boardCapacity must be an object');
     }
 
-    const parsedWeeklyCapacity = rawCapacity.weeklyCapacityHours === '' ? null : toPositiveNumberOrNull(rawCapacity.weeklyCapacityHours);
-    if (rawCapacity.weeklyCapacityHours !== undefined && rawCapacity.weeklyCapacityHours !== '' && parsedWeeklyCapacity === null) {
+    const rawWeeklyCapacity = rawCapacity.weeklyCapacityHours;
+    const weeklyCapacityNormalized = rawWeeklyCapacity === undefined || rawWeeklyCapacity === null ? '' : String(rawWeeklyCapacity).trim();
+    const parsedWeeklyCapacity = !weeklyCapacityNormalized || Number(weeklyCapacityNormalized) === 0
+        ? null
+        : toPositiveNumberOrNull(rawWeeklyCapacity);
+    if (weeklyCapacityNormalized && Number(weeklyCapacityNormalized) !== 0 && parsedWeeklyCapacity === null) {
         throw new Error('boardCapacity.weeklyCapacityHours must be null or a number > 0');
     }
 
-    const parsedWipLimit = rawCapacity.wipLimit === '' ? null : toPositiveIntOrNull(rawCapacity.wipLimit);
-    if (rawCapacity.wipLimit !== undefined && rawCapacity.wipLimit !== '' && parsedWipLimit === null) {
+    const rawWipLimit = rawCapacity.wipLimit;
+    const wipLimitNormalized = rawWipLimit === undefined || rawWipLimit === null ? '' : String(rawWipLimit).trim();
+    const parsedWipLimit = !wipLimitNormalized || Number(wipLimitNormalized) === 0
+        ? null
+        : toPositiveIntOrNull(rawWipLimit);
+    if (wipLimitNormalized && Number(wipLimitNormalized) !== 0 && parsedWipLimit === null) {
         throw new Error('boardCapacity.wipLimit must be null or an integer >= 1');
     }
 
