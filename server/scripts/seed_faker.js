@@ -9,6 +9,10 @@ const REPORTS_PER_PROJECT_MIN = Number.parseInt(process.env.FAKER_REPORTS_MIN ||
 const REPORTS_PER_PROJECT_MAX = Number.parseInt(process.env.FAKER_REPORTS_MAX || '3', 10);
 const TAGS_PER_PROJECT_MIN = Number.parseInt(process.env.FAKER_TAGS_MIN || '1', 10);
 const TAGS_PER_PROJECT_MAX = Number.parseInt(process.env.FAKER_TAGS_MAX || '3', 10);
+const DEFAULT_SEED_ORGANIZATIONS = Object.freeze([
+    { name: 'Clinical Operations', slug: 'clinical-operations' },
+    { name: 'Digital Health Delivery', slug: 'digital-health-delivery' }
+]);
 
 const existsTable = async (pool, tableName) => {
     const result = await pool.request()
@@ -35,86 +39,240 @@ const existsColumn = async (pool, tableName, columnName) => {
     return result.recordset[0].columnExists === 1;
 };
 
-const ensureDefaultOrganization = async (pool) => {
-    const hasOrganizations = await existsTable(pool, 'Organizations');
-    if (!hasOrganizations) return null;
-
-    const existing = await pool.request().query(`
-        SELECT TOP 1 id
+const loadActiveOrganizations = async (pool) => {
+    const result = await pool.request().query(`
+        SELECT id, name, slug
         FROM Organizations
         WHERE isActive = 1
         ORDER BY id ASC
     `);
+    return result.recordset;
+};
+
+const upsertSeedOrganization = async (pool, { name, slug }) => {
+    const result = await pool.request()
+        .input('name', sql.NVarChar, name)
+        .input('slug', sql.NVarChar, slug)
+        .query(`
+            MERGE Organizations AS target
+            USING (SELECT @slug AS slug) AS source
+            ON target.slug = source.slug
+            WHEN MATCHED THEN
+                UPDATE SET name = @name, isActive = 1
+            WHEN NOT MATCHED THEN
+                INSERT (name, slug, isActive)
+                VALUES (@name, @slug, 1)
+            OUTPUT INSERTED.id, INSERTED.name, INSERTED.slug;
+        `);
+
+    return result.recordset[0] || null;
+};
+
+const ensureSeedOrganizations = async (pool) => {
+    const hasOrganizations = await existsTable(pool, 'Organizations');
+    if (!hasOrganizations) return [];
+
+    let activeOrganizations = await loadActiveOrganizations(pool);
+
+    for (const organization of DEFAULT_SEED_ORGANIZATIONS) {
+        if (activeOrganizations.length >= 2) {
+            break;
+        }
+        if (activeOrganizations.some((activeOrg) => activeOrg.slug === organization.slug)) {
+            continue;
+        }
+
+        const upserted = await upsertSeedOrganization(pool, organization);
+        if (upserted) {
+            activeOrganizations = [...activeOrganizations, upserted];
+        }
+    }
+
+    if (activeOrganizations.length < 2) {
+        activeOrganizations = await loadActiveOrganizations(pool);
+    }
+
+    return activeOrganizations.slice(0, 2);
+};
+
+const loadGoalsForScope = async (pool, { goalsHaveOrgId, orgId = null } = {}) => {
+    if (goalsHaveOrgId) {
+        const result = await pool.request()
+            .input('orgId', sql.Int, orgId)
+            .query(`
+                SELECT id, orgId, type, parentId
+                FROM Goals
+                WHERE orgId = @orgId
+                ORDER BY id ASC
+            `);
+        return result.recordset;
+    }
+
+    const result = await pool.request().query(`
+        SELECT id, orgId, type, parentId
+        FROM Goals
+        ORDER BY id ASC
+    `);
+    return result.recordset;
+};
+
+const ensureGoal = async (pool, { title, type, parentId = null, orgId = null, goalsHaveOrgId }) => {
+    const existingRequest = pool.request()
+        .input('title', sql.NVarChar, title)
+        .input('parentId', sql.Int, parentId);
+
+    if (goalsHaveOrgId) {
+        existingRequest.input('orgId', sql.Int, orgId);
+    }
+
+    const existingQuery = goalsHaveOrgId
+        ? `
+            SELECT TOP 1 id
+            FROM Goals
+            WHERE title = @title
+              AND ((parentId IS NULL AND @parentId IS NULL) OR parentId = @parentId)
+              AND orgId = @orgId
+            ORDER BY id ASC
+        `
+        : `
+            SELECT TOP 1 id
+            FROM Goals
+            WHERE title = @title
+              AND ((parentId IS NULL AND @parentId IS NULL) OR parentId = @parentId)
+            ORDER BY id ASC
+        `;
+
+    const existing = await existingRequest.query(existingQuery);
     if (existing.recordset.length > 0) {
         return existing.recordset[0].id;
     }
 
-    const inserted = await pool.request()
-        .input('name', sql.NVarChar, 'Default Organization')
-        .input('slug', sql.NVarChar, 'default-organization')
-        .query(`
-            INSERT INTO Organizations (name, slug, isActive)
-            OUTPUT INSERTED.id
-            VALUES (@name, @slug, 1)
-        `);
-    return inserted.recordset[0].id;
-};
+    const insertRequest = pool.request()
+        .input('title', sql.NVarChar, title)
+        .input('type', sql.NVarChar, type)
+        .input('parentId', sql.Int, parentId);
 
-const ensureGoals = async (pool, orgId, goalsHaveOrgId) => {
-    const goalsCount = await pool.request().query('SELECT COUNT(*) AS count FROM Goals');
-    if (goalsCount.recordset[0].count > 0) {
-        const existingGoals = await pool.request().query('SELECT id FROM Goals');
-        return existingGoals.recordset.map((row) => row.id);
+    if (goalsHaveOrgId) {
+        insertRequest.input('orgId', sql.Int, orgId);
     }
 
-    const insertGoal = async ({ title, type, parentId = null }) => {
-        const request = pool.request()
-            .input('title', sql.NVarChar, title)
-            .input('type', sql.NVarChar, type)
-            .input('parentId', sql.Int, parentId);
+    const insertQuery = goalsHaveOrgId
+        ? `
+            INSERT INTO Goals (title, type, parentId, orgId)
+            OUTPUT INSERTED.id
+            VALUES (@title, @type, @parentId, @orgId)
+        `
+        : `
+            INSERT INTO Goals (title, type, parentId)
+            OUTPUT INSERTED.id
+            VALUES (@title, @type, @parentId)
+        `;
 
-        if (goalsHaveOrgId) {
-            request.input('orgId', sql.Int, orgId);
-        }
+    const result = await insertRequest.query(insertQuery);
+    return result.recordset[0].id;
+};
 
-        const query = goalsHaveOrgId
-            ? `
-                INSERT INTO Goals (title, type, parentId, orgId)
-                OUTPUT INSERTED.id
-                VALUES (@title, @type, @parentId, @orgId)
-            `
-            : `
-                INSERT INTO Goals (title, type, parentId)
-                OUTPUT INSERTED.id
-                VALUES (@title, @type, @parentId)
-            `;
+const ensureGoalHierarchyForOrg = async (pool, { orgId = null, goalsHaveOrgId }) => {
+    let scopedGoals = await loadGoalsForScope(pool, { goalsHaveOrgId, orgId });
+    if (scopedGoals.some((goal) => goal.parentId)) {
+        return scopedGoals;
+    }
 
-        const result = await request.query(query);
-        return result.recordset[0].id;
-    };
-
-    const rootGoalId = await insertGoal({ title: 'Health System Transformation', type: 'enterprise' });
-    const portfolio1 = await insertGoal({
+    const rootGoalId = await ensureGoal(pool, {
+        title: 'Health System Transformation',
+        type: 'enterprise',
+        parentId: null,
+        orgId,
+        goalsHaveOrgId
+    });
+    const portfolio1 = await ensureGoal(pool, {
         title: 'Digital Front Door',
         type: 'portfolio',
-        parentId: rootGoalId
+        parentId: rootGoalId,
+        orgId,
+        goalsHaveOrgId
     });
-    const portfolio2 = await insertGoal({
+    const portfolio2 = await ensureGoal(pool, {
         title: 'Clinical Platform Modernization',
         type: 'portfolio',
-        parentId: rootGoalId
+        parentId: rootGoalId,
+        orgId,
+        goalsHaveOrgId
     });
-    await insertGoal({ title: 'Virtual Care Access', type: 'service', parentId: portfolio1 });
-    await insertGoal({ title: 'Scheduling and Referrals', type: 'service', parentId: portfolio1 });
-    await insertGoal({ title: 'EHR Optimization', type: 'service', parentId: portfolio2 });
-    await insertGoal({ title: 'Data and Reporting', type: 'service', parentId: portfolio2 });
+    const service1 = await ensureGoal(pool, {
+        title: 'Virtual Care Access',
+        type: 'service',
+        parentId: portfolio1,
+        orgId,
+        goalsHaveOrgId
+    });
+    const service2 = await ensureGoal(pool, {
+        title: 'Scheduling and Referrals',
+        type: 'service',
+        parentId: portfolio1,
+        orgId,
+        goalsHaveOrgId
+    });
+    const service3 = await ensureGoal(pool, {
+        title: 'EHR Optimization',
+        type: 'service',
+        parentId: portfolio2,
+        orgId,
+        goalsHaveOrgId
+    });
+    const service4 = await ensureGoal(pool, {
+        title: 'Data and Reporting',
+        type: 'service',
+        parentId: portfolio2,
+        orgId,
+        goalsHaveOrgId
+    });
 
-    const seededGoalsResult = await pool.request().query('SELECT id FROM Goals');
-    const seededGoalIds = seededGoalsResult.recordset.map((row) => row.id);
+    await ensureGoal(pool, { title: 'Virtual Care Intake Team', type: 'team', parentId: service1, orgId, goalsHaveOrgId });
+    await ensureGoal(pool, { title: 'Virtual Care Delivery Team', type: 'team', parentId: service1, orgId, goalsHaveOrgId });
+    await ensureGoal(pool, { title: 'Referral Optimization Team', type: 'team', parentId: service2, orgId, goalsHaveOrgId });
+    await ensureGoal(pool, { title: 'Scheduling Operations Team', type: 'team', parentId: service2, orgId, goalsHaveOrgId });
+    await ensureGoal(pool, { title: 'Clinical Workflow Team', type: 'team', parentId: service3, orgId, goalsHaveOrgId });
+    await ensureGoal(pool, { title: 'Platform Reliability Team', type: 'team', parentId: service3, orgId, goalsHaveOrgId });
+    await ensureGoal(pool, { title: 'Analytics Delivery Team', type: 'team', parentId: service4, orgId, goalsHaveOrgId });
+    await ensureGoal(pool, { title: 'Performance Reporting Team', type: 'team', parentId: service4, orgId, goalsHaveOrgId });
 
-    // Create KPIs for existing goals
+    scopedGoals = await loadGoalsForScope(pool, { goalsHaveOrgId, orgId });
+    return scopedGoals;
+};
+
+const ensureGoals = async (pool, organizations, goalsHaveOrgId) => {
+    if (!goalsHaveOrgId) {
+        await ensureGoalHierarchyForOrg(pool, { orgId: null, goalsHaveOrgId: false });
+        return loadGoalsForScope(pool, { goalsHaveOrgId: false });
+    }
+
+    const scopedGoals = [];
+    for (const organization of organizations) {
+        const goalsForOrg = await ensureGoalHierarchyForOrg(pool, {
+            orgId: organization.id,
+            goalsHaveOrgId
+        });
+        scopedGoals.push(...goalsForOrg);
+    }
+
+    return scopedGoals;
+};
+
+const getProjectAssignableGoals = (goals) => {
+    const goalRecords = Array.isArray(goals) ? goals : [];
+    const teamGoals = goalRecords.filter((goal) => goal.type === 'team');
+    if (teamGoals.length > 0) return teamGoals;
+
+    const serviceGoals = goalRecords.filter((goal) => goal.type === 'service');
+    if (serviceGoals.length > 0) return serviceGoals;
+
+    return goalRecords.filter((goal) => goal.type !== 'enterprise');
+};
+
+const ensureKpisForGoals = async (pool, goalIds) => {
     console.log('Seeding KPIs for goals...');
-    for (const goalId of seededGoalIds) {
+    for (const goalId of goalIds) {
         const kpiCountResult = await pool.request()
             .input('goalId', sql.Int, goalId)
             .query('SELECT COUNT(*) as count FROM KPIs WHERE goalId = @goalId');
@@ -145,8 +303,6 @@ const ensureGoals = async (pool, orgId, goalsHaveOrgId) => {
             await request.bulk(table);
         }
     }
-
-    return seededGoalIds;
 };
 
 const maybeSeedProjectGoals = async (pool, hasProjectGoals, projectId, goalId) => {
@@ -173,12 +329,37 @@ async function seedFakerData() {
         const projectsHaveOrgId = await existsColumn(pool, 'Projects', 'orgId');
         const goalsHaveOrgId = await existsColumn(pool, 'Goals', 'orgId');
         const hasProjectGoals = await existsTable(pool, 'ProjectGoals');
-        const orgId = await ensureDefaultOrganization(pool);
-        const goalIds = await ensureGoals(pool, orgId, goalsHaveOrgId);
+        const organizations = await ensureSeedOrganizations(pool);
+        const goalRecords = await ensureGoals(pool, organizations, goalsHaveOrgId);
+        const goalIds = goalRecords.map((goal) => goal.id);
+        await ensureKpisForGoals(pool, goalIds);
+
+        const organizationsToUse = organizations.length > 0
+            ? organizations
+            : [{ id: null, name: 'Default Seed Scope', slug: 'default-seed-scope' }];
+        const assignableGoalsByOrg = new Map(
+            organizationsToUse.map((organization) => {
+                const scopedGoals = goalsHaveOrgId
+                    ? goalRecords.filter((goal) => Number(goal.orgId) === Number(organization.id))
+                    : goalRecords;
+                return [String(organization.id ?? 'default'), getProjectAssignableGoals(scopedGoals)];
+            })
+        );
+        const defaultAssignableGoals = getProjectAssignableGoals(goalRecords);
+
+        if (organizations.length > 0) {
+            console.log(`Using organizations: ${organizations.map((organization) => organization.name).join(', ')}`);
+        }
 
         const createdProjectIds = [];
         for (let i = 0; i < PROJECT_COUNT; i += 1) {
-            const goalId = faker.helpers.arrayElement(goalIds);
+            const targetOrganization = organizationsToUse[i % organizationsToUse.length];
+            const scopedAssignableGoals = assignableGoalsByOrg.get(String(targetOrganization.id ?? 'default')) || defaultAssignableGoals;
+            const selectedGoal = faker.helpers.arrayElement(scopedAssignableGoals.length > 0 ? scopedAssignableGoals : defaultAssignableGoals);
+            const goalId = selectedGoal?.id;
+            const projectOrgId = projectsHaveOrgId
+                ? (selectedGoal?.orgId ?? targetOrganization.id ?? null)
+                : null;
             const request = pool.request()
                 .input('title', sql.NVarChar(255), `${faker.commerce.productName()} Initiative`)
                 .input('description', sql.NVarChar(sql.MAX), faker.lorem.sentences({ min: 1, max: 2 }))
@@ -186,7 +367,7 @@ async function seedFakerData() {
                 .input('goalId', sql.Int, goalId);
 
             if (projectsHaveOrgId) {
-                request.input('orgId', sql.Int, orgId);
+                request.input('orgId', sql.Int, projectOrgId);
             }
 
             const insertProjectQuery = projectsHaveOrgId
