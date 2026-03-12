@@ -64,6 +64,7 @@ export function GovernanceConfig({ initialTab = null, onTabChange = null }) {
         updateGovernanceSettings,
         fetchGovernanceUsers,
         fetchGovernanceBoards,
+        fetchOrganizations,
         createGovernanceBoard,
         updateGovernanceBoard,
         fetchGovernanceBoardMembers,
@@ -71,9 +72,12 @@ export function GovernanceConfig({ initialTab = null, onTabChange = null }) {
         fetchGovernanceCriteriaVersions,
         createGovernanceCriteriaVersion,
         updateGovernanceCriteriaVersion,
-        publishGovernanceCriteriaVersion
+        publishGovernanceCriteriaVersion,
+        hasRole,
+        currentUser
     } = useData();
     const toast = useToast();
+    const isAdmin = hasRole('Admin');
 
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
@@ -91,8 +95,10 @@ export function GovernanceConfig({ initialTab = null, onTabChange = null }) {
     const [boardPolicyReady, setBoardPolicyReady] = useState(false);
     const [boardCapacityReady, setBoardCapacityReady] = useState(false);
     const [boards, setBoards] = useState([]);
+    const [organizations, setOrganizations] = useState([]);
     const [selectedBoardId, setSelectedBoardId] = useState('');
     const [selectedBoardName, setSelectedBoardName] = useState('');
+    const [selectedBoardOrgId, setSelectedBoardOrgId] = useState(currentUser?.orgId ? String(currentUser.orgId) : '');
     const [selectedBoardActive, setSelectedBoardActive] = useState(true);
     const [selectedBoardUseGlobalPolicyDefaults, setSelectedBoardUseGlobalPolicyDefaults] = useState(true);
     const [selectedBoardQuorumPercent, setSelectedBoardQuorumPercent] = useState(60);
@@ -103,6 +109,7 @@ export function GovernanceConfig({ initialTab = null, onTabChange = null }) {
     const [selectedBoardWipLimit, setSelectedBoardWipLimit] = useState('');
     const [selectedBoardDefaultSubmissionEffortHours, setSelectedBoardDefaultSubmissionEffortHours] = useState('40');
     const [newBoardName, setNewBoardName] = useState('');
+    const [newBoardOrgId, setNewBoardOrgId] = useState(currentUser?.orgId ? String(currentUser.orgId) : '');
     const [newBoardActive, setNewBoardActive] = useState(true);
     const [newBoardWeeklyCapacityHours, setNewBoardWeeklyCapacityHours] = useState('');
     const [newBoardWipLimit, setNewBoardWipLimit] = useState('');
@@ -456,6 +463,28 @@ export function GovernanceConfig({ initialTab = null, onTabChange = null }) {
     }, [loadAll]);
 
     useEffect(() => {
+        let cancelled = false;
+        async function loadOrganizations() {
+            if (!isAdmin) return;
+            try {
+                const orgs = await fetchOrganizations();
+                if (!cancelled) {
+                    setOrganizations(Array.isArray(orgs) ? orgs : []);
+                }
+            } catch (err) {
+                console.warn('Failed to load organizations for governance boards', err);
+                if (!cancelled) {
+                    setOrganizations([]);
+                }
+            }
+        }
+        loadOrganizations();
+        return () => {
+            cancelled = true;
+        };
+    }, [fetchOrganizations, isAdmin]);
+
+    useEffect(() => {
         if (!selectedBoardId) {
             setMembers([]);
             setCriteriaVersions([]);
@@ -470,6 +499,7 @@ export function GovernanceConfig({ initialTab = null, onTabChange = null }) {
     useEffect(() => {
         if (selectedBoard) {
             setSelectedBoardName(selectedBoard.name || '');
+            setSelectedBoardOrgId(selectedBoard.orgId || (currentUser?.orgId ? String(currentUser.orgId) : ''));
             setSelectedBoardActive(!!selectedBoard.isActive);
             const policy = selectedBoard.effectivePolicy || selectedBoard.policy?.effective || null;
             const useGlobalDefaults = selectedBoard.useGlobalPolicyDefaults ?? selectedBoard.policy?.useGlobalDefaults ?? true;
@@ -504,6 +534,7 @@ export function GovernanceConfig({ initialTab = null, onTabChange = null }) {
             );
         } else {
             setSelectedBoardName('');
+            setSelectedBoardOrgId(currentUser?.orgId ? String(currentUser.orgId) : '');
             setSelectedBoardActive(true);
             setSelectedBoardUseGlobalPolicyDefaults(true);
             setSelectedBoardQuorumPercent(Number(quorumPercent || 60));
@@ -518,7 +549,7 @@ export function GovernanceConfig({ initialTab = null, onTabChange = null }) {
             setSelectedBoardWipLimit('');
             setSelectedBoardDefaultSubmissionEffortHours('40');
         }
-    }, [selectedBoard, quorumPercent, quorumMinCount, decisionRequiresQuorum, voteWindowDays]);
+    }, [selectedBoard, quorumPercent, quorumMinCount, decisionRequiresQuorum, voteWindowDays, currentUser]);
 
     useEffect(() => {
         if (!selectedVersion) return;
@@ -610,6 +641,10 @@ export function GovernanceConfig({ initialTab = null, onTabChange = null }) {
             toast.error('Board name is required');
             return;
         }
+        if (isAdmin && !newBoardOrgId) {
+            toast.error('Select an owning organization for this board');
+            return;
+        }
         const parsedWeeklyCapacity = parseOptionalOpenNumber(newBoardWeeklyCapacityHours);
         const parsedWipLimit = parseOptionalOpenInteger(newBoardWipLimit);
         const parsedDefaultEffort = parseRequiredPositiveNumber(newBoardDefaultSubmissionEffortHours);
@@ -633,6 +668,9 @@ export function GovernanceConfig({ initialTab = null, onTabChange = null }) {
                 name: newBoardName.trim(),
                 isActive: newBoardActive
             };
+            if (isAdmin) {
+                createPayload.orgId = newBoardOrgId;
+            }
             if (boardCapacityReady) {
                 createPayload.boardCapacity = {
                     weeklyCapacityHours: parsedWeeklyCapacity,
@@ -646,6 +684,7 @@ export function GovernanceConfig({ initialTab = null, onTabChange = null }) {
             await loadBoardReadiness(nextBoards);
             setSelectedBoardId(created.id);
             setNewBoardName('');
+            setNewBoardOrgId(currentUser?.orgId ? String(currentUser.orgId) : '');
             setNewBoardActive(true);
             setNewBoardWeeklyCapacityHours('');
             setNewBoardWipLimit('');
@@ -664,6 +703,10 @@ export function GovernanceConfig({ initialTab = null, onTabChange = null }) {
         if (!selectedBoardId) return;
         if (!selectedBoardName.trim()) {
             toast.error('Board name is required');
+            return;
+        }
+        if (isAdmin && !selectedBoardOrgId) {
+            toast.error('Select an owning organization for this board');
             return;
         }
         const canEditBoardPolicy = phase3Ready && boardPolicyReady;
@@ -711,6 +754,9 @@ export function GovernanceConfig({ initialTab = null, onTabChange = null }) {
                 name: selectedBoardName.trim(),
                 isActive: selectedBoardActive
             };
+            if (isAdmin) {
+                boardUpdatePayload.orgId = selectedBoardOrgId;
+            }
             if (canEditBoardPolicy) {
                 boardUpdatePayload.boardPolicy = {
                     useGlobalDefaults: selectedBoardUseGlobalPolicyDefaults,
@@ -1138,6 +1184,26 @@ export function GovernanceConfig({ initialTab = null, onTabChange = null }) {
                                         placeholder="e.g., Clinical Governance Board"
                                     />
                                 </div>
+                                {isAdmin && (
+                                    <div className="form-group">
+                                        <label>Owning Organization</label>
+                                        <select
+                                            value={newBoardOrgId}
+                                            onChange={(e) => {
+                                                setNewBoardOrgId(e.target.value);
+                                                setBoardDirty(true);
+                                            }}
+                                            className="form-select"
+                                        >
+                                            <option value="">Select organization</option>
+                                            {organizations.map((organization) => (
+                                                <option key={organization.id} value={organization.id}>
+                                                    {organization.name}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                )}
                                 <div className="governance-inline-row">
                                     <label className="required-checkbox">
                                         <input
@@ -1369,6 +1435,26 @@ export function GovernanceConfig({ initialTab = null, onTabChange = null }) {
                                                     }}
                                                 />
                                             </div>
+                                            {isAdmin && (
+                                                <div className="form-group">
+                                                    <label>Owning Organization</label>
+                                                    <select
+                                                        value={selectedBoardOrgId}
+                                                        onChange={(e) => {
+                                                            setSelectedBoardOrgId(e.target.value);
+                                                            setBoardDirty(true);
+                                                        }}
+                                                        className="form-select"
+                                                    >
+                                                        <option value="">Select organization</option>
+                                                        {organizations.map((organization) => (
+                                                            <option key={organization.id} value={organization.id}>
+                                                                {organization.name}
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                </div>
+                                            )}
                                             <div className="form-group">
                                                 <label>Status</label>
                                                 <label className="required-checkbox">

@@ -10,9 +10,183 @@ import {
 } from '../middleware/rateLimiters.js';
 import { handleError } from '../utils/errorHandler.js';
 import { logAudit } from '../utils/auditLogger.js';
-import { ensureRequiredIntakeFields } from '../../shared/intakeSystemFields.js';
+import { addParams, buildInClause } from '../utils/sqlHelpers.js';
+import {
+    ensureRequiredIntakeFields,
+    getIntakeSystemField,
+    INTAKE_SYSTEM_FIELD_KEYS
+} from '../../shared/intakeSystemFields.js';
+import { findGoalAccessGapsForOrg, ensureReadGoalAccessForOrg } from '../utils/goalAccess.js';
+import { ensureOrganizationExists, isAdminUser, parseOptionalOrgId, resolveOwnedOrgId } from '../utils/orgOwnership.js';
+import { validateGoalAssignment, loadGoalsForValidation } from '../utils/goalValidation.js';
 
 const router = express.Router();
+
+const TASK_STATUSES = new Set(['todo', 'in-progress', 'blocked', 'review', 'done']);
+const TASK_PRIORITIES = new Set(['low', 'medium', 'high']);
+
+const parseJsonOrFallback = (rawValue, fallback) => {
+    try {
+        if (rawValue === undefined || rawValue === null || rawValue === '') return fallback;
+        return JSON.parse(rawValue);
+    } catch {
+        return fallback;
+    }
+};
+
+const mapIntakeFormRow = (form) => ({
+    id: form.id.toString(),
+    name: form.name,
+    description: form.description,
+    fields: parseJsonOrFallback(form.fields, []),
+    defaultGoalId: form.defaultGoalId ? form.defaultGoalId.toString() : null,
+    governanceMode: normalizeGovernanceMode(form.governanceMode, 'off'),
+    governanceBoardId: form.governanceBoardId ? form.governanceBoardId.toString() : null,
+    orgId: form.orgId === null || form.orgId === undefined ? null : String(form.orgId),
+    createdAt: form.createdAt
+});
+
+const mapSubmissionRow = (sub) => {
+    const storedData = parseJsonOrFallback(sub.infoRequests, []);
+    const isConversationFormat = storedData.length > 0 && storedData[0]?.type;
+
+    return {
+        id: sub.id.toString(),
+        formId: sub.formId.toString(),
+        formData: parseJsonOrFallback(sub.formData, {}),
+        status: sub.status,
+        governanceRequired: !!sub.governanceRequired,
+        governanceStatus: sub.governanceStatus || 'not-started',
+        governanceDecision: sub.governanceDecision || null,
+        governanceReason: sub.governanceReason || null,
+        priorityScore: sub.priorityScore === null || sub.priorityScore === undefined ? null : Number(sub.priorityScore),
+        conversation: isConversationFormat ? storedData : [],
+        convertedProjectId: sub.convertedProjectId ? sub.convertedProjectId.toString() : null,
+        submittedAt: sub.submittedAt,
+        submitterName: sub.submitterName || null,
+        submitterEmail: sub.submitterEmail || null,
+        submitterId: sub.submitterId || null,
+        orgId: sub.orgId === null || sub.orgId === undefined ? null : String(sub.orgId)
+    };
+};
+
+const requireScopedOrgId = (user, message = 'No organization assigned. Contact your administrator.') => {
+    if (isAdminUser(user)) return null;
+    const orgId = parseOptionalOrgId(user?.orgId);
+    if (!Number.isFinite(orgId)) {
+        throw new Error(message);
+    }
+    return orgId;
+};
+
+const hasMatchingOrgScope = (userOrgId, resourceOrgId) => (
+    Number.isFinite(userOrgId) &&
+    Number.isFinite(resourceOrgId) &&
+    userOrgId === resourceOrgId
+);
+
+const hasActiveBoardMembership = async ({ pool, boardId, userOid }) => {
+    const parsedBoardId = parseOptionalOrgId(boardId);
+    if (!Number.isFinite(parsedBoardId) || !userOid) return false;
+
+    const result = await pool.request()
+        .input('boardId', sql.Int, parsedBoardId)
+        .input('userOid', sql.NVarChar(100), userOid)
+        .query(`
+            SELECT TOP 1 id
+            FROM GovernanceMembership
+            WHERE boardId = @boardId
+              AND userOid = @userOid
+              AND isActive = 1
+              AND effectiveFrom <= GETDATE()
+              AND (effectiveTo IS NULL OR effectiveTo > GETDATE())
+        `);
+
+    return result.recordset.length > 0;
+};
+
+const buildGovernanceSubmissionScope = async ({ pool, user, submission }) => {
+    const viewerOrgId = parseOptionalOrgId(user?.orgId);
+    const submissionOrgId = parseOptionalOrgId(submission?.orgId);
+    const boardOrgId = parseOptionalOrgId(submission?.boardOrgId);
+    const governanceBoardId = parseOptionalOrgId(submission?.governanceBoardId);
+
+    const scope = {
+        isOwner: submission?.submitterId === user?.oid,
+        sameSubmissionOrg: hasMatchingOrgScope(viewerOrgId, submissionOrgId),
+        sameBoardOrg: hasMatchingOrgScope(viewerOrgId, boardOrgId),
+        hasActiveBoardMembership: false
+    };
+
+    if (!isAdminUser(user)) {
+        scope.hasActiveBoardMembership = await hasActiveBoardMembership({
+            pool,
+            boardId: governanceBoardId,
+            userOid: user?.oid
+        });
+    }
+
+    return scope;
+};
+
+const hasGovernanceSubmissionScope = (scope, { allowOwner = false } = {}) => {
+    if (allowOwner && scope.isOwner) return true;
+    return scope.sameSubmissionOrg || scope.sameBoardOrg || scope.hasActiveBoardMembership;
+};
+
+const normalizeConversionGoalIds = (projectData = {}) => {
+    const goalIds = Array.isArray(projectData?.goalIds)
+        ? projectData.goalIds
+        : (projectData?.goalId !== undefined && projectData?.goalId !== null && projectData?.goalId !== ''
+            ? [projectData.goalId]
+            : []);
+
+    const normalized = [...new Set(goalIds
+        .map((goalId) => Number.parseInt(goalId, 10))
+        .filter((goalId) => !Number.isNaN(goalId)))];
+
+    return normalized;
+};
+
+const normalizeKickoffTasks = (tasks = []) => (
+    (Array.isArray(tasks) ? tasks : [])
+        .filter((task) => task && String(task.title || '').trim())
+        .map((task) => {
+            const status = TASK_STATUSES.has(String(task.status || '').trim().toLowerCase())
+                ? String(task.status).trim().toLowerCase()
+                : 'todo';
+            const priority = TASK_PRIORITIES.has(String(task.priority || '').trim().toLowerCase())
+                ? String(task.priority).trim().toLowerCase()
+                : 'medium';
+            const normalizeDate = (value) => {
+                if (!value) return null;
+                const parsed = new Date(value);
+                if (Number.isNaN(parsed.getTime())) return null;
+                return parsed.toISOString().slice(0, 10);
+            };
+
+            return {
+                title: String(task.title || '').trim(),
+                description: String(task.description || '').trim(),
+                status,
+                priority,
+                startDate: normalizeDate(task.startDate),
+                endDate: normalizeDate(task.endDate)
+            };
+        })
+);
+
+const appendConversionContext = (description, conversionContext) => {
+    const normalizedDescription = String(description || '').trim();
+    const normalizedContext = String(conversionContext || '').trim();
+    return [normalizedDescription, normalizedContext].filter(Boolean).join('\n\n');
+};
+
+const resolveSubmissionSystemValue = ({ formFields, formData, key }) => {
+    const field = getIntakeSystemField(formFields, key);
+    if (!field) return '';
+    return String(formData?.[field.id] || '').trim();
+};
 
 const canManageIntakeSubmissions = async (user) => {
     if (!user) return false;
@@ -512,21 +686,21 @@ router.get('/forms', requireAuth, async (req, res) => {
         if (!canViewForms) return res.status(403).json({ error: 'Forbidden' });
 
         const pool = await getPool();
-        const result = await pool.request().query('SELECT * FROM IntakeForms ORDER BY id');
+        let result;
+        if (isAdminUser(user)) {
+            result = await pool.request().query('SELECT * FROM IntakeForms ORDER BY id');
+        } else {
+            const viewerOrgId = requireScopedOrgId(user, 'No organization assigned. Contact your administrator to view intake forms.');
+            result = await pool.request()
+                .input('orgId', sql.Int, viewerOrgId)
+                .query('SELECT * FROM IntakeForms WHERE orgId = @orgId ORDER BY id');
+        }
 
-        const forms = result.recordset.map(form => ({
-            id: form.id.toString(),
-            name: form.name,
-            description: form.description,
-            fields: JSON.parse(form.fields || '[]'),
-            defaultGoalId: form.defaultGoalId ? form.defaultGoalId.toString() : null,
-            governanceMode: normalizeGovernanceMode(form.governanceMode, 'off'),
-            governanceBoardId: form.governanceBoardId ? form.governanceBoardId.toString() : null,
-            createdAt: form.createdAt
-        }));
-
-        res.json(forms);
+        res.json(result.recordset.map(mapIntakeFormRow));
     } catch (err) {
+        if (err?.message?.toLowerCase().includes('no organization assigned')) {
+            return res.status(403).json({ error: err.message });
+        }
         handleError(res, 'fetching intake forms', err);
     }
 });
@@ -537,9 +711,30 @@ router.post('/forms', checkPermission('can_manage_intake_forms'), async (req, re
         const { name, description, fields, defaultGoalId, governanceMode, governanceBoardId } = req.body;
         const normalizedFields = ensureRequiredIntakeFields(fields);
         const pool = await getPool();
+        let ownerOrgId;
+        try {
+            ownerOrgId = resolveOwnedOrgId({
+                user: req.user,
+                requestedOrgId: req.body?.orgId,
+                missingUserOrgMessage: 'No organization assigned. Contact your administrator to create intake forms.',
+                adminOrgRequiredMessage: 'orgId is required for admin-created intake forms'
+            });
+            await ensureOrganizationExists(pool, ownerOrgId);
+        } catch (orgErr) {
+            const message = orgErr?.message || 'Unable to resolve intake form organization';
+            const statusCode = message.toLowerCase().includes('no organization assigned') ? 403 : 400;
+            return res.status(statusCode).json({ error: message });
+        }
         const schemaReady = await hasGovernanceSchema(pool);
         const normalizedMode = normalizeGovernanceMode(governanceMode, 'off');
         let parsedBoardId = parseNullableBoardId(governanceBoardId);
+        const parsedDefaultGoalId = defaultGoalId === undefined || defaultGoalId === null || defaultGoalId === ''
+            ? null
+            : Number.parseInt(defaultGoalId, 10);
+
+        if (defaultGoalId !== undefined && defaultGoalId !== null && defaultGoalId !== '' && Number.isNaN(parsedDefaultGoalId)) {
+            return res.status(400).json({ error: 'defaultGoalId must be a valid goal id' });
+        }
 
         if (schemaReady && normalizedMode !== 'off' && parsedBoardId === null) {
             return res.status(400).json({ error: 'governanceBoardId is required when governanceMode is optional or required' });
@@ -558,11 +753,23 @@ router.post('/forms', checkPermission('can_manage_intake_forms'), async (req, re
             parsedBoardId = null;
         }
 
+        const defaultGoalAccessGaps = await findGoalAccessGapsForOrg({
+            dbOrTx: pool,
+            goalIds: parsedDefaultGoalId === null ? [] : [parsedDefaultGoalId],
+            orgId: ownerOrgId
+        });
+        if (defaultGoalAccessGaps.length > 0) {
+            return res.status(409).json({
+                error: `Selected default goal is not visible to the form organization: ${defaultGoalAccessGaps[0].title}`
+            });
+        }
+
         const request = pool.request()
             .input('name', sql.NVarChar, name)
             .input('description', sql.NVarChar, description)
             .input('fields', sql.NVarChar, JSON.stringify(normalizedFields))
-            .input('defaultGoalId', sql.Int, defaultGoalId ? parseInt(defaultGoalId, 10) : null);
+            .input('defaultGoalId', sql.Int, parsedDefaultGoalId)
+            .input('orgId', sql.Int, ownerOrgId);
 
         let result;
         if (schemaReady) {
@@ -570,15 +777,15 @@ router.post('/forms', checkPermission('can_manage_intake_forms'), async (req, re
                 .input('governanceMode', sql.NVarChar(20), normalizedMode)
                 .input('governanceBoardId', sql.Int, parsedBoardId);
             result = await request.query(`
-                INSERT INTO IntakeForms (name, description, fields, defaultGoalId, governanceMode, governanceBoardId)
+                INSERT INTO IntakeForms (name, description, fields, defaultGoalId, governanceMode, governanceBoardId, orgId)
                 OUTPUT INSERTED.id, INSERTED.createdAt
-                VALUES (@name, @description, @fields, @defaultGoalId, @governanceMode, @governanceBoardId)
+                VALUES (@name, @description, @fields, @defaultGoalId, @governanceMode, @governanceBoardId, @orgId)
             `);
         } else {
             result = await request.query(`
-                INSERT INTO IntakeForms (name, description, fields, defaultGoalId)
+                INSERT INTO IntakeForms (name, description, fields, defaultGoalId, orgId)
                 OUTPUT INSERTED.id, INSERTED.createdAt
-                VALUES (@name, @description, @fields, @defaultGoalId)
+                VALUES (@name, @description, @fields, @defaultGoalId, @orgId)
             `);
         }
 
@@ -592,22 +799,24 @@ router.post('/forms', checkPermission('can_manage_intake_forms'), async (req, re
             after: {
                 name,
                 description,
-                defaultGoalId,
+                defaultGoalId: parsedDefaultGoalId,
+                orgId: ownerOrgId,
                 governanceMode: schemaReady ? normalizedMode : 'off',
                 governanceBoardId: schemaReady && parsedBoardId !== null ? String(parsedBoardId) : null
             },
             req
         });
-        res.json({
-            id: newId,
+        res.json(mapIntakeFormRow({
+            id: result.recordset[0].id,
             name,
             description,
-            fields: normalizedFields,
-            defaultGoalId,
+            fields: JSON.stringify(normalizedFields),
+            defaultGoalId: parsedDefaultGoalId,
             governanceMode: schemaReady ? normalizedMode : 'off',
-            governanceBoardId: schemaReady && parsedBoardId !== null ? String(parsedBoardId) : null,
+            governanceBoardId: parsedBoardId,
+            orgId: ownerOrgId,
             createdAt: result.recordset[0].createdAt
-        });
+        }));
     } catch (err) {
         handleError(res, 'creating intake form', err);
     }
@@ -623,10 +832,46 @@ router.put('/forms/:id', checkPermission('can_manage_intake_forms'), async (req,
         const schemaReady = await hasGovernanceSchema(pool);
         const prev = await pool.request()
             .input('id', sql.Int, id)
-            .query('SELECT name, description, defaultGoalId, governanceMode, governanceBoardId FROM IntakeForms WHERE id = @id');
+            .query('SELECT id, name, description, defaultGoalId, governanceMode, governanceBoardId, orgId FROM IntakeForms WHERE id = @id');
         if (prev.recordset.length === 0) return res.status(404).json({ error: 'Form not found' });
 
         const current = prev.recordset[0];
+        const hasOrgIdInput = Object.prototype.hasOwnProperty.call(req.body || {}, 'orgId');
+        let ownerOrgId = current.orgId === null || current.orgId === undefined ? null : Number(current.orgId);
+        if (!isAdminUser(req.user)) {
+            const viewerOrgId = requireScopedOrgId(req.user, 'No organization assigned. Contact your administrator to update intake forms.');
+            if (ownerOrgId !== null && ownerOrgId !== viewerOrgId) {
+                return res.status(403).json({ error: 'You can only update intake forms owned by your organization' });
+            }
+        }
+        if (hasOrgIdInput) {
+            if (!isAdminUser(req.user)) {
+                return res.status(403).json({ error: 'Only admins can change an intake form organization' });
+            }
+            try {
+                ownerOrgId = resolveOwnedOrgId({
+                    user: req.user,
+                    requestedOrgId: req.body?.orgId,
+                    missingUserOrgMessage: 'No organization assigned. Contact your administrator to update intake form ownership.',
+                    adminOrgRequiredMessage: 'orgId is required when updating an intake form without an owner organization'
+                });
+                await ensureOrganizationExists(pool, ownerOrgId);
+            } catch (orgErr) {
+                return res.status(400).json({ error: orgErr?.message || 'Unable to resolve intake form organization' });
+            }
+        }
+        if (ownerOrgId === null || ownerOrgId === undefined) {
+            return res.status(409).json({
+                error: 'Intake form organization is not assigned. Run the org ownership backfill or provide orgId as an admin.'
+            });
+        }
+
+        const parsedDefaultGoalId = defaultGoalId === undefined
+            ? (current.defaultGoalId === null || current.defaultGoalId === undefined ? null : Number(current.defaultGoalId))
+            : (defaultGoalId === null || defaultGoalId === '' ? null : Number.parseInt(defaultGoalId, 10));
+        if (defaultGoalId !== undefined && defaultGoalId !== null && defaultGoalId !== '' && Number.isNaN(parsedDefaultGoalId)) {
+            return res.status(400).json({ error: 'defaultGoalId must be a valid goal id' });
+        }
         const normalizedMode = schemaReady
             ? normalizeGovernanceMode(governanceMode, normalizeGovernanceMode(current.governanceMode, 'off'))
             : 'off';
@@ -647,12 +892,24 @@ router.put('/forms/:id', checkPermission('can_manage_intake_forms'), async (req,
             }
         }
 
+        const defaultGoalAccessGaps = await findGoalAccessGapsForOrg({
+            dbOrTx: pool,
+            goalIds: parsedDefaultGoalId === null ? [] : [parsedDefaultGoalId],
+            orgId: ownerOrgId
+        });
+        if (defaultGoalAccessGaps.length > 0) {
+            return res.status(409).json({
+                error: `Selected default goal is not visible to the form organization: ${defaultGoalAccessGaps[0].title}`
+            });
+        }
+
         const request = pool.request()
             .input('id', sql.Int, id)
             .input('name', sql.NVarChar, name)
             .input('description', sql.NVarChar, description)
             .input('fields', sql.NVarChar, JSON.stringify(normalizedFields))
-            .input('defaultGoalId', sql.Int, defaultGoalId ? parseInt(defaultGoalId, 10) : null);
+            .input('defaultGoalId', sql.Int, parsedDefaultGoalId)
+            .input('orgId', sql.Int, ownerOrgId);
 
         if (schemaReady) {
             await request
@@ -664,6 +921,7 @@ router.put('/forms/:id', checkPermission('can_manage_intake_forms'), async (req,
                         description = @description,
                         fields = @fields,
                         defaultGoalId = @defaultGoalId,
+                        orgId = @orgId,
                         governanceMode = @governanceMode,
                         governanceBoardId = @governanceBoardId
                     WHERE id = @id
@@ -671,7 +929,7 @@ router.put('/forms/:id', checkPermission('can_manage_intake_forms'), async (req,
         } else {
             await request.query(`
                 UPDATE IntakeForms
-                SET name = @name, description = @description, fields = @fields, defaultGoalId = @defaultGoalId
+                SET name = @name, description = @description, fields = @fields, defaultGoalId = @defaultGoalId, orgId = @orgId
                 WHERE id = @id
             `);
         }
@@ -686,7 +944,8 @@ router.put('/forms/:id', checkPermission('can_manage_intake_forms'), async (req,
             after: {
                 name,
                 description,
-                defaultGoalId,
+                defaultGoalId: parsedDefaultGoalId,
+                orgId: ownerOrgId,
                 governanceMode: schemaReady ? normalizedMode : null,
                 governanceBoardId: schemaReady && parsedBoardId !== null ? String(parsedBoardId) : null
             },
@@ -807,6 +1066,25 @@ router.get('/governance-queue', checkPermission('can_view_governance_queue'), as
                 addFilterParam.push(['requestUserOid', sql.NVarChar(100), user?.oid || '']);
             }
         }
+        if (!isAdminUser(user)) {
+            const viewerOrgId = parseOptionalOrgId(user?.orgId);
+            filters.push(`
+                (
+                    (@viewerScopeOrgId IS NOT NULL AND (s.orgId = @viewerScopeOrgId OR b.orgId = @viewerScopeOrgId))
+                    OR EXISTS (
+                        SELECT 1
+                        FROM GovernanceMembership gmScope
+                        WHERE gmScope.boardId = f.governanceBoardId
+                          AND gmScope.userOid = @viewerScopeUserOid
+                          AND gmScope.isActive = 1
+                          AND gmScope.effectiveFrom <= GETDATE()
+                          AND (gmScope.effectiveTo IS NULL OR gmScope.effectiveTo > GETDATE())
+                    )
+                )
+            `);
+            addFilterParam.push(['viewerScopeUserOid', sql.NVarChar(100), user?.oid || '']);
+            addFilterParam.push(['viewerScopeOrgId', sql.Int, Number.isFinite(viewerOrgId) ? viewerOrgId : null]);
+        }
 
         const where = `WHERE ${filters.join(' AND ')}`;
 
@@ -816,6 +1094,7 @@ router.get('/governance-queue', checkPermission('can_view_governance_queue'), as
             SELECT COUNT(*) AS total
             FROM IntakeSubmissions s
             INNER JOIN IntakeForms f ON f.id = s.formId
+            LEFT JOIN GovernanceBoard b ON b.id = f.governanceBoardId
             ${where}
         `);
         const total = totalResult.recordset[0].total;
@@ -877,6 +1156,7 @@ router.get('/governance-queue', checkPermission('can_view_governance_queue'), as
             SELECT
                 s.id,
                 s.formId,
+                s.orgId,
                 s.status,
                 s.submittedAt,
                 s.submitterName,
@@ -907,19 +1187,40 @@ router.get('/governance-queue', checkPermission('can_view_governance_queue'), as
 
         let capacity = null;
         if (!Number.isNaN(boardId) && governanceCapacityReady) {
-            const boardCapacityResult = await pool.request()
-                .input('boardId', sql.Int, boardId)
-                .query(`
-                    SELECT TOP 1
-                        b.id,
-                        b.name,
-                        b.orgId,
-                        b.weeklyCapacityHours,
-                        b.wipLimit,
-                        b.defaultSubmissionEffortHours
-                    FROM GovernanceBoard b
-                    WHERE b.id = @boardId
-                `);
+            const boardCapacityRequest = pool.request()
+                .input('boardId', sql.Int, boardId);
+            let boardCapacityWhere = 'WHERE b.id = @boardId';
+            if (!isAdminUser(user)) {
+                const viewerOrgId = parseOptionalOrgId(user?.orgId);
+                boardCapacityRequest
+                    .input('viewerScopeUserOid', sql.NVarChar(100), user?.oid || '')
+                    .input('viewerScopeOrgId', sql.Int, Number.isFinite(viewerOrgId) ? viewerOrgId : null);
+                boardCapacityWhere += `
+                    AND (
+                        (@viewerScopeOrgId IS NOT NULL AND b.orgId = @viewerScopeOrgId)
+                        OR EXISTS (
+                            SELECT 1
+                            FROM GovernanceMembership gmScope
+                            WHERE gmScope.boardId = b.id
+                              AND gmScope.userOid = @viewerScopeUserOid
+                              AND gmScope.isActive = 1
+                              AND gmScope.effectiveFrom <= GETDATE()
+                              AND (gmScope.effectiveTo IS NULL OR gmScope.effectiveTo > GETDATE())
+                        )
+                    )
+                `;
+            }
+            const boardCapacityResult = await boardCapacityRequest.query(`
+                SELECT TOP 1
+                    b.id,
+                    b.name,
+                    b.orgId,
+                    b.weeklyCapacityHours,
+                    b.wipLimit,
+                    b.defaultSubmissionEffortHours
+                FROM GovernanceBoard b
+                ${boardCapacityWhere}
+            `);
             const boardCapacity = boardCapacityResult.recordset[0] || null;
 
             if (boardCapacity) {
@@ -1026,6 +1327,7 @@ router.get('/governance-queue', checkPermission('can_view_governance_queue'), as
                 return {
                     id: item.id.toString(),
                     formId: item.formId.toString(),
+                    orgId: item.orgId === null || item.orgId === undefined ? null : String(item.orgId),
                     formName: item.formName,
                     status: item.status,
                     submittedAt: item.submittedAt,
@@ -1406,32 +1708,21 @@ router.get('/submissions', requireAuth, async (req, res) => {
         }
 
         const pool = await getPool();
-        const result = await pool.request().query('SELECT * FROM IntakeSubmissions ORDER BY submittedAt DESC');
+        let result;
+        if (isAdminUser(user)) {
+            result = await pool.request().query('SELECT * FROM IntakeSubmissions ORDER BY submittedAt DESC');
+        } else {
+            const viewerOrgId = requireScopedOrgId(user, 'No organization assigned. Contact your administrator to view intake submissions.');
+            result = await pool.request()
+                .input('orgId', sql.Int, viewerOrgId)
+                .query('SELECT * FROM IntakeSubmissions WHERE orgId = @orgId ORDER BY submittedAt DESC');
+        }
 
-        const submissions = result.recordset.map(sub => {
-            const storedData = JSON.parse(sub.infoRequests || '[]');
-            const isConversationFormat = storedData.length > 0 && storedData[0]?.type;
-
-            return {
-                id: sub.id.toString(),
-                formId: sub.formId.toString(),
-                formData: JSON.parse(sub.formData || '{}'),
-                status: sub.status,
-                governanceRequired: !!sub.governanceRequired,
-                governanceStatus: sub.governanceStatus || 'not-started',
-                governanceDecision: sub.governanceDecision || null,
-                governanceReason: sub.governanceReason || null,
-                priorityScore: sub.priorityScore === null ? null : Number(sub.priorityScore),
-                conversation: isConversationFormat ? storedData : [],
-                convertedProjectId: sub.convertedProjectId ? sub.convertedProjectId.toString() : null,
-                submittedAt: sub.submittedAt,
-                submitterName: sub.submitterName,
-                submitterEmail: sub.submitterEmail
-            };
-        });
-
-        res.json(submissions);
+        res.json(result.recordset.map(mapSubmissionRow));
     } catch (err) {
+        if (err?.message?.toLowerCase().includes('no organization assigned')) {
+            return res.status(403).json({ error: err.message });
+        }
         handleError(res, 'fetching submissions', err);
     }
 });
@@ -1447,27 +1738,7 @@ router.get('/my-submissions', requireAuth, async (req, res) => {
             .input('submitterId', sql.NVarChar, user.oid)
             .query('SELECT * FROM IntakeSubmissions WHERE submitterId = @submitterId ORDER BY submittedAt DESC');
 
-        const submissions = result.recordset.map(sub => {
-            const storedData = JSON.parse(sub.infoRequests || '[]');
-            const isConversationFormat = storedData.length > 0 && storedData[0]?.type;
-
-            return {
-                id: sub.id.toString(),
-                formId: sub.formId.toString(),
-                formData: JSON.parse(sub.formData || '{}'),
-                status: sub.status,
-                governanceRequired: !!sub.governanceRequired,
-                governanceStatus: sub.governanceStatus || 'not-started',
-                governanceDecision: sub.governanceDecision || null,
-                governanceReason: sub.governanceReason || null,
-                priorityScore: sub.priorityScore === null ? null : Number(sub.priorityScore),
-                conversation: isConversationFormat ? storedData : [],
-                convertedProjectId: sub.convertedProjectId ? sub.convertedProjectId.toString() : null,
-                submittedAt: sub.submittedAt
-            };
-        });
-
-        res.json(submissions);
+        res.json(result.recordset.map(mapSubmissionRow));
     } catch (err) {
         handleError(res, 'fetching my submissions', err);
     }
@@ -1486,19 +1757,27 @@ router.post('/submissions', requireAuth, intakeSubmissionCreateLimiter, async (r
         }
 
         const pool = await getPool();
+        const submitterOrgId = requireScopedOrgId(user, 'No organization assigned. Contact your administrator to submit intake requests.');
 
         // Server-side validation of dynamic fields
         const formResult = await pool.request()
             .input('formId', sql.Int, parsedFormId)
-            .query('SELECT fields FROM IntakeForms WHERE id = @formId');
+            .query('SELECT id, fields, orgId FROM IntakeForms WHERE id = @formId');
 
         if (formResult.recordset.length === 0) {
             return res.status(404).json({ error: 'Form not found' });
         }
+        const formRecord = formResult.recordset[0];
+        if (!isAdminUser(user)) {
+            const formOrgId = parseOptionalOrgId(formRecord.orgId);
+            if (Number.isFinite(formOrgId) && formOrgId !== submitterOrgId) {
+                return res.status(403).json({ error: 'You can only submit intake forms owned by your organization' });
+            }
+        }
 
         let formFields = [];
         try {
-            formFields = JSON.parse(formResult.recordset[0].fields || '[]');
+            formFields = JSON.parse(formRecord.fields || '[]');
         } catch (e) {
             console.error('Failed to parse form fields for validation', e);
         }
@@ -1525,6 +1804,7 @@ router.post('/submissions', requireAuth, intakeSubmissionCreateLimiter, async (r
                 .input('formData', sql.NVarChar, JSON.stringify(formData))
                 .input('submitterId', sql.NVarChar, user ? user.oid : null)
                 .input('submitterName', sql.NVarChar, user ? user.name : null)
+                .input('orgId', sql.Int, submitterOrgId)
                 .input('governanceRequired', sql.Bit, governanceDefaults.governanceRequired ? 1 : 0)
                 .input('governanceStatus', sql.NVarChar(20), governanceDefaults.governanceStatus)
                 .input('governanceReason', sql.NVarChar(sql.MAX), governanceDefaults.governanceReason)
@@ -1537,6 +1817,7 @@ router.post('/submissions', requireAuth, intakeSubmissionCreateLimiter, async (r
                         submitterId,
                         submitterName,
                         submitterEmail,
+                        orgId,
                         governanceRequired,
                         governanceStatus,
                         governanceReason
@@ -1549,6 +1830,7 @@ router.post('/submissions', requireAuth, intakeSubmissionCreateLimiter, async (r
                         @submitterId,
                         @submitterName,
                         @submitterEmail,
+                        @orgId,
                         @governanceRequired,
                         @governanceStatus,
                         @governanceReason
@@ -1560,13 +1842,14 @@ router.post('/submissions', requireAuth, intakeSubmissionCreateLimiter, async (r
                 .input('formData', sql.NVarChar, JSON.stringify(formData))
                 .input('submitterId', sql.NVarChar, user ? user.oid : null)
                 .input('submitterName', sql.NVarChar, user ? user.name : null)
+                .input('orgId', sql.Int, submitterOrgId)
                 .input('submitterEmail', sql.NVarChar, user ? user.email : null)
                 .query(`
                     INSERT INTO IntakeSubmissions (
-                        formId, formData, infoRequests, submitterId, submitterName, submitterEmail
+                        formId, formData, infoRequests, submitterId, submitterName, submitterEmail, orgId
                     )
                     OUTPUT INSERTED.id, INSERTED.submittedAt
-                    VALUES (@formId, @formData, '[]', @submitterId, @submitterName, @submitterEmail)
+                    VALUES (@formId, @formData, '[]', @submitterId, @submitterName, @submitterEmail, @orgId)
                 `);
         }
 
@@ -1580,26 +1863,34 @@ router.post('/submissions', requireAuth, intakeSubmissionCreateLimiter, async (r
             after: {
                 formId: parsedFormId,
                 status: 'pending',
+                orgId: submitterOrgId,
                 governanceRequired: governanceDefaults.governanceRequired,
                 governanceStatus: governanceDefaults.governanceStatus
             },
             req
         });
-        res.json({
-            id: newSubId,
+        res.json(mapSubmissionRow({
+            id: result.recordset[0].id,
             formId: parsedFormId,
-            formData,
+            formData: JSON.stringify(formData),
             status: 'pending',
             governanceRequired: governanceDefaults.governanceRequired,
             governanceStatus: governanceDefaults.governanceStatus,
             governanceDecision: null,
             governanceReason: governanceDefaults.governanceReason,
             priorityScore: null,
-            infoRequests: [],
+            infoRequests: '[]',
             convertedProjectId: null,
-            submittedAt: result.recordset[0].submittedAt
-        });
+            submittedAt: result.recordset[0].submittedAt,
+            submitterId: user?.oid || null,
+            submitterName: user?.name || null,
+            submitterEmail: user?.email || null,
+            orgId: submitterOrgId
+        }));
     } catch (err) {
+        if (err?.message?.toLowerCase().includes('no organization assigned')) {
+            return res.status(403).json({ error: err.message });
+        }
         handleError(res, 'creating submission', err);
     }
 });
@@ -1620,6 +1911,7 @@ router.put('/submissions/:id', requireAuth, async (req, res) => {
             .query(`
                 SELECT
                     submitterId,
+                    orgId,
                     status,
                     convertedProjectId,
                     governanceRequired,
@@ -1640,6 +1932,13 @@ router.put('/submissions/:id', requireAuth, async (req, res) => {
 
         if (!isManager && !isOwner) {
             return res.status(403).json({ error: 'Forbidden' });
+        }
+        if (isManager && !isAdminUser(user)) {
+            const managerOrgId = requireScopedOrgId(user, 'No organization assigned. Contact your administrator to manage intake submissions.');
+            const submissionOrgId = parseOptionalOrgId(prev.orgId);
+            if (Number.isFinite(submissionOrgId) && submissionOrgId !== managerOrgId) {
+                return res.status(403).json({ error: 'You can only manage submissions owned by your organization' });
+            }
         }
 
         // 3. Prepare Updates
@@ -1710,7 +2009,291 @@ router.put('/submissions/:id', requireAuth, async (req, res) => {
 
         res.json({ success: true });
     } catch (err) {
+        if (err?.message?.toLowerCase().includes('no organization assigned')) {
+            return res.status(403).json({ error: err.message });
+        }
         handleError(res, 'updating submission', err);
+    }
+});
+
+router.post('/submissions/:id/convert', requireAuth, async (req, res) => {
+    try {
+        const user = getAuthUser(req);
+        if (!user) return res.status(401).json({ error: 'Unauthorized' });
+        if (!(await canManageIntakeSubmissions(user))) {
+            return res.status(403).json({ error: 'Forbidden' });
+        }
+
+        const submissionId = Number.parseInt(req.params.id, 10);
+        if (Number.isNaN(submissionId)) {
+            return res.status(400).json({ error: 'Invalid submission id' });
+        }
+
+        const pool = await getPool();
+        const submissionResult = await pool.request()
+            .input('id', sql.Int, submissionId)
+            .query(`
+                SELECT TOP 1
+                    s.*,
+                    f.name AS formName,
+                    f.fields AS formFields,
+                    f.defaultGoalId,
+                    f.orgId AS formOrgId,
+                    f.governanceBoardId,
+                    b.name AS governanceBoardName,
+                    b.orgId AS boardOrgId,
+                    submitter.orgId AS submitterOrgId
+                FROM IntakeSubmissions s
+                INNER JOIN IntakeForms f ON f.id = s.formId
+                LEFT JOIN GovernanceBoard b ON b.id = f.governanceBoardId
+                LEFT JOIN Users submitter ON submitter.oid = s.submitterId
+                WHERE s.id = @id
+            `);
+
+        if (submissionResult.recordset.length === 0) {
+            return res.status(404).json({ error: 'Submission not found' });
+        }
+
+        const submission = submissionResult.recordset[0];
+        const resolvedSubmissionOrgId = parseOptionalOrgId(
+            submission.orgId ?? submission.submitterOrgId ?? submission.formOrgId
+        );
+        if (!isAdminUser(user)) {
+            const managerOrgId = parseOptionalOrgId(user?.orgId);
+            let hasBoardMembership = false;
+            if (submission.governanceBoardId) {
+                const membershipResult = await pool.request()
+                    .input('boardId', sql.Int, submission.governanceBoardId)
+                    .input('userOid', sql.NVarChar(100), user?.oid || '')
+                    .query(`
+                        SELECT TOP 1 id
+                        FROM GovernanceMembership
+                        WHERE boardId = @boardId
+                          AND userOid = @userOid
+                          AND isActive = 1
+                          AND effectiveFrom <= GETDATE()
+                          AND (effectiveTo IS NULL OR effectiveTo > GETDATE())
+                    `);
+                hasBoardMembership = membershipResult.recordset.length > 0;
+            }
+            const hasSubmissionOrgAccess = Number.isFinite(managerOrgId) && Number.isFinite(resolvedSubmissionOrgId) && managerOrgId === resolvedSubmissionOrgId;
+            const boardOrgId = parseOptionalOrgId(submission.boardOrgId);
+            const hasBoardOrgAccess = Number.isFinite(managerOrgId) && Number.isFinite(boardOrgId) && managerOrgId === boardOrgId;
+            if (!hasSubmissionOrgAccess && !hasBoardOrgAccess && !hasBoardMembership) {
+                return res.status(403).json({ error: 'You can only convert submissions owned by your organization' });
+            }
+        }
+        if (!Number.isFinite(resolvedSubmissionOrgId)) {
+            return res.status(409).json({
+                error: 'Submission organization is not assigned. Run the org ownership backfill before converting this submission.'
+            });
+        }
+
+        const normalizedSubmissionStatus = String(submission.status || '').trim().toLowerCase();
+        if (submission.convertedProjectId) {
+            return res.status(409).json({
+                error: `Submission has already been converted to project ${submission.convertedProjectId}.`
+            });
+        }
+        if (normalizedSubmissionStatus === 'rejected') {
+            return res.status(409).json({ error: 'Rejected submissions cannot be converted to projects.' });
+        }
+
+        const governanceRequired = !!submission.governanceRequired;
+        const governanceStatus = String(submission.governanceStatus || '').trim().toLowerCase();
+        const governanceDecision = String(submission.governanceDecision || '').trim().toLowerCase();
+        if (governanceRequired && !(governanceStatus === 'decided' && governanceDecision === 'approved-now')) {
+            return res.status(409).json({
+                error: 'Cannot convert to project until governance is decided as approved-now.'
+            });
+        }
+
+        const projectData = req.body?.projectData && typeof req.body.projectData === 'object'
+            ? req.body.projectData
+            : {};
+        const kickoffTasks = normalizeKickoffTasks(req.body?.kickoffTasks);
+        const conversionContext = req.body?.conversionContext;
+        const formFields = parseJsonOrFallback(submission.formFields, []);
+        const submissionFormData = parseJsonOrFallback(submission.formData, {});
+        const systemProjectName = resolveSubmissionSystemValue({
+            formFields,
+            formData: submissionFormData,
+            key: INTAKE_SYSTEM_FIELD_KEYS.PROJECT_NAME
+        });
+        const systemDescription = resolveSubmissionSystemValue({
+            formFields,
+            formData: submissionFormData,
+            key: INTAKE_SYSTEM_FIELD_KEYS.PROJECT_DESCRIPTION
+        });
+
+        const projectTitle = String(projectData?.title || systemProjectName || '').trim() || 'New Project';
+        const projectDescription = appendConversionContext(
+            projectData?.description !== undefined ? projectData.description : systemDescription,
+            conversionContext
+        );
+        const projectStatus = String(projectData?.status || 'active').trim().toLowerCase() || 'active';
+        const requestedGoalIds = normalizeConversionGoalIds(projectData);
+        const goalIds = requestedGoalIds.length > 0
+            ? requestedGoalIds
+            : (submission.defaultGoalId ? [Number(submission.defaultGoalId)] : []);
+
+        if (goalIds.length > 1) {
+            const allGoals = await loadGoalsForValidation();
+            const validation = validateGoalAssignment(allGoals, goalIds);
+            if (!validation.valid) {
+                return res.status(400).json({ error: validation.error });
+            }
+        }
+
+        if (goalIds.length > 0) {
+            const { text, params } = buildInClause('convertGoalId', goalIds);
+            const goalRequest = pool.request();
+            addParams(goalRequest, params);
+            const goalResult = await goalRequest.query(`
+                SELECT id, title, orgId
+                FROM Goals
+                WHERE id IN (${text})
+            `);
+            const foundGoalIds = new Set(goalResult.recordset.map((row) => Number(row.id)));
+            const missingGoalIds = goalIds.filter((goalId) => !foundGoalIds.has(Number(goalId)));
+            if (missingGoalIds.length > 0) {
+                return res.status(400).json({
+                    error: `Goal id(s) not found: ${missingGoalIds.join(', ')}`
+                });
+            }
+        }
+
+        const tx = new sql.Transaction(pool);
+        await tx.begin();
+        try {
+            await ensureReadGoalAccessForOrg({
+                dbOrTx: tx,
+                goalIds,
+                orgId: resolvedSubmissionOrgId,
+                grantedByOid: user?.oid || null
+            });
+
+            const remainingGoalAccessGaps = await findGoalAccessGapsForOrg({
+                dbOrTx: tx,
+                goalIds,
+                orgId: resolvedSubmissionOrgId
+            });
+            if (remainingGoalAccessGaps.length > 0) {
+                const accessError = new Error(
+                    `Selected goals are not visible to the submission organization: ${remainingGoalAccessGaps.map((goal) => goal.title).join(', ')}`
+                );
+                accessError.statusCode = 409;
+                throw accessError;
+            }
+
+            const projectInsert = await new sql.Request(tx)
+                .input('title', sql.NVarChar(255), projectTitle)
+                .input('description', sql.NVarChar(sql.MAX), projectDescription || null)
+                .input('status', sql.NVarChar(20), projectStatus)
+                .input('orgId', sql.Int, resolvedSubmissionOrgId)
+                .query(`
+                    INSERT INTO Projects (title, description, status, orgId)
+                    OUTPUT INSERTED.id, INSERTED.createdAt
+                    VALUES (@title, @description, @status, @orgId)
+                `);
+            const projectId = Number(projectInsert.recordset[0].id);
+
+            for (const goalId of goalIds) {
+                await new sql.Request(tx)
+                    .input('projectId', sql.Int, projectId)
+                    .input('goalId', sql.Int, goalId)
+                    .query('INSERT INTO ProjectGoals (projectId, goalId) VALUES (@projectId, @goalId)');
+            }
+
+            for (const task of kickoffTasks) {
+                await new sql.Request(tx)
+                    .input('projectId', sql.Int, projectId)
+                    .input('title', sql.NVarChar(255), task.title)
+                    .input('status', sql.NVarChar(20), task.status)
+                    .input('priority', sql.NVarChar(20), task.priority)
+                    .input('description', sql.NVarChar(sql.MAX), task.description || '')
+                    .input('startDate', sql.Date, task.startDate)
+                    .input('endDate', sql.Date, task.endDate)
+                    .query(`
+                        INSERT INTO Tasks (projectId, title, status, priority, description, startDate, endDate)
+                        VALUES (@projectId, @title, @status, @priority, @description, @startDate, @endDate)
+                    `);
+            }
+
+            await new sql.Request(tx)
+                .input('submissionId', sql.Int, submissionId)
+                .input('projectId', sql.Int, projectId)
+                .input('orgId', sql.Int, resolvedSubmissionOrgId)
+                .query(`
+                    UPDATE IntakeSubmissions
+                    SET
+                        status = 'approved',
+                        convertedProjectId = @projectId,
+                        orgId = @orgId
+                    WHERE id = @submissionId
+                `);
+
+            await tx.commit();
+
+            logAudit({
+                action: 'submission.convert',
+                entityType: 'submission',
+                entityId: String(submissionId),
+                entityTitle: `Submission ${submissionId}`,
+                user,
+                after: {
+                    projectId,
+                    orgId: resolvedSubmissionOrgId,
+                    goalIds,
+                    kickoffTaskCount: kickoffTasks.length
+                },
+                req
+            });
+
+            return res.json({
+                success: true,
+                submissionId: String(submissionId),
+                projectId: String(projectId),
+                seededTaskCount: kickoffTasks.length,
+                seededTaskErrors: [],
+                project: {
+                    id: String(projectId),
+                    title: projectTitle,
+                    description: projectDescription || '',
+                    status: projectStatus,
+                    orgId: String(resolvedSubmissionOrgId),
+                    goalIds: goalIds.map(String),
+                    goalId: goalIds[0] ? String(goalIds[0]) : null,
+                    linkedGoalCount: goalIds.length,
+                    visibleGoalCount: goalIds.length,
+                    goalContextStatus: goalIds.length > 0 ? 'complete' : 'no-goals-linked',
+                    goalContextMissing: false,
+                    accessLevel: 'owner',
+                    hasWriteAccess: true,
+                    tasks: kickoffTasks.map((task, index) => ({
+                        id: `seeded-${projectId}-${index + 1}`,
+                        title: task.title,
+                        status: task.status,
+                        priority: task.priority,
+                        description: task.description || '',
+                        startDate: task.startDate,
+                        endDate: task.endDate
+                    })),
+                    createdAt: projectInsert.recordset[0].createdAt
+                }
+            });
+        } catch (txErr) {
+            await tx.rollback();
+            throw txErr;
+        }
+    } catch (err) {
+        if (err?.statusCode === 409) {
+            return res.status(409).json({ error: err.message });
+        }
+        if (err?.message?.toLowerCase().includes('no organization assigned')) {
+            return res.status(403).json({ error: err.message });
+        }
+        handleError(res, 'converting intake submission to project', err);
     }
 });
 
@@ -1736,12 +2319,29 @@ router.post('/submissions/:id/governance/apply', requireAuth, governanceRoutingL
         const prevResult = await pool.request()
             .input('id', sql.Int, id)
             .query(`
-                SELECT id, status, governanceRequired, governanceStatus, governanceReason
-                FROM IntakeSubmissions
-                WHERE id = @id
+                SELECT
+                    s.id,
+                    s.submitterId,
+                    s.orgId,
+                    s.status,
+                    s.governanceRequired,
+                    s.governanceStatus,
+                    s.governanceReason,
+                    f.governanceBoardId,
+                    b.orgId AS boardOrgId
+                FROM IntakeSubmissions s
+                LEFT JOIN IntakeForms f ON f.id = s.formId
+                LEFT JOIN GovernanceBoard b ON b.id = f.governanceBoardId
+                WHERE s.id = @id
             `);
         if (prevResult.recordset.length === 0) return res.status(404).json({ error: 'Submission not found' });
         const prev = prevResult.recordset[0];
+        if (!isAdminUser(user)) {
+            const scope = await buildGovernanceSubmissionScope({ pool, user, submission: prev });
+            if (!hasGovernanceSubmissionScope(scope)) {
+                return res.status(403).json({ error: 'Forbidden' });
+            }
+        }
 
         if (['approved', 'rejected'].includes((prev.status || '').toLowerCase())) {
             return res.status(409).json({ error: 'Cannot apply governance to a closed submission' });
@@ -1800,12 +2400,29 @@ router.post('/submissions/:id/governance/skip', requireAuth, governanceRoutingLi
         const prevResult = await pool.request()
             .input('id', sql.Int, id)
             .query(`
-                SELECT id, status, governanceRequired, governanceStatus, governanceReason
-                FROM IntakeSubmissions
-                WHERE id = @id
+                SELECT
+                    s.id,
+                    s.submitterId,
+                    s.orgId,
+                    s.status,
+                    s.governanceRequired,
+                    s.governanceStatus,
+                    s.governanceReason,
+                    f.governanceBoardId,
+                    b.orgId AS boardOrgId
+                FROM IntakeSubmissions s
+                LEFT JOIN IntakeForms f ON f.id = s.formId
+                LEFT JOIN GovernanceBoard b ON b.id = f.governanceBoardId
+                WHERE s.id = @id
             `);
         if (prevResult.recordset.length === 0) return res.status(404).json({ error: 'Submission not found' });
         const prev = prevResult.recordset[0];
+        if (!isAdminUser(user)) {
+            const scope = await buildGovernanceSubmissionScope({ pool, user, submission: prev });
+            if (!hasGovernanceSubmissionScope(scope)) {
+                return res.status(403).json({ error: 'Forbidden' });
+            }
+        }
 
         if ((prev.governanceStatus || '').toLowerCase() === 'decided') {
             return res.status(409).json({ error: 'Cannot skip governance after decision' });
@@ -1863,14 +2480,18 @@ router.post('/submissions/:id/governance/start', requireAuth, governanceRoutingL
             .query(`
                 SELECT
                     s.id,
+                    s.submitterId,
+                    s.orgId,
                     s.status,
                     s.governanceRequired,
                     s.governanceStatus,
                     s.governanceDecision,
                     s.formId,
-                    f.governanceBoardId
+                    f.governanceBoardId,
+                    b.orgId AS boardOrgId
                 FROM IntakeSubmissions s
                 INNER JOIN IntakeForms f ON f.id = s.formId
+                LEFT JOIN GovernanceBoard b ON b.id = f.governanceBoardId
                 WHERE s.id = @id
             `);
 
@@ -1879,6 +2500,12 @@ router.post('/submissions/:id/governance/start', requireAuth, governanceRoutingL
         }
 
         const submission = submissionResult.recordset[0];
+        if (!isAdminUser(user)) {
+            const scope = await buildGovernanceSubmissionScope({ pool, user, submission });
+            if (!hasGovernanceSubmissionScope(scope)) {
+                return res.status(403).json({ error: 'Forbidden' });
+            }
+        }
         if (!submission.governanceRequired) {
             return res.status(409).json({ error: 'Submission is not marked for governance. Apply governance first.' });
         }
@@ -2123,6 +2750,7 @@ router.get('/submissions/:id/governance', requireAuth, async (req, res) => {
                     s.id,
                     s.formId,
                     s.submitterId,
+                    s.orgId,
                     s.status,
                     s.submittedAt,
                     s.governanceRequired,
@@ -2133,7 +2761,8 @@ router.get('/submissions/:id/governance', requireAuth, async (req, res) => {
                     ${slaNudgeSelect}
                     f.name AS formName,
                     f.governanceBoardId,
-                    b.name AS boardName
+                    b.name AS boardName,
+                    b.orgId AS boardOrgId
                 FROM IntakeSubmissions s
                 INNER JOIN IntakeForms f ON f.id = s.formId
                 LEFT JOIN GovernanceBoard b ON b.id = f.governanceBoardId
@@ -2155,6 +2784,12 @@ router.get('/submissions/:id/governance', requireAuth, async (req, res) => {
         const canManageGovernanceFlow = await canRouteGovernanceSubmission(user);
         if (!canViewGovernance && !canManageGovernanceFlow && !isOwner) {
             return res.status(403).json({ error: 'Forbidden' });
+        }
+        if (!isAdminUser(user) && !isOwner) {
+            const scope = await buildGovernanceSubmissionScope({ pool, user, submission });
+            if (!hasGovernanceSubmissionScope(scope)) {
+                return res.status(403).json({ error: 'Forbidden' });
+            }
         }
 
         const reviewResult = await pool.request()
@@ -2181,6 +2816,7 @@ router.get('/submissions/:id/governance', requireAuth, async (req, res) => {
                     id: submission.id.toString(),
                     formId: submission.formId.toString(),
                     formName: submission.formName,
+                    orgId: submission.orgId === null || submission.orgId === undefined ? null : String(submission.orgId),
                     status: submission.status,
                     submittedAt: submission.submittedAt,
                     governanceRequired: !!submission.governanceRequired,
@@ -2280,6 +2916,7 @@ router.get('/submissions/:id/governance', requireAuth, async (req, res) => {
                 id: submission.id.toString(),
                 formId: submission.formId.toString(),
                 formName: submission.formName,
+                orgId: submission.orgId === null || submission.orgId === undefined ? null : String(submission.orgId),
                 status: submission.status,
                 submittedAt: submission.submittedAt,
                 governanceRequired: !!submission.governanceRequired,
@@ -2686,7 +3323,18 @@ router.post('/submissions/:id/message', requireAuth, intakeConversationLimiter, 
         // Fetch current conversation
         const subResult = await pool.request()
             .input('id', sql.Int, submissionId)
-            .query('SELECT infoRequests, submitterId FROM IntakeSubmissions WHERE id = @id');
+            .query(`
+                SELECT
+                    s.infoRequests,
+                    s.submitterId,
+                    s.orgId,
+                    f.governanceBoardId,
+                    b.orgId AS boardOrgId
+                FROM IntakeSubmissions s
+                LEFT JOIN IntakeForms f ON f.id = s.formId
+                LEFT JOIN GovernanceBoard b ON b.id = f.governanceBoardId
+                WHERE s.id = @id
+            `);
 
         if (subResult.recordset.length === 0) return res.status(404).json({ error: 'Submission not found' });
 
@@ -2702,6 +3350,12 @@ router.post('/submissions/:id/message', requireAuth, intakeConversationLimiter, 
 
         if (!canManage && !isOwner) {
             return res.status(403).json({ error: 'Forbidden' });
+        }
+        if (canManage && !isOwner && !isAdminUser(user)) {
+            const scope = await buildGovernanceSubmissionScope({ pool, user, submission });
+            if (!hasGovernanceSubmissionScope(scope)) {
+                return res.status(403).json({ error: 'Forbidden' });
+            }
         }
 
         const senderType = canManage ? 'admin' : 'requester';

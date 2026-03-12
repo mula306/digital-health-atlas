@@ -13,8 +13,12 @@ import { EmptyState } from '../UI/EmptyState';
 import { API_BASE } from '../../apiClient';
 
 import { getDescendantGoalIds } from '../../utils/goalHelpers';
+import { getGoalHierarchy } from '../../utils/goalHierarchy';
+import { GOAL_LEVELS } from '../../../shared/goalLevels.js';
 
 const EXEC_PROJECT_VIEW_PREFERENCE_STORAGE_KEY = 'dha_project_view_preference';
+const PRIMARY_GOAL_LEVEL = GOAL_LEVELS[0];
+const SECONDARY_GOAL_LEVEL = GOAL_LEVELS[1];
 
 const RISK_LEVEL_CONFIG = {
     critical: { label: 'Critical', color: '#b91c1c', sort: 0 },
@@ -53,35 +57,7 @@ const normalizeRiskSignal = (project, reportStatus = 'unknown') => {
 };
 
 // Helper to get hierarchy for a project
-const getProjectHierarchy = (goals, goalId) => {
-    const hierarchy = {
-        organization: '-',
-        division: '-',
-        department: '-',
-        branch: '-'
-    };
-
-    if (!goalId) return hierarchy;
-
-    const path = [];
-    // Loose equality for initial find to handle string/number mismatch
-    let current = goals.find(g => g.id == goalId);
-
-    // Traverse up using loose equality for parentId check
-    while (current) {
-        path.unshift(current);
-        if (!current.parentId) break;
-        current = goals.find(g => g.id == current.parentId);
-    }
-
-    // Map depth to levels
-    if (path[0]) hierarchy.organization = path[0].title;
-    if (path[1]) hierarchy.division = path[1].title;
-    if (path[2]) hierarchy.department = path[2].title;
-    if (path[3]) hierarchy.branch = path[3].title;
-
-    return hierarchy;
-};
+const getProjectHierarchy = (goals, goalId) => getGoalHierarchy(goals, goalId);
 
 export function ExecDashboard({ onViewChange }) {
     const { projects, goals, getLatestStatusReport, fetchExecSummaryProjects, authFetch } = useData();
@@ -488,23 +464,25 @@ export function ExecDashboard({ onViewChange }) {
             return matchesSearch && matchesStatus && matchesRisk;
         });
 
-        // Group by Organization -> Division
+        // Group by the top two goal levels in the cascade.
         const groups = {};
 
         finalFiltered.forEach(item => {
-            if (!groups[item.organization]) {
-                groups[item.organization] = {};
+            const primaryGroup = item[PRIMARY_GOAL_LEVEL.code] || '-';
+            const secondaryGroup = item[SECONDARY_GOAL_LEVEL.code] || '-';
+            if (!groups[primaryGroup]) {
+                groups[primaryGroup] = {};
             }
-            if (!groups[item.organization][item.division]) {
-                groups[item.organization][item.division] = [];
+            if (!groups[primaryGroup][secondaryGroup]) {
+                groups[primaryGroup][secondaryGroup] = [];
             }
-            groups[item.organization][item.division].push(item);
+            groups[primaryGroup][secondaryGroup].push(item);
         });
 
-        // Sort items within divisions
-        Object.keys(groups).forEach((org) => {
-            Object.keys(groups[org]).forEach((div) => {
-                groups[org][div].sort((a, b) => {
+        // Sort items within the secondary groupings.
+        Object.keys(groups).forEach((primaryGroup) => {
+            Object.keys(groups[primaryGroup]).forEach((secondaryGroup) => {
+                groups[primaryGroup][secondaryGroup].sort((a, b) => {
                     if (riskSort !== 'none') {
                         const riskLevelDiff = (a.riskSignal.sortIndex || 0) - (b.riskSignal.sortIndex || 0);
                         if (riskLevelDiff !== 0) {
@@ -684,21 +662,18 @@ export function ExecDashboard({ onViewChange }) {
                         ) : (
                             Object.entries(groupedData)
                                 .sort(([a], [b]) => a.localeCompare(b))
-                                .map(([orgName, divisions]) => (
-                                    <React.Fragment key={orgName}>
-                                        {/* Organization Header */}
+                                .map(([primaryGroupName, secondaryGroups]) => (
+                                    <React.Fragment key={primaryGroupName}>
                                         <tr className="org-header-row">
-                                            <td colSpan={5}>{orgName}</td>
+                                            <td colSpan={5}>{primaryGroupName}</td>
                                         </tr>
-                                        {/* Divisions */}
-                                        {Object.entries(divisions)
+                                        {Object.entries(secondaryGroups)
                                             .sort(([a], [b]) => a.localeCompare(b))
-                                            .map(([divName, projects]) => (
-                                                <React.Fragment key={`${orgName}-${divName}`}>
+                                            .map(([secondaryGroupName, projects]) => (
+                                                <React.Fragment key={`${primaryGroupName}-${secondaryGroupName}`}>
                                                     <tr className="div-header-row">
-                                                        <td colSpan={5}>{divName}</td>
+                                                        <td colSpan={5}>{secondaryGroupName}</td>
                                                     </tr>
-                                                    {/* Projects */}
                                                     {projects.map(project => {
                                                         const report = project.report || getLatestStatusReport(project.id);
                                                         const normalizedStatus = report?.overallStatus ? String(report.overallStatus).toLowerCase() : 'unknown';

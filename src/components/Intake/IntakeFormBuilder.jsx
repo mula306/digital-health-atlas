@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Plus, Trash2, Copy, Check, FileText, ChevronUp, ChevronDown } from 'lucide-react';
 import { useData } from '../../context/DataContext';
+import { useToast } from '../../context/ToastContext';
 import { ensureRequiredIntakeFields, INTAKE_SYSTEM_FIELDS } from '../../../shared/intakeSystemFields.js';
 import './Intake.css';
 
@@ -40,9 +41,20 @@ const serializeField = (field) => ({
 });
 
 export function IntakeFormBuilder({ form, onClose }) {
-    const { addIntakeForm, updateIntakeForm, goals, fetchGovernanceBoards, hasPermission } = useData();
+    const {
+        addIntakeForm,
+        updateIntakeForm,
+        goals,
+        fetchGovernanceBoards,
+        fetchOrganizations,
+        hasPermission,
+        hasRole,
+        currentUser
+    } = useData();
+    const toast = useToast();
     const isEditing = !!form;
     const canManageGovernance = hasPermission('can_manage_governance');
+    const isAdmin = hasRole('Admin');
 
     const [name, setName] = useState(form?.name || '');
     const [description, setDescription] = useState(form?.description || '');
@@ -51,6 +63,8 @@ export function IntakeFormBuilder({ form, onClose }) {
     const [governanceMode, setGovernanceMode] = useState(form?.governanceMode || 'off');
     const [governanceBoardId, setGovernanceBoardId] = useState(form?.governanceBoardId || '');
     const [governanceBoards, setGovernanceBoards] = useState([]);
+    const [organizations, setOrganizations] = useState([]);
+    const [selectedOrgId, setSelectedOrgId] = useState(form?.orgId || (currentUser?.orgId ? String(currentUser.orgId) : ''));
     const [copied, setCopied] = useState(false);
 
     useEffect(() => {
@@ -70,6 +84,28 @@ export function IntakeFormBuilder({ form, onClose }) {
             cancelled = true;
         };
     }, [canManageGovernance, fetchGovernanceBoards]);
+
+    useEffect(() => {
+        let cancelled = false;
+        async function loadOrganizations() {
+            if (!isAdmin) return;
+            try {
+                const orgs = await fetchOrganizations();
+                if (!cancelled) {
+                    setOrganizations(Array.isArray(orgs) ? orgs : []);
+                }
+            } catch (err) {
+                console.warn('Failed to load organizations for intake forms', err);
+                if (!cancelled) {
+                    setOrganizations([]);
+                }
+            }
+        }
+        loadOrganizations();
+        return () => {
+            cancelled = true;
+        };
+    }, [fetchOrganizations, isAdmin]);
 
     const addField = () => {
         setFields(buildEditableFields([...fields, {
@@ -101,9 +137,13 @@ export function IntakeFormBuilder({ form, onClose }) {
         setFields(newFields);
     };
 
-    const handleSubmit = (e) => {
+    const handleSubmit = async (e) => {
         e.preventDefault();
         if (canManageGovernance && governanceMode !== 'off' && !governanceBoardId) {
+            return;
+        }
+        if (isAdmin && !selectedOrgId) {
+            toast.error('Select an owning organization for this intake form');
             return;
         }
 
@@ -113,17 +153,26 @@ export function IntakeFormBuilder({ form, onClose }) {
             fields: fields.map(serializeField),
             defaultGoalId: defaultGoalId || null
         };
+        if (isAdmin) {
+            formData.orgId = selectedOrgId;
+        }
         if (canManageGovernance) {
             formData.governanceMode = governanceMode;
             formData.governanceBoardId = governanceMode === 'off' ? null : (governanceBoardId || null);
         }
 
-        if (isEditing) {
-            updateIntakeForm(form.id, formData);
-        } else {
-            addIntakeForm(formData);
+        try {
+            if (isEditing) {
+                await updateIntakeForm(form.id, formData);
+                toast.success('Intake form updated');
+            } else {
+                await addIntakeForm(formData);
+                toast.success('Intake form created');
+            }
+            onClose();
+        } catch (err) {
+            toast.error(err.message || 'Failed to save intake form');
         }
-        onClose();
     };
 
     const getFormUrl = () => {
@@ -142,8 +191,9 @@ export function IntakeFormBuilder({ form, onClose }) {
         !fields.some((field) => String(field.systemKey || '').toLowerCase() === systemField.key)
     ));
     const hasGovernanceError = canManageGovernance && governanceMode !== 'off' && !governanceBoardId;
+    const hasOrgSelectionError = isAdmin && !selectedOrgId;
 
-    const isInvalid = !name || hasMissingLabels || missingSystemFields.length > 0 || hasGovernanceError;
+    const isInvalid = !name || hasMissingLabels || missingSystemFields.length > 0 || hasGovernanceError || hasOrgSelectionError;
 
     return (
         <form onSubmit={handleSubmit} className="intake-form-builder">
@@ -169,6 +219,25 @@ export function IntakeFormBuilder({ form, onClose }) {
                     rows={2}
                 />
             </div>
+
+            {isAdmin && (
+                <div className="form-group">
+                    <label>Owning Organization *</label>
+                    <select
+                        value={selectedOrgId}
+                        onChange={(e) => setSelectedOrgId(e.target.value)}
+                        className="form-select"
+                        required
+                    >
+                        <option value="">Select organization</option>
+                        {organizations.map((organization) => (
+                            <option key={organization.id} value={organization.id}>
+                                {organization.name}
+                            </option>
+                        ))}
+                    </select>
+                </div>
+            )}
 
             <div className="form-group">
                 <label>Default Goal (optional)</label>

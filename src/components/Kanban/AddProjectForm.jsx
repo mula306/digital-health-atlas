@@ -1,19 +1,45 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useData } from '../../context/DataContext';
 import { useToast } from '../../context/ToastContext';
 import { CascadingGoalFilter } from '../UI/CascadingGoalFilter';
 import { ProjectTagSelector } from '../UI/ProjectTagSelector';
 import { validateGoalAssignment } from '../../utils/goalAssignmentValidation';
 import { X } from 'lucide-react';
+import { formatGoalOptionLabel } from '../../utils/goalHierarchy';
 
 export function AddProjectForm({ onClose }) {
-    const { addProject, updateProjectTags, goals } = useData();
+    const { addProject, updateProjectTags, goals, currentUser, fetchOrganizations, hasRole } = useData();
     const { success, warning, error: showError } = useToast();
+    const isAdmin = hasRole('Admin');
     const [title, setTitle] = useState('');
     const [goalIds, setGoalIds] = useState([]);
     const [pendingGoalId, setPendingGoalId] = useState('');
     const [description, setDescription] = useState('');
     const [projectTags, setProjectTags] = useState([]);
+    const [organizations, setOrganizations] = useState([]);
+    const [selectedOrgId, setSelectedOrgId] = useState(currentUser?.orgId ? String(currentUser.orgId) : '');
+
+    useEffect(() => {
+        let cancelled = false;
+        async function loadOrganizations() {
+            if (!isAdmin) return;
+            try {
+                const orgs = await fetchOrganizations();
+                if (!cancelled) {
+                    setOrganizations(Array.isArray(orgs) ? orgs : []);
+                }
+            } catch (err) {
+                console.warn('Failed to load organizations for project creation', err);
+                if (!cancelled) {
+                    setOrganizations([]);
+                }
+            }
+        }
+        loadOrganizations();
+        return () => {
+            cancelled = true;
+        };
+    }, [fetchOrganizations, isAdmin]);
 
     const areTagsEqual = (a, b) => {
         if (a.length !== b.length) return false;
@@ -40,7 +66,7 @@ export function AddProjectForm({ onClose }) {
 
     const getGoalTitle = (id) => {
         const goal = goals.find(g => String(g.id) === String(id));
-        return goal ? `${goal.title} (${goal.type})` : id;
+        return goal ? formatGoalOptionLabel(goal) : id;
     };
 
     const handleSubmit = async (e) => {
@@ -64,9 +90,19 @@ export function AddProjectForm({ onClose }) {
             showError('Maximum 8 tags per project');
             return;
         }
+        if (isAdmin && !selectedOrgId) {
+            showError('Select an owning organization for this project');
+            return;
+        }
 
         try {
-            const projectId = await addProject({ title, goalIds: effectiveGoalIds, description, status: 'active' });
+            const projectId = await addProject({
+                title,
+                goalIds: effectiveGoalIds,
+                description,
+                status: 'active',
+                ...(isAdmin ? { orgId: selectedOrgId } : {})
+            });
             if (projectTags.length > 0) {
                 try {
                     await updateProjectTags(projectId, projectTags);
@@ -97,6 +133,25 @@ export function AddProjectForm({ onClose }) {
                     autoFocus
                 />
             </div>
+
+            {isAdmin && (
+                <div className="form-group">
+                    <label>Owning Organization</label>
+                    <select
+                        value={selectedOrgId}
+                        onChange={(e) => setSelectedOrgId(e.target.value)}
+                        className="form-select"
+                        required
+                    >
+                        <option value="">Select organization</option>
+                        {organizations.map((organization) => (
+                            <option key={organization.id} value={organization.id}>
+                                {organization.name}
+                            </option>
+                        ))}
+                    </select>
+                </div>
+            )}
 
             <div className="form-group">
                 <label>Linked Goals</label>

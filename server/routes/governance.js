@@ -5,6 +5,7 @@ import { governanceConfigWriteLimiter } from '../middleware/rateLimiters.js';
 import { handleError } from '../utils/errorHandler.js';
 import { logAudit } from '../utils/auditLogger.js';
 import { addParams, buildInClause } from '../utils/sqlHelpers.js';
+import { ensureOrganizationExists, isAdminUser, parseOptionalOrgId, resolveOwnedOrgId } from '../utils/orgOwnership.js';
 
 const router = express.Router();
 
@@ -540,24 +541,77 @@ const toSessionResponse = (row) => ({
     updatedAt: row.updatedAt
 });
 
-const canManageBoardSession = async ({ pool, boardId, user }) => {
-    if (await hasPermission(user, ['can_manage_governance_sessions', 'can_manage_governance'])) {
-        return true;
-    }
-    const chairResult = await pool.request()
+const hasMatchingOrgScope = (userOrgId, resourceOrgId) => (
+    Number.isFinite(userOrgId) &&
+    Number.isFinite(resourceOrgId) &&
+    userOrgId === resourceOrgId
+);
+
+const loadBoardScopeContext = async ({ pool, boardId, user }) => {
+    const result = await pool.request()
         .input('boardId', sql.Int, boardId)
         .input('userOid', sql.NVarChar(100), user?.oid || '')
         .query(`
-            SELECT TOP 1 id
-            FROM GovernanceMembership
-            WHERE boardId = @boardId
-              AND userOid = @userOid
-              AND role = 'chair'
-              AND isActive = 1
-              AND effectiveFrom <= GETDATE()
-              AND (effectiveTo IS NULL OR effectiveTo > GETDATE())
+            SELECT TOP 1
+                b.id,
+                b.name,
+                b.orgId,
+                CASE WHEN EXISTS (
+                    SELECT 1
+                    FROM GovernanceMembership gm
+                    WHERE gm.boardId = b.id
+                      AND gm.userOid = @userOid
+                      AND gm.isActive = 1
+                      AND gm.effectiveFrom <= GETDATE()
+                      AND (gm.effectiveTo IS NULL OR gm.effectiveTo > GETDATE())
+                ) THEN 1 ELSE 0 END AS hasActiveMembership,
+                CASE WHEN EXISTS (
+                    SELECT 1
+                    FROM GovernanceMembership gm
+                    WHERE gm.boardId = b.id
+                      AND gm.userOid = @userOid
+                      AND gm.role = 'chair'
+                      AND gm.isActive = 1
+                      AND gm.effectiveFrom <= GETDATE()
+                      AND (gm.effectiveTo IS NULL OR gm.effectiveTo > GETDATE())
+                ) THEN 1 ELSE 0 END AS hasActiveChairMembership
+            FROM GovernanceBoard b
+            WHERE b.id = @boardId
         `);
-    return chairResult.recordset.length > 0;
+
+    return result.recordset[0] || null;
+};
+
+const canViewBoardScope = ({ user, boardContext }) => {
+    if (!boardContext) return false;
+    if (isAdminUser(user)) return true;
+    const viewerOrgId = parseOptionalOrgId(user?.orgId);
+    const boardOrgId = parseOptionalOrgId(boardContext.orgId);
+    return hasMatchingOrgScope(viewerOrgId, boardOrgId) || !!boardContext.hasActiveMembership;
+};
+
+const canManageBoardScope = ({ user, boardContext }) => {
+    if (!boardContext) return false;
+    if (isAdminUser(user)) return true;
+    const viewerOrgId = parseOptionalOrgId(user?.orgId);
+    const boardOrgId = parseOptionalOrgId(boardContext.orgId);
+    return hasMatchingOrgScope(viewerOrgId, boardOrgId);
+};
+
+const canManageBoardSession = async ({ pool, boardId, user }) => {
+    if (!user) return false;
+    const boardContext = await loadBoardScopeContext({ pool, boardId, user });
+    if (!boardContext) return false;
+    if (isAdminUser(user)) {
+        return true;
+    }
+    if (
+        await hasPermission(user, ['can_manage_governance_sessions', 'can_manage_governance']) &&
+        canManageBoardScope({ user, boardContext })
+    ) {
+        return true;
+    }
+    return !!boardContext.hasActiveChairMembership;
 };
 
 const fetchBoardPolicyDefaults = async (pool, boardId) => {
@@ -974,6 +1028,7 @@ router.get('/users', checkPermission('can_manage_governance'), async (req, res) 
 router.get('/boards', checkPermission(['can_view_governance_queue', 'can_manage_governance']), async (req, res) => {
     try {
         const includeInactive = parseBooleanOrNull(req.query.includeInactive);
+        const user = getAuthUser(req);
         const pool = await getPool();
         const phase3Ready = await hasGovernancePhase3Schema(pool);
         const boardPolicyReady = phase3Ready ? await hasGovernanceBoardPolicySchema(pool) : false;
@@ -982,10 +1037,31 @@ router.get('/boards', checkPermission(['can_view_governance_queue', 'can_manage_
         const defaultPolicy = getDefaultGovernancePolicy(settings, phase3Ready);
 
         const request = pool.request();
-        let where = '';
+        const whereClauses = [];
         if (includeInactive !== true) {
-            where = 'WHERE b.isActive = 1';
+            whereClauses.push('b.isActive = 1');
         }
+
+        if (!isAdminUser(user)) {
+            const viewerOrgId = parseOptionalOrgId(user?.orgId);
+            request.input('viewerOid', sql.NVarChar(100), user?.oid || '');
+            request.input('viewerOrgId', sql.Int, Number.isFinite(viewerOrgId) ? viewerOrgId : null);
+            whereClauses.push(`
+                (
+                    (@viewerOrgId IS NOT NULL AND b.orgId = @viewerOrgId)
+                    OR EXISTS (
+                        SELECT 1
+                        FROM GovernanceMembership gmScope
+                        WHERE gmScope.boardId = b.id
+                          AND gmScope.userOid = @viewerOid
+                          AND gmScope.isActive = 1
+                          AND gmScope.effectiveFrom <= GETDATE()
+                          AND (gmScope.effectiveTo IS NULL OR gmScope.effectiveTo > GETDATE())
+                    )
+                )
+            `);
+        }
+        const where = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
         const boardPolicySelect = boardPolicyReady
             ? `
                 b.quorumPercentOverride,
@@ -1016,6 +1092,7 @@ router.get('/boards', checkPermission(['can_view_governance_queue', 'can_manage_
                 b.id,
                 b.name,
                 b.isActive,
+                b.orgId,
                 b.createdAt,
                 b.createdByOid,
                 ${boardPolicySelect}
@@ -1039,6 +1116,7 @@ router.get('/boards', checkPermission(['can_view_governance_queue', 'can_manage_
                 id: row.id.toString(),
                 name: row.name,
                 isActive: !!row.isActive,
+                orgId: row.orgId === null || row.orgId === undefined ? null : String(row.orgId),
                 createdAt: row.createdAt,
                 createdByOid: row.createdByOid || null,
                 activeMemberCount: Number(row.activeMemberCount || 0),
@@ -1066,6 +1144,20 @@ router.post('/boards', checkPermission('can_manage_governance'), governanceConfi
 
         const user = getAuthUser(req);
         const pool = await getPool();
+        let ownerOrgId;
+        try {
+            ownerOrgId = resolveOwnedOrgId({
+                user,
+                requestedOrgId: req.body?.orgId,
+                missingUserOrgMessage: 'No organization assigned. Contact your administrator to create governance boards.',
+                adminOrgRequiredMessage: 'orgId is required for admin-created governance boards'
+            });
+            await ensureOrganizationExists(pool, ownerOrgId);
+        } catch (orgErr) {
+            const message = orgErr?.message || 'Unable to resolve governance board organization';
+            const statusCode = message.toLowerCase().includes('no organization assigned') ? 403 : 400;
+            return res.status(statusCode).json({ error: message });
+        }
         const phase3Ready = await hasGovernancePhase3Schema(pool);
         const boardPolicyReady = phase3Ready ? await hasGovernanceBoardPolicySchema(pool) : false;
         const boardCapacityReady = await hasGovernanceCapacitySchema(pool);
@@ -1092,6 +1184,7 @@ router.post('/boards', checkPermission('can_manage_governance'), governanceConfi
         const insertRequest = pool.request()
             .input('name', sql.NVarChar(255), trimmedName)
             .input('isActive', sql.Bit, isActive === false ? 0 : 1)
+            .input('orgId', sql.Int, ownerOrgId)
             .input('createdByOid', sql.NVarChar(100), user?.oid || null);
         const boardCapacity = parsedBoardCapacity || { ...DEFAULT_BOARD_CAPACITY };
 
@@ -1109,6 +1202,7 @@ router.post('/boards', checkPermission('can_manage_governance'), governanceConfi
                     INSERT INTO GovernanceBoard (
                         name,
                         isActive,
+                        orgId,
                         createdByOid,
                         quorumPercentOverride,
                         quorumMinCountOverride,
@@ -1122,6 +1216,7 @@ router.post('/boards', checkPermission('can_manage_governance'), governanceConfi
                     VALUES (
                         @name,
                         @isActive,
+                        @orgId,
                         @createdByOid,
                         @quorumPercentOverride,
                         @quorumMinCountOverride,
@@ -1142,6 +1237,7 @@ router.post('/boards', checkPermission('can_manage_governance'), governanceConfi
                     INSERT INTO GovernanceBoard (
                         name,
                         isActive,
+                        orgId,
                         createdByOid,
                         quorumPercentOverride,
                         quorumMinCountOverride,
@@ -1152,6 +1248,7 @@ router.post('/boards', checkPermission('can_manage_governance'), governanceConfi
                     VALUES (
                         @name,
                         @isActive,
+                        @orgId,
                         @createdByOid,
                         @quorumPercentOverride,
                         @quorumMinCountOverride,
@@ -1168,6 +1265,7 @@ router.post('/boards', checkPermission('can_manage_governance'), governanceConfi
                     INSERT INTO GovernanceBoard (
                         name,
                         isActive,
+                        orgId,
                         createdByOid,
                         weeklyCapacityHours,
                         wipLimit,
@@ -1177,6 +1275,7 @@ router.post('/boards', checkPermission('can_manage_governance'), governanceConfi
                     VALUES (
                         @name,
                         @isActive,
+                        @orgId,
                         @createdByOid,
                         @weeklyCapacityHours,
                         @wipLimit,
@@ -1185,9 +1284,9 @@ router.post('/boards', checkPermission('can_manage_governance'), governanceConfi
                 `);
         } else {
             result = await insertRequest.query(`
-                INSERT INTO GovernanceBoard (name, isActive, createdByOid)
+                INSERT INTO GovernanceBoard (name, isActive, orgId, createdByOid)
                 OUTPUT INSERTED.id, INSERTED.createdAt
-                VALUES (@name, @isActive, @createdByOid)
+                VALUES (@name, @isActive, @orgId, @createdByOid)
             `);
         }
 
@@ -1218,6 +1317,7 @@ router.post('/boards', checkPermission('can_manage_governance'), governanceConfi
             after: {
                 name: trimmedName,
                 isActive: isActive !== false,
+                orgId: ownerOrgId,
                 boardPolicy: parsedBoardPolicy ? policy : { useGlobalDefaults: true, source: 'global' },
                 boardCapacity
             },
@@ -1228,6 +1328,7 @@ router.post('/boards', checkPermission('can_manage_governance'), governanceConfi
             id: boardId,
             name: trimmedName,
             isActive: isActive !== false,
+            orgId: String(ownerOrgId),
             createdAt: result.recordset[0].createdAt,
             policy,
             policySource: policy.source,
@@ -1256,6 +1357,7 @@ router.put('/boards/:id', checkPermission('can_manage_governance'), governanceCo
         if (Number.isNaN(boardId)) return res.status(400).json({ error: 'Invalid board id' });
 
         const { name, isActive } = req.body;
+        const user = getAuthUser(req);
         const pool = await getPool();
         const phase3Ready = await hasGovernancePhase3Schema(pool);
         const boardPolicyReady = phase3Ready ? await hasGovernanceBoardPolicySchema(pool) : false;
@@ -1279,11 +1381,50 @@ router.put('/boards/:id', checkPermission('can_manage_governance'), governanceCo
         const selectCapacityColumns = boardCapacityReady
             ? ', weeklyCapacityHours, wipLimit, defaultSubmissionEffortHours'
             : '';
+        const selectOrgColumn = ', orgId';
         const prev = await pool.request()
             .input('id', sql.Int, boardId)
-            .query(`SELECT id, name, isActive${selectPolicyColumns}${selectCapacityColumns} FROM GovernanceBoard WHERE id = @id`);
+            .query(`SELECT id, name, isActive${selectOrgColumn}${selectPolicyColumns}${selectCapacityColumns} FROM GovernanceBoard WHERE id = @id`);
 
         if (prev.recordset.length === 0) return res.status(404).json({ error: 'Board not found' });
+        const previousBoard = prev.recordset[0];
+        const hasOrgIdInput = Object.prototype.hasOwnProperty.call(req.body || {}, 'orgId');
+        let boardOrgId = previousBoard.orgId === null || previousBoard.orgId === undefined
+            ? null
+            : Number(previousBoard.orgId);
+
+        if (!isAdminUser(user)) {
+            const viewerOrgId = parseOptionalOrgId(user?.orgId);
+            if (!Number.isFinite(viewerOrgId)) {
+                return res.status(403).json({ error: 'No organization assigned. Contact your administrator to update governance boards.' });
+            }
+            if (boardOrgId !== null && boardOrgId !== viewerOrgId) {
+                return res.status(403).json({ error: 'You can only update governance boards owned by your organization' });
+            }
+        }
+
+        if (hasOrgIdInput) {
+            if (!isAdminUser(user)) {
+                return res.status(403).json({ error: 'Only admins can change a governance board organization' });
+            }
+            try {
+                boardOrgId = resolveOwnedOrgId({
+                    user,
+                    requestedOrgId: req.body?.orgId,
+                    missingUserOrgMessage: 'No organization assigned. Contact your administrator to update governance board ownership.',
+                    adminOrgRequiredMessage: 'orgId is required when updating a governance board without an owner organization'
+                });
+                await ensureOrganizationExists(pool, boardOrgId);
+            } catch (orgErr) {
+                return res.status(400).json({ error: orgErr?.message || 'Unable to resolve governance board organization' });
+            }
+        }
+
+        if (boardOrgId === null || boardOrgId === undefined) {
+            return res.status(409).json({
+                error: 'Governance board organization is not assigned. Run the org ownership backfill or provide orgId as an admin.'
+            });
+        }
 
         const request = pool.request().input('id', sql.Int, boardId);
         const updates = [];
@@ -1298,6 +1439,10 @@ router.put('/boards/:id', checkPermission('can_manage_governance'), governanceCo
             if (parsed === null) return res.status(400).json({ error: 'isActive must be boolean' });
             request.input('isActive', sql.Bit, parsed ? 1 : 0);
             updates.push('isActive = @isActive');
+        }
+        if (hasOrgIdInput) {
+            request.input('orgId', sql.Int, boardOrgId);
+            updates.push('orgId = @orgId');
         }
         if (parsedBoardPolicy) {
             request.input('quorumPercentOverride', sql.Int, parsedBoardPolicy.overrides.quorumPercent);
@@ -1327,24 +1472,24 @@ router.put('/boards/:id', checkPermission('can_manage_governance'), governanceCo
         }
 
         await request.query(`UPDATE GovernanceBoard SET ${updates.join(', ')} WHERE id = @id`);
-        const user = getAuthUser(req);
         logAudit({
             action: 'governance.board_update',
             entityType: 'governance_board',
             entityId: boardId,
-            entityTitle: name || prev.recordset[0].name,
+            entityTitle: name || previousBoard.name,
             user,
-            before: prev.recordset[0],
+            before: previousBoard,
             after: {
                 name,
                 isActive,
+                orgId: boardOrgId,
                 boardPolicy: parsedBoardPolicy || undefined,
                 boardCapacity: parsedBoardCapacity || undefined
             },
             req
         });
 
-        res.json({ success: true, boardPolicyReady, boardCapacityReady });
+        res.json({ success: true, orgId: String(boardOrgId), boardPolicyReady, boardCapacityReady });
     } catch (err) {
         if (err?.message?.startsWith('boardPolicy') || err?.message?.startsWith('boardCapacity')) {
             return res.status(400).json({ error: err.message });
@@ -1360,6 +1505,12 @@ router.get('/boards/:id/members', checkPermission(['can_view_governance_queue', 
 
         const includeInactive = parseBooleanOrNull(req.query.includeInactive);
         const pool = await getPool();
+        const user = getAuthUser(req);
+        const boardContext = await loadBoardScopeContext({ pool, boardId, user });
+        if (!boardContext) return res.status(404).json({ error: 'Board not found' });
+        if (!canViewBoardScope({ user, boardContext })) {
+            return res.status(403).json({ error: 'Forbidden' });
+        }
         const request = pool.request().input('boardId', sql.Int, boardId);
 
         const where = includeInactive === true ? '' : 'AND gm.isActive = 1';
@@ -1413,10 +1564,11 @@ router.post('/boards/:id/members', checkPermission('can_manage_governance'), gov
 
         const pool = await getPool();
         const user = getAuthUser(req);
-        const boardResult = await pool.request()
-            .input('id', sql.Int, boardId)
-            .query('SELECT id, name FROM GovernanceBoard WHERE id = @id');
-        if (boardResult.recordset.length === 0) return res.status(404).json({ error: 'Board not found' });
+        const boardContext = await loadBoardScopeContext({ pool, boardId, user });
+        if (!boardContext) return res.status(404).json({ error: 'Board not found' });
+        if (!canManageBoardScope({ user, boardContext })) {
+            return res.status(403).json({ error: 'Forbidden' });
+        }
 
         const directoryUserResult = await pool.request()
             .input('oid', sql.NVarChar(100), trimmedOid)
@@ -1474,7 +1626,7 @@ router.post('/boards/:id/members', checkPermission('can_manage_governance'), gov
             action: 'governance.member_upsert',
             entityType: 'governance_membership',
             entityId: membershipId,
-            entityTitle: `${boardResult.recordset[0].name}: ${directoryUser.name || trimmedOid}`,
+            entityTitle: `${boardContext.name}: ${directoryUser.name || trimmedOid}`,
             user,
             after: {
                 boardId,
@@ -1503,6 +1655,12 @@ router.get('/boards/:id/criteria/versions', checkPermission(['can_view_governanc
         if (Number.isNaN(boardId)) return res.status(400).json({ error: 'Invalid board id' });
 
         const pool = await getPool();
+        const user = getAuthUser(req);
+        const boardContext = await loadBoardScopeContext({ pool, boardId, user });
+        if (!boardContext) return res.status(404).json({ error: 'Board not found' });
+        if (!canViewBoardScope({ user, boardContext })) {
+            return res.status(403).json({ error: 'Forbidden' });
+        }
         const result = await pool.request()
             .input('boardId', sql.Int, boardId)
             .query(`
@@ -1538,11 +1696,11 @@ router.post('/boards/:id/criteria/versions', checkPermission('can_manage_governa
         const criteria = normalizeCriteria(req.body.criteria);
         const user = getAuthUser(req);
         const pool = await getPool();
-
-        const boardExists = await pool.request()
-            .input('id', sql.Int, boardId)
-            .query('SELECT id FROM GovernanceBoard WHERE id = @id');
-        if (boardExists.recordset.length === 0) return res.status(404).json({ error: 'Board not found' });
+        const boardContext = await loadBoardScopeContext({ pool, boardId, user });
+        if (!boardContext) return res.status(404).json({ error: 'Board not found' });
+        if (!canManageBoardScope({ user, boardContext })) {
+            return res.status(403).json({ error: 'Forbidden' });
+        }
 
         const nextVersionResult = await pool.request()
             .input('boardId', sql.Int, boardId)
@@ -1598,6 +1756,12 @@ router.put('/boards/:id/criteria/versions/:versionId', checkPermission('can_mana
 
         const criteria = normalizeCriteria(req.body.criteria);
         const pool = await getPool();
+        const user = getAuthUser(req);
+        const boardContext = await loadBoardScopeContext({ pool, boardId, user });
+        if (!boardContext) return res.status(404).json({ error: 'Board not found' });
+        if (!canManageBoardScope({ user, boardContext })) {
+            return res.status(403).json({ error: 'Forbidden' });
+        }
 
         const existing = await pool.request()
             .input('id', sql.Int, versionId)
@@ -1617,7 +1781,6 @@ router.put('/boards/:id/criteria/versions/:versionId', checkPermission('can_mana
             .input('criteriaJson', sql.NVarChar(sql.MAX), JSON.stringify(criteria))
             .query('UPDATE GovernanceCriteriaVersion SET criteriaJson = @criteriaJson WHERE id = @id');
 
-        const user = getAuthUser(req);
         logAudit({
             action: 'governance.criteria_version_update',
             entityType: 'governance_criteria_version',
@@ -1647,6 +1810,11 @@ router.post('/boards/:id/criteria/versions/:versionId/publish', checkPermission(
 
         const pool = await getPool();
         const user = getAuthUser(req);
+        const boardContext = await loadBoardScopeContext({ pool, boardId, user });
+        if (!boardContext) return res.status(404).json({ error: 'Board not found' });
+        if (!canManageBoardScope({ user, boardContext })) {
+            return res.status(403).json({ error: 'Forbidden' });
+        }
         const target = await pool.request()
             .input('id', sql.Int, versionId)
             .input('boardId', sql.Int, boardId)
@@ -1717,6 +1885,12 @@ router.get('/boards/:id/sessions', checkPermission('can_view_governance_queue'),
         if (Number.isNaN(boardId)) return res.status(400).json({ error: 'Invalid board id' });
 
         const pool = await getPool();
+        const user = getAuthUser(req);
+        const boardContext = await loadBoardScopeContext({ pool, boardId, user });
+        if (!boardContext) return res.status(404).json({ error: 'Board not found' });
+        if (!canViewBoardScope({ user, boardContext })) {
+            return res.status(403).json({ error: 'Forbidden' });
+        }
         const schemaReady = await hasGovernanceSessionSchema(pool);
         if (!schemaReady) {
             return res.json({
@@ -1761,6 +1935,12 @@ router.get('/boards/:id/sessions/active', checkPermission('can_view_governance_q
         if (Number.isNaN(boardId)) return res.status(400).json({ error: 'Invalid board id' });
 
         const pool = await getPool();
+        const user = getAuthUser(req);
+        const boardContext = await loadBoardScopeContext({ pool, boardId, user });
+        if (!boardContext) return res.status(404).json({ error: 'Board not found' });
+        if (!canViewBoardScope({ user, boardContext })) {
+            return res.status(403).json({ error: 'Forbidden' });
+        }
         const schemaReady = await hasGovernanceSessionSchema(pool);
         if (!schemaReady) {
             return res.json({
@@ -2093,6 +2273,7 @@ router.get('/queue', checkPermission('can_view_governance_queue'), async (req, r
         const offset = (page - 1) * limit;
 
         const pool = await getPool();
+        const user = getAuthUser(req);
         const request = pool.request()
             .input('limit', sql.Int, limit)
             .input('offset', sql.Int, offset);
@@ -2110,6 +2291,25 @@ router.get('/queue', checkPermission('can_view_governance_queue'), async (req, r
             request.input('decision', sql.NVarChar(30), decision.trim());
             filters.push('s.governanceDecision = @decision');
         }
+        if (!isAdminUser(user)) {
+            const viewerOrgId = parseOptionalOrgId(user?.orgId);
+            request.input('viewerScopeUserOid', sql.NVarChar(100), user?.oid || '');
+            request.input('viewerScopeOrgId', sql.Int, Number.isFinite(viewerOrgId) ? viewerOrgId : null);
+            filters.push(`
+                (
+                    (@viewerScopeOrgId IS NOT NULL AND (s.orgId = @viewerScopeOrgId OR b.orgId = @viewerScopeOrgId))
+                    OR EXISTS (
+                        SELECT 1
+                        FROM GovernanceMembership gmScope
+                        WHERE gmScope.boardId = f.governanceBoardId
+                          AND gmScope.userOid = @viewerScopeUserOid
+                          AND gmScope.isActive = 1
+                          AND gmScope.effectiveFrom <= GETDATE()
+                          AND (gmScope.effectiveTo IS NULL OR gmScope.effectiveTo > GETDATE())
+                    )
+                )
+            `);
+        }
 
         const where = `WHERE ${filters.join(' AND ')}`;
 
@@ -2117,6 +2317,7 @@ router.get('/queue', checkPermission('can_view_governance_queue'), async (req, r
             SELECT COUNT(*) AS total
             FROM IntakeSubmissions s
             INNER JOIN IntakeForms f ON f.id = s.formId
+            LEFT JOIN GovernanceBoard b ON b.id = f.governanceBoardId
             ${where}
         `);
         const total = totalResult.recordset[0].total;
@@ -2127,11 +2328,17 @@ router.get('/queue', checkPermission('can_view_governance_queue'), async (req, r
         if (!Number.isNaN(boardId)) dataRequest.input('boardId', sql.Int, boardId);
         if (typeof governanceStatus === 'string' && governanceStatus.trim()) dataRequest.input('governanceStatus', sql.NVarChar(20), governanceStatus.trim());
         if (typeof decision === 'string' && decision.trim()) dataRequest.input('decision', sql.NVarChar(30), decision.trim());
+        if (!isAdminUser(user)) {
+            const viewerOrgId = parseOptionalOrgId(user?.orgId);
+            dataRequest.input('viewerScopeUserOid', sql.NVarChar(100), user?.oid || '');
+            dataRequest.input('viewerScopeOrgId', sql.Int, Number.isFinite(viewerOrgId) ? viewerOrgId : null);
+        }
 
         const result = await dataRequest.query(`
             SELECT
                 s.id,
                 s.formId,
+                s.orgId,
                 s.status,
                 s.submittedAt,
                 s.submitterName,
@@ -2160,6 +2367,7 @@ router.get('/queue', checkPermission('can_view_governance_queue'), async (req, r
             items: result.recordset.map(row => ({
                 id: row.id.toString(),
                 formId: row.formId.toString(),
+                orgId: row.orgId === null || row.orgId === undefined ? null : String(row.orgId),
                 formName: row.formName,
                 status: row.status,
                 submittedAt: row.submittedAt,

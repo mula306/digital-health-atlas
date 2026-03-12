@@ -779,7 +779,30 @@ router.get('/sharing-picker-data', checkPermission('can_manage_sharing_requests'
 
         const [projectsResult, tagsResult, goalsResult] = await Promise.all([
             pool.request().query(`
-                SELECT id, title, orgId FROM Projects ORDER BY title ASC
+                WITH ProjectGoalLinks AS (
+                    SELECT pg.projectId, pg.goalId
+                    FROM ProjectGoals pg
+                    UNION
+                    SELECT p.id AS projectId, p.goalId
+                    FROM Projects p
+                    WHERE p.goalId IS NOT NULL
+                )
+                SELECT
+                    p.id,
+                    p.title,
+                    p.orgId,
+                    COUNT(DISTINCT pgl.goalId) AS linkedGoalCount,
+                    SUM(CASE
+                        WHEN p.orgId IS NOT NULL
+                         AND g.orgId IS NOT NULL
+                         AND g.orgId <> p.orgId
+                            THEN 1 ELSE 0
+                    END) AS externalGoalLinkCount
+                FROM Projects p
+                LEFT JOIN ProjectGoalLinks pgl ON pgl.projectId = p.id
+                LEFT JOIN Goals g ON g.id = pgl.goalId
+                GROUP BY p.id, p.title, p.orgId
+                ORDER BY p.title ASC
             `),
             pool.request().query(`
                 SELECT pt.projectId, t.id AS tagId, t.name AS tagName
@@ -803,6 +826,8 @@ router.get('/sharing-picker-data', checkPermission('can_manage_sharing_requests'
                 id: p.id.toString(),
                 title: p.title,
                 orgId: p.orgId,
+                linkedGoalCount: Number(p.linkedGoalCount || 0),
+                externalGoalLinkCount: Number(p.externalGoalLinkCount || 0),
                 tags: tagMap[p.id] || []
             })),
             goals: goalsResult.recordset.map(g => ({

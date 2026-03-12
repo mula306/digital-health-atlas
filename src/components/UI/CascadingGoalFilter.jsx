@@ -1,87 +1,68 @@
 import { useMemo } from 'react';
 import { Filter, X } from 'lucide-react';
 import { useData } from '../../context/DataContext';
+import { GOAL_LEVELS } from '../../../shared/goalLevels.js';
+import { buildGoalMap, buildGoalPath } from '../../utils/goalHierarchy';
 import './CascadingGoalFilter.css';
 
 export function CascadingGoalFilter({ value, onChange }) {
     const { goals } = useData();
+    const emptySelections = useMemo(
+        () => Object.fromEntries(GOAL_LEVELS.map((level) => [level.code, ''])),
+        []
+    );
 
     const goalsById = useMemo(() => {
-        const byId = new Map();
-        goals.forEach((goal) => {
-            byId.set(String(goal.id), goal);
-        });
-        return byId;
+        return buildGoalMap(goals);
     }, [goals]);
 
     const selections = useMemo(() => {
         if (!value) {
-            return { org: '', division: '', department: '', branch: '' };
+            return { ...emptySelections };
         }
 
-        const ancestry = [];
-        let current = goalsById.get(String(value));
-        while (current) {
-            ancestry.unshift(String(current.id));
-            const parentId = current.parentId ? String(current.parentId) : '';
-            current = parentId ? goalsById.get(parentId) : null;
-        }
+        const ancestry = buildGoalPath(goalsById, value);
+        const nextSelections = { ...emptySelections };
 
-        return {
-            org: ancestry[0] || '',
-            division: ancestry[1] || '',
-            department: ancestry[2] || '',
-            branch: ancestry[3] || ''
-        };
-    }, [value, goalsById]);
+        ancestry.forEach((goal, index) => {
+            const level = GOAL_LEVELS[index];
+            if (level) {
+                nextSelections[level.code] = String(goal.id);
+            }
+        });
 
-    // Get goals at each level
-    const getGoalsAtLevel = (level, parentId = null) => {
-        if (level === 0) {
-            // Root level - no parent
-            return goals.filter(g => !g.parentId);
-        }
-        // Child level - filter by parent
-        if (!parentId) return [];
-        return goals.filter(g => g.parentId === parentId);
-    };
+        return nextSelections;
+    }, [emptySelections, goalsById, value]);
 
-    // Get available options for each dropdown
-    const orgGoals = getGoalsAtLevel(0);
-    const divisionGoals = getGoalsAtLevel(1, selections.org);
-    const departmentGoals = getGoalsAtLevel(2, selections.division);
-    const branchGoals = getGoalsAtLevel(3, selections.department);
+    const optionsByLevel = useMemo(() => GOAL_LEVELS.reduce((accumulator, level, index) => {
+        const parentCode = GOAL_LEVELS[index - 1]?.code || null;
+        const parentId = parentCode ? selections[parentCode] : null;
+        accumulator[level.code] = index === 0
+            ? goals.filter((goal) => !goal.parentId)
+            : (parentId ? goals.filter((goal) => goal.parentId === parentId) : []);
+        return accumulator;
+    }, {}), [goals, selections]);
 
     // Handle selection change at a level
     const handleChange = (level, goalIdValue) => {
         // IDs are strings from API, so keep them as strings to match
         const goalId = goalIdValue || '';
-        const newSelections = { ...selections };
+        const levelIndex = GOAL_LEVELS.findIndex((entry) => entry.code === level);
+        const newSelections = { ...emptySelections };
 
-        switch (level) {
-            case 'org':
-                newSelections.org = goalId;
-                newSelections.division = '';
-                newSelections.department = '';
-                newSelections.branch = '';
-                break;
-            case 'division':
-                newSelections.division = goalId;
-                newSelections.department = '';
-                newSelections.branch = '';
-                break;
-            case 'department':
-                newSelections.department = goalId;
-                newSelections.branch = '';
-                break;
-            case 'branch':
-                newSelections.branch = goalId;
-                break;
-        }
+        GOAL_LEVELS.forEach((entry, index) => {
+            if (index < levelIndex) {
+                newSelections[entry.code] = selections[entry.code];
+            } else if (index === levelIndex) {
+                newSelections[entry.code] = goalId;
+            }
+        });
 
         // Return the most specific (deepest) selection
-        const selectedId = newSelections.branch || newSelections.department ||
-            newSelections.division || newSelections.org || '';
+        const selectedId = [...GOAL_LEVELS]
+            .reverse()
+            .map((entry) => newSelections[entry.code])
+            .find(Boolean) || '';
         onChange(selectedId);
     };
 
@@ -90,71 +71,33 @@ export function CascadingGoalFilter({ value, onChange }) {
         onChange('');
     };
 
-    const hasAnySelection = selections.org || selections.division ||
-        selections.department || selections.branch;
+    const hasAnySelection = GOAL_LEVELS.some((level) => selections[level.code]);
 
     return (
         <div className="cascading-filter">
             <div className="cascading-filter-row">
                 <Filter size={16} className="filter-icon" />
 
-                {/* Organization */}
-                <select
-                    value={selections.org}
-                    onChange={e => handleChange('org', e.target.value)}
-                    className="form-select"
-                    style={{ minWidth: '160px', width: 'auto' }}
-                >
-                    <option value="">All Organizations</option>
-                    {orgGoals.map(g => (
-                        <option key={g.id} value={g.id}>{g.title}</option>
-                    ))}
-                </select>
+                {GOAL_LEVELS.map((level, index) => {
+                    const parentCode = GOAL_LEVELS[index - 1]?.code || null;
+                    const shouldShow = index === 0 || (selections[parentCode] && optionsByLevel[level.code]?.length > 0);
+                    if (!shouldShow) return null;
 
-                {/* Division - only show if org selected */}
-                {selections.org && divisionGoals.length > 0 && (
+                    return (
                     <select
-                        value={selections.division}
-                        onChange={e => handleChange('division', e.target.value)}
+                        key={level.code}
+                        value={selections[level.code]}
+                        onChange={e => handleChange(level.code, e.target.value)}
                         className="form-select"
                         style={{ minWidth: '160px', width: 'auto' }}
                     >
-                        <option value="">All Divisions</option>
-                        {divisionGoals.map(g => (
+                        <option value="">{`All ${level.pluralLabel}`}</option>
+                        {(optionsByLevel[level.code] || []).map(g => (
                             <option key={g.id} value={g.id}>{g.title}</option>
                         ))}
                     </select>
-                )}
-
-                {/* Department - only show if division selected */}
-                {selections.division && departmentGoals.length > 0 && (
-                    <select
-                        value={selections.department}
-                        onChange={e => handleChange('department', e.target.value)}
-                        className="form-select"
-                        style={{ minWidth: '160px', width: 'auto' }}
-                    >
-                        <option value="">All Departments</option>
-                        {departmentGoals.map(g => (
-                            <option key={g.id} value={g.id}>{g.title}</option>
-                        ))}
-                    </select>
-                )}
-
-                {/* Branch - only show if department selected */}
-                {selections.department && branchGoals.length > 0 && (
-                    <select
-                        value={selections.branch}
-                        onChange={e => handleChange('branch', e.target.value)}
-                        className="form-select"
-                        style={{ minWidth: '160px', width: 'auto' }}
-                    >
-                        <option value="">All Branches</option>
-                        {branchGoals.map(g => (
-                            <option key={g.id} value={g.id}>{g.title}</option>
-                        ))}
-                    </select>
-                )}
+                    );
+                })}
 
                 {/* Clear button */}
                 {hasAnySelection && (

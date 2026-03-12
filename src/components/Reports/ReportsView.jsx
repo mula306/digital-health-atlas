@@ -5,6 +5,7 @@ import { useToast } from '../../context/ToastContext';
 import { ReportFilterTree } from './ReportFilterTree';
 import { ReportPreview } from './ReportPreview';
 import './Reports.css';
+import { GOAL_LEVELS } from '../../../shared/goalLevels.js';
 
 const DEFAULT_PACK_FILTERS = {
     goalIds: [],
@@ -21,6 +22,7 @@ const STATUS_FILTER_OPTIONS = [
 ];
 
 const WEEKDAY_LABELS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const PRIMARY_GOAL_LEVEL = GOAL_LEVELS[0];
 
 export function ReportsView() {
     const {
@@ -93,16 +95,16 @@ export function ReportsView() {
                 const title = goal.title || goal.name || `Goal ${goal.id}`;
                 const path = buildGoalPath(goal);
                 const pathTitles = path.map((item) => item.title || item.name || `Goal ${item.id}`);
-                const organization = pathTitles[0] || title;
+                const primaryGoalTitle = pathTitles[0] || title;
                 const hierarchyPath = pathTitles.join(' / ');
                 const label = pathTitles.length > 1
-                    ? `${organization}: ${title}`
+                    ? `${primaryGoalTitle}: ${title}`
                     : title;
 
                 return {
                     id,
                     title,
-                    organization,
+                    [PRIMARY_GOAL_LEVEL.code]: primaryGoalTitle,
                     hierarchyPath,
                     label,
                     depth: pathTitles.length
@@ -110,7 +112,7 @@ export function ReportsView() {
             })
             .filter((goal) => !Number.isNaN(goal.id))
             .sort((a, b) =>
-                a.organization.localeCompare(b.organization)
+                a[PRIMARY_GOAL_LEVEL.code].localeCompare(b[PRIMARY_GOAL_LEVEL.code])
                 || a.depth - b.depth
                 || a.hierarchyPath.localeCompare(b.hierarchyPath)
             );

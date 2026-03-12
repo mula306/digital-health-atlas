@@ -12,16 +12,17 @@ GO
 USE DHAtlas;
 GO
 
--- Goals table (hierarchical with Org -> Div -> Dept -> Branch)
+-- Goals table (hierarchical with Enterprise -> Portfolio -> Service -> Team)
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'Goals')
 CREATE TABLE Goals (
     id INT IDENTITY(1,1) PRIMARY KEY,
     title NVARCHAR(255) NOT NULL,
     description NVARCHAR(MAX) NULL,
-    type NVARCHAR(20) NOT NULL,  -- 'org', 'div', 'dept', 'branch'
+    type NVARCHAR(20) NOT NULL,  -- 'enterprise', 'portfolio', 'service', 'team'
     parentId INT NULL,
     createdAt DATETIME2 DEFAULT GETDATE(),
-    CONSTRAINT FK_Goals_Parent FOREIGN KEY (parentId) REFERENCES Goals(id)
+    CONSTRAINT FK_Goals_Parent FOREIGN KEY (parentId) REFERENCES Goals(id),
+    CONSTRAINT CK_Goals_Type CHECK (type IN ('enterprise', 'portfolio', 'service', 'team'))
 );
 GO
 
@@ -29,6 +30,33 @@ IF COL_LENGTH('Goals', 'description') IS NULL
 BEGIN
     ALTER TABLE Goals ADD description NVARCHAR(MAX) NULL;
 END
+GO
+
+IF EXISTS (
+    SELECT 1
+    FROM sys.check_constraints
+    WHERE name = 'CK_Goals_Type'
+      AND parent_object_id = OBJECT_ID('Goals')
+)
+BEGIN
+    ALTER TABLE Goals DROP CONSTRAINT CK_Goals_Type;
+END
+GO
+
+UPDATE Goals
+SET type = CASE type
+    WHEN 'org' THEN 'enterprise'
+    WHEN 'div' THEN 'portfolio'
+    WHEN 'dept' THEN 'service'
+    WHEN 'branch' THEN 'team'
+    ELSE type
+END
+WHERE type IN ('org', 'div', 'dept', 'branch');
+GO
+
+ALTER TABLE Goals
+ADD CONSTRAINT CK_Goals_Type
+CHECK (type IN ('enterprise', 'portfolio', 'service', 'team'));
 GO
 
 -- KPIs (linked to Goals)

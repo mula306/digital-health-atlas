@@ -37,6 +37,16 @@ test('canonical schema includes multi-org sharing and workflow session objects',
     assert.match(schema, /CREATE TABLE ProjectWatchers/);
 });
 
+test('canonical schema migrates and constrains goal taxonomy to enterprise cascade values', () => {
+    const schema = readScript('schema.sql');
+    assert.match(schema, /CK_Goals_Type/);
+    assert.match(schema, /'enterprise'/);
+    assert.match(schema, /'portfolio'/);
+    assert.match(schema, /'service'/);
+    assert.match(schema, /'team'/);
+    assert.match(schema, /WHEN 'org' THEN 'enterprise'/);
+});
+
 test('setup script uses schema-only initialization path', () => {
     const setupScript = readScript('setup_db.js');
     assert.match(setupScript, /SQL_FILES_IN_ORDER/);

@@ -8,6 +8,7 @@ import {
     Square, MinusSquare, ChevronRight, Filter
 } from 'lucide-react';
 import { API_BASE } from '../../apiClient';
+import { getGoalTypeLabel } from '../../../shared/goalLevels.js';
 import './OrganizationManager.css';
 
 const ORG_SECTIONS = new Set(['orgs', 'members', 'sharing']);
@@ -58,6 +59,7 @@ export function OrganizationManager({
     const [shareAccessLevel, setShareAccessLevel] = useState('read');
     const [shareExpiresAt, setShareExpiresAt] = useState('');
     const [bulkActionLoading, setBulkActionLoading] = useState(false);
+    const [ensuringProjectGoalContextId, setEnsuringProjectGoalContextId] = useState(null);
 
     // ─── All projects/goals for sharing (fetched directly, not paginated) ───
     const [allProjects, setAllProjects] = useState([]);
@@ -567,6 +569,30 @@ export function OrganizationManager({
             showError('Failed to unshare goals');
         } finally {
             setBulkActionLoading(false);
+        }
+    };
+
+    const handleEnsureProjectGoalContext = async (projectId, shareInfo) => {
+        if (!sharingTargetOrg) return;
+        setEnsuringProjectGoalContextId(String(projectId));
+        try {
+            const result = await bulkShareProjects(
+                [String(projectId)],
+                sharingTargetOrg,
+                shareInfo?.accessLevel || 'read',
+                shareInfo?.expiresAt || null
+            );
+            const linkedGoalCount = Number(result?.linkedGoalCount || 0);
+            success(
+                linkedGoalCount > 0
+                    ? `Linked goal context refreshed for this project (${linkedGoalCount} goal${linkedGoalCount === 1 ? '' : 's'}).`
+                    : 'Project share refreshed.'
+            );
+            loadSharingSummary(sharingTargetOrg);
+        } catch {
+            showError('Failed to ensure linked goal sharing');
+        } finally {
+            setEnsuringProjectGoalContextId(null);
         }
     };
 
@@ -1260,6 +1286,18 @@ export function OrganizationManager({
                                                                             )}
                                                                         </div>
                                                                     )}
+                                                                    <div className="org-sharing-item-tags">
+                                                                        {Number(project.linkedGoalCount || 0) > 0 && (
+                                                                            <span className="org-sharing-tag-chip">
+                                                                                {project.linkedGoalCount} linked goal{Number(project.linkedGoalCount || 0) === 1 ? '' : 's'}
+                                                                            </span>
+                                                                        )}
+                                                                        {Number(project.externalGoalLinkCount || 0) > 0 && (
+                                                                            <span className="org-sharing-tag-chip">
+                                                                                Project linked to external-org goal
+                                                                            </span>
+                                                                        )}
+                                                                    </div>
                                                                 </div>
                                                                 {isShared && (
                                                                     <div className="org-sharing-item-status">
@@ -1276,6 +1314,20 @@ export function OrganizationManager({
                                                                             )}
                                                                             {shareInfo?.goalContextStatus === 'partial' && (
                                                                                 <span className="org-access-badge-mini warn">goal context partial</span>
+                                                                            )}
+                                                                            {(shareInfo?.goalContextStatus === 'none-shared' || shareInfo?.goalContextStatus === 'partial') && (
+                                                                                <button
+                                                                                    type="button"
+                                                                                    className="org-access-badge-mini warn"
+                                                                                    style={{ cursor: ensuringProjectGoalContextId === String(project.id) ? 'wait' : 'pointer', border: 'none' }}
+                                                                                    onClick={(e) => {
+                                                                                        e.stopPropagation();
+                                                                                        handleEnsureProjectGoalContext(project.id, shareInfo);
+                                                                                    }}
+                                                                                    disabled={ensuringProjectGoalContextId === String(project.id)}
+                                                                                >
+                                                                                    {ensuringProjectGoalContextId === String(project.id) ? 'Sharing linked goals...' : 'Share linked goals'}
+                                                                                </button>
                                                                             )}
                                                                         </div>
                                                                         <button
@@ -1412,8 +1464,8 @@ export function OrganizationManager({
                                                                             {goal.title}
                                                                         </span>
                                                                         <span className="org-sharing-goal-meta">
-                                                                            {goal.type} · {childGoals.length} sub-goal{childGoals.length !== 1 ? 's' : ''}
-                                                                            {goal.kpis?.length > 0 && ` · ${goal.kpis.length} KPI${goal.kpis.length !== 1 ? 's' : ''}`}
+                                                                            {getGoalTypeLabel(goal.type)} - {childGoals.length} sub-goal{childGoals.length !== 1 ? 's' : ''}
+                                                                            {goal.kpis?.length > 0 && ` - ${goal.kpis.length} KPI${goal.kpis.length !== 1 ? 's' : ''}`}
                                                                         </span>
                                                                     </div>
                                                                     {isShared && (

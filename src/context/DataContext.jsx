@@ -391,13 +391,17 @@ export function DataProvider({ children }) {
                 method: 'POST',
                 body: JSON.stringify(goal)
             });
+            if (!res.ok) {
+                throw new Error(await getApiErrorMessage(res, 'Failed to create goal'));
+            }
             const newGoal = await res.json();
             setGoals(prev => [...prev, newGoal]);
             return newGoal.id;
         } catch (err) {
             console.error('Error adding goal:', err);
+            throw err;
         }
-    }, [authFetch]);
+    }, [authFetch, getApiErrorMessage]);
 
     const updateGoal = useCallback(async (id, updates) => {
         try {
@@ -811,25 +815,33 @@ export function DataProvider({ children }) {
                 method: 'POST',
                 body: JSON.stringify(form)
             });
+            if (!res.ok) {
+                throw new Error(await getApiErrorMessage(res, 'Failed to create intake form'));
+            }
             const newForm = await res.json();
             setIntakeForms(prev => [...prev, newForm]);
             return newForm.id;
         } catch (err) {
             console.error('Error adding intake form:', err);
+            throw err;
         }
-    }, [authFetch]);
+    }, [authFetch, getApiErrorMessage]);
 
     const updateIntakeForm = useCallback(async (id, updates) => {
         try {
-            await authFetch(`${API_BASE}/intake/forms/${id}`, {
+            const res = await authFetch(`${API_BASE}/intake/forms/${id}`, {
                 method: 'PUT',
                 body: JSON.stringify(updates)
             });
+            if (!res.ok) {
+                throw new Error(await getApiErrorMessage(res, 'Failed to update intake form'));
+            }
             setIntakeForms(prev => prev.map(f => f.id === id ? { ...f, ...updates } : f));
         } catch (err) {
             console.error('Error updating intake form:', err);
+            throw err;
         }
-    }, [authFetch]);
+    }, [authFetch, getApiErrorMessage]);
 
     const deleteIntakeForm = useCallback(async (id) => {
         try {
@@ -1062,16 +1074,22 @@ export function DataProvider({ children }) {
             method: 'POST',
             body: JSON.stringify(payload)
         });
+        if (!res.ok) {
+            throw new Error(await getApiErrorMessage(res, 'Failed to create governance board'));
+        }
         return await res.json();
-    }, [authFetch]);
+    }, [authFetch, getApiErrorMessage]);
 
     const updateGovernanceBoard = useCallback(async (boardId, payload) => {
         const res = await authFetch(`${API_BASE}/governance/boards/${boardId}`, {
             method: 'PUT',
             body: JSON.stringify(payload)
         });
+        if (!res.ok) {
+            throw new Error(await getApiErrorMessage(res, 'Failed to update governance board'));
+        }
         return await res.json();
-    }, [authFetch]);
+    }, [authFetch, getApiErrorMessage]);
 
     const fetchGovernanceBoardMembers = useCallback(async (boardId, params = {}) => {
         const searchParams = new URLSearchParams();
@@ -1538,65 +1556,40 @@ export function DataProvider({ children }) {
                     endDate: task.endDate || null
                 }))
             : [];
-
-        const normalizedDescription = conversionContext
-            ? [String(projectData?.description || '').trim(), conversionContext]
-                .filter(Boolean)
-                .join('\n\n')
-            : projectData?.description;
-
-        const projectId = await addProject({
-            ...projectData,
-            description: normalizedDescription
+        const res = await authFetch(`${API_BASE}/intake/submissions/${submissionId}/convert`, {
+            method: 'POST',
+            body: JSON.stringify({
+                projectData,
+                conversionContext,
+                kickoffTasks
+            })
         });
-        if (!projectId) {
-            throw new Error('Project creation failed - no project ID returned');
+        if (!res.ok) {
+            throw new Error(await getApiErrorMessage(res, 'Failed to convert submission to project'));
         }
 
-        try {
-            const seededTaskErrors = [];
-            let seededTaskCount = 0;
-            for (const taskTemplate of kickoffTasks) {
-                try {
-                    await addTask(projectId, taskTemplate);
-                    seededTaskCount += 1;
-                } catch (taskErr) {
-                    seededTaskErrors.push({
-                        title: taskTemplate.title,
-                        message: taskErr?.message || 'Task creation failed'
-                    });
-                }
-            }
-
-            await authFetch(`${API_BASE}/intake/submissions/${submissionId}`, {
-                method: 'PUT',
-                body: JSON.stringify({
-                    status: 'approved',
-                    convertedProjectId: projectId
-                })
+        const data = await res.json();
+        if (data?.project) {
+            setProjects(prev => {
+                const existingIndex = prev.findIndex(p => String(p.id) === String(data.project.id));
+                if (existingIndex === -1) return [...prev, data.project];
+                return prev.map(p => String(p.id) === String(data.project.id) ? { ...p, ...data.project } : p);
             });
+        }
 
+        if (data?.projectId) {
             patchSubmissionLocal(submissionId, {
                 status: 'approved',
-                convertedProjectId: String(projectId)
+                convertedProjectId: String(data.projectId)
             });
-
-            return {
-                projectId,
-                seededTaskCount,
-                seededTaskErrors
-            };
-        } catch (err) {
-            // Best effort rollback if submission update is rejected.
-            try {
-                await authFetch(`${API_BASE}/projects/${projectId}`, { method: 'DELETE' });
-                setProjects(prev => prev.filter(p => String(p.id) !== String(projectId)));
-            } catch (rollbackErr) {
-                console.error('Failed to rollback project after conversion failure:', rollbackErr);
-            }
-            throw err;
         }
-    }, [addProject, addTask, authFetch, patchSubmissionLocal]);
+
+        return {
+            projectId: data?.projectId || data?.project?.id || null,
+            seededTaskCount: data?.seededTaskCount || 0,
+            seededTaskErrors: Array.isArray(data?.seededTaskErrors) ? data.seededTaskErrors : []
+        };
+    }, [authFetch, getApiErrorMessage, patchSubmissionLocal]);
 
     // ==================== TAG MANAGEMENT ====================
 

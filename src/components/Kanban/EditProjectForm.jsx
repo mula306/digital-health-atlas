@@ -5,6 +5,7 @@ import { ProjectTagSelector } from '../UI/ProjectTagSelector';
 import { CascadingGoalFilter } from '../UI/CascadingGoalFilter';
 import { validateGoalAssignment } from '../../utils/goalAssignmentValidation';
 import { X } from 'lucide-react';
+import { formatGoalOptionLabel } from '../../utils/goalHierarchy';
 
 export function EditProjectForm({
     project,
@@ -57,7 +58,7 @@ export function EditProjectForm({
 
     const getGoalTitle = (id) => {
         const goal = goals.find(g => String(g.id) === String(id));
-        return goal ? `${goal.title} (${goal.type})` : id;
+        return goal ? formatGoalOptionLabel(goal) : id;
     };
 
     const handleSubmit = async (e) => {

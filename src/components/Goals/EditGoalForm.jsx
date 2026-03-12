@@ -1,21 +1,34 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useData } from '../../context/DataContext';
 import { useToast } from '../../context/ToastContext';
+import {
+    getAllowedGoalTypes,
+    getGoalLevelDefinition,
+    GOAL_ROOT_TYPE,
+    isValidChildGoalType
+} from '../../../shared/goalLevels.js';
 
 export function EditGoalForm({ goal, onClose }) {
-    const { updateGoal } = useData();
+    const { goals, updateGoal } = useData();
     const { success } = useToast();
     const [title, setTitle] = useState(goal.title || '');
     const [description, setDescription] = useState(goal.description || '');
-    const [type, setType] = useState(goal.type || 'org');
-
-    // Determine available types based on parent
-    const typeOptions = [
-        { value: 'org', label: 'Organization' },
-        { value: 'div', label: 'Division' },
-        { value: 'dept', label: 'Department' },
-        { value: 'branch', label: 'Branch' }
-    ];
+    const parentGoal = useMemo(
+        () => goals.find((candidate) => String(candidate.id) === String(goal.parentId)) || null,
+        [goal.parentId, goals]
+    );
+    const childGoals = useMemo(
+        () => goals.filter((candidate) => String(candidate.parentId) === String(goal.id)),
+        [goal.id, goals]
+    );
+    const typeOptions = useMemo(() => {
+        const baseOptions = getAllowedGoalTypes({ parentType: parentGoal?.type || null });
+        const constrainedOptions = baseOptions.filter((candidateType) =>
+            childGoals.every((childGoal) => isValidChildGoalType(candidateType, childGoal.type))
+        );
+        return constrainedOptions.length > 0 ? constrainedOptions : [goal.type || GOAL_ROOT_TYPE];
+    }, [childGoals, goal.type, parentGoal?.type]);
+    const [type, setType] = useState(() => typeOptions[0] || goal.type || GOAL_ROOT_TYPE);
 
     const handleSubmit = (e) => {
         e.preventDefault();
@@ -40,16 +53,24 @@ export function EditGoalForm({ goal, onClose }) {
             </div>
 
             <div className="form-group">
-                <label>Type</label>
+                <label>Goal Level</label>
                 <select
                     value={type}
                     onChange={e => setType(e.target.value)}
                     className="form-select"
+                    disabled={typeOptions.length <= 1}
                 >
-                    {typeOptions.map(opt => (
-                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    {typeOptions.map((option) => (
+                        <option key={option} value={option}>
+                            {getGoalLevelDefinition(option)?.label || option}
+                        </option>
                     ))}
                 </select>
+                <div className="form-hint">
+                    {parentGoal
+                        ? `This goal sits under ${parentGoal.title} and must remain a ${getGoalLevelDefinition(type)?.goalLabel || 'goal'}.`
+                        : 'Root goals remain Enterprise goals in the cascade.'}
+                </div>
             </div>
 
             <div className="form-group">

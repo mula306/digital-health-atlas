@@ -1,12 +1,14 @@
 import express from 'express';
 import { getPool, sql } from '../db.js';
 import { checkPermission, getAuthUser } from '../middleware/authMiddleware.js';
-import { requireOrg, withSharedScope, checkProjectWriteAccess, requireProjectWriteAccess } from '../middleware/orgScope.js';
+import { withSharedScope, checkProjectWriteAccess, requireProjectWriteAccess } from '../middleware/orgScope.js';
 import { handleError } from '../utils/errorHandler.js';
 import { logAudit } from '../utils/auditLogger.js';
 import { cache, CACHE_KEYS, invalidateProjectCache } from '../utils/cache.js';
 import { buildInClause, addParams } from '../utils/sqlHelpers.js';
 import { validateGoalAssignment, loadGoalsForValidation } from '../utils/goalValidation.js';
+import { findGoalAccessGapsForOrg } from '../utils/goalAccess.js';
+import { ensureOrganizationExists, isAdminUser, resolveOwnedOrgId } from '../utils/orgOwnership.js';
 
 const router = express.Router();
 
@@ -317,6 +319,81 @@ const mapBenefitRow = (row) => ({
     updatedAt: row.updatedAt,
     updatedByOid: row.updatedByOid || null
 });
+
+const mapGoalContextStatus = ({ linkedGoalCount, visibleGoalCount }) => {
+    if (linkedGoalCount <= 0) return 'no-goals-linked';
+    if (visibleGoalCount <= 0) return 'none-visible';
+    if (visibleGoalCount < linkedGoalCount) return 'partial';
+    return 'complete';
+};
+
+const fetchProjectGoalContextMap = async (pool, orgId, projectIds = null) => {
+    const normalizedProjectIds = Array.isArray(projectIds)
+        ? [...new Set(projectIds
+            .map((projectId) => Number.parseInt(projectId, 10))
+            .filter((projectId) => !Number.isNaN(projectId)))]
+        : [];
+
+    if (Array.isArray(projectIds) && normalizedProjectIds.length === 0) {
+        return new Map();
+    }
+
+    const request = pool.request();
+    const filters = [];
+
+    if (orgId !== null && orgId !== undefined) {
+        request.input('orgId', sql.Int, orgId);
+    }
+
+    if (normalizedProjectIds.length > 0) {
+        const { text, params } = buildInClause('goalContextProjectId', normalizedProjectIds);
+        addParams(request, params);
+        filters.push(`pgl.projectId IN (${text})`);
+    }
+
+    const where = filters.length > 0 ? `WHERE ${filters.join(' AND ')}` : '';
+    const visibleGoalExpression = orgId === null || orgId === undefined
+        ? 'COUNT(DISTINCT pgl.goalId)'
+        : `
+            COUNT(DISTINCT CASE
+                WHEN g.orgId = @orgId OR goa.goalId IS NOT NULL THEN pgl.goalId
+                ELSE NULL
+            END)
+        `;
+
+    const result = await request.query(`
+        WITH ProjectGoalLinks AS (
+            SELECT pg.projectId, pg.goalId
+            FROM ProjectGoals pg
+            UNION
+            SELECT p.id AS projectId, p.goalId
+            FROM Projects p
+            WHERE p.goalId IS NOT NULL
+        )
+        SELECT
+            pgl.projectId,
+            COUNT(DISTINCT pgl.goalId) AS linkedGoalCount,
+            ${visibleGoalExpression} AS visibleGoalCount
+        FROM ProjectGoalLinks pgl
+        INNER JOIN Goals g ON g.id = pgl.goalId
+        ${orgId === null || orgId === undefined ? '' : `
+            LEFT JOIN GoalOrgAccess goa
+                ON goa.goalId = g.id
+               AND goa.orgId = @orgId
+               AND (goa.expiresAt IS NULL OR goa.expiresAt > GETDATE())
+        `}
+        ${where}
+        GROUP BY pgl.projectId
+    `);
+
+    return new Map(result.recordset.map((row) => [
+        Number(row.projectId),
+        {
+            linkedGoalCount: Number(row.linkedGoalCount || 0),
+            visibleGoalCount: Number(row.visibleGoalCount || 0)
+        }
+    ]));
+};
 
 // Get lightweight executive summary of ALL projects
 router.get('/exec-summary', checkPermission(['can_view_exec_dashboard', 'can_view_projects']), withSharedScope, async (req, res) => {
@@ -630,6 +707,7 @@ router.get('/', checkPermission(['can_view_projects', 'can_view_exec_dashboard']
                 p.title,
                 p.description,
                 p.status,
+                p.orgId,
                 p.createdAt,
                 CASE
                     WHEN @orgId IS NULL OR p.orgId = @orgId THEN 'owner'
@@ -713,6 +791,7 @@ router.get('/', checkPermission(['can_view_projects', 'can_view_exec_dashboard']
             // Fetch project goals
             projectGoalsRequest.query(`SELECT projectId, goalId FROM ProjectGoals WHERE projectId IN (${idInClause})`)
         ]);
+        const projectGoalContextMap = await fetchProjectGoalContextMap(pool, req.orgId ?? null, projectIds);
 
         // Build maps for efficient lookup
         const completionMap = new Map();
@@ -802,11 +881,16 @@ router.get('/', checkPermission(['can_view_projects', 'can_view_exec_dashboard']
 
         const projects = projectsResult.recordset.map(project => {
             const gIds = projectGoalMap.get(project.id) || [];
+            const goalContext = projectGoalContextMap.get(project.id) || {
+                linkedGoalCount: 0,
+                visibleGoalCount: 0
+            };
             return {
                 id: project.id.toString(),
                 title: project.title,
                 description: project.description,
                 status: project.status || 'active',
+                orgId: project.orgId === null || project.orgId === undefined ? null : String(project.orgId),
                 goalIds: gIds,
                 goalId: gIds[0] || null, // backwards compat
                 createdAt: project.createdAt,
@@ -819,6 +903,10 @@ router.get('/', checkPermission(['can_view_projects', 'can_view_exec_dashboard']
                 tags: projectTagMap.get(project.id) || [],
                 accessLevel: project.accessLevel || 'owner',
                 hasWriteAccess: !!project.hasWriteAccess,
+                linkedGoalCount: goalContext.linkedGoalCount,
+                visibleGoalCount: goalContext.visibleGoalCount,
+                goalContextStatus: mapGoalContextStatus(goalContext),
+                goalContextMissing: goalContext.linkedGoalCount > 0 && goalContext.visibleGoalCount === 0,
                 isWatched: !!project.isWatched
             };
         });
@@ -984,6 +1072,11 @@ router.get('/:id', checkPermission('can_view_projects'), withSharedScope, checkP
             return res.status(404).json({ error: 'Project not found' });
         }
         const project = projectResult.recordset[0];
+        const goalContextMap = await fetchProjectGoalContextMap(pool, req.orgId ?? null, [id]);
+        const goalContext = goalContextMap.get(id) || {
+            linkedGoalCount: 0,
+            visibleGoalCount: 0
+        };
 
         // Fetch project goals
         const goalsResult = await pool.request()
@@ -1076,6 +1169,7 @@ router.get('/:id', checkPermission('can_view_projects'), withSharedScope, checkP
             title: project.title,
             description: project.description,
             status: project.status,
+            orgId: project.orgId === null || project.orgId === undefined ? null : String(project.orgId),
             goalIds,
             goalId: goalIds[0] || null, // backwards compat
             createdAt: project.createdAt,
@@ -1085,6 +1179,10 @@ router.get('/:id', checkPermission('can_view_projects'), withSharedScope, checkP
             latestReport,
             accessLevel: req.projectAccess || 'owner',
             hasWriteAccess: !!req.hasWriteAccess,
+            linkedGoalCount: goalContext.linkedGoalCount,
+            visibleGoalCount: goalContext.visibleGoalCount,
+            goalContextStatus: mapGoalContextStatus(goalContext),
+            goalContextMissing: goalContext.linkedGoalCount > 0 && goalContext.visibleGoalCount === 0,
             isWatched
         });
     } catch (err) {
@@ -1516,9 +1614,13 @@ router.delete('/:id/benefits/:benefitId', checkPermission('can_edit_project'), w
 });
 
 // Create project
-router.post('/', checkPermission('can_create_project'), requireOrg, async (req, res) => {
+router.post('/', checkPermission('can_create_project'), async (req, res) => {
     try {
         const { title, description, status } = req.body;
+        const normalizedTitle = typeof title === 'string' ? title.trim() : '';
+        if (!normalizedTitle) {
+            return res.status(400).json({ error: 'title is required' });
+        }
         const { parsed: parsedGoalIds, invalid: invalidGoalIds } = parseGoalIdsFromBody(req.body);
 
         if (invalidGoalIds.length > 0) {
@@ -1528,6 +1630,20 @@ router.post('/', checkPermission('can_create_project'), requireOrg, async (req, 
         }
 
         const pool = await getPool();
+        let ownerOrgId;
+        try {
+            ownerOrgId = resolveOwnedOrgId({
+                user: req.user,
+                requestedOrgId: req.body?.orgId,
+                missingUserOrgMessage: 'No organization assigned. Contact your administrator to create projects.',
+                adminOrgRequiredMessage: 'orgId is required for admin-created projects'
+            });
+            await ensureOrganizationExists(pool, ownerOrgId);
+        } catch (orgErr) {
+            const message = orgErr?.message || 'Unable to resolve project organization';
+            const statusCode = message.toLowerCase().includes('no organization assigned') ? 403 : 400;
+            return res.status(statusCode).json({ error: message });
+        }
 
         const missingGoalIds = await findMissingGoalIds(pool, parsedGoalIds);
         if (missingGoalIds.length > 0) {
@@ -1545,11 +1661,23 @@ router.post('/', checkPermission('can_create_project'), requireOrg, async (req, 
             }
         }
 
+        const goalAccessGaps = await findGoalAccessGapsForOrg({
+            dbOrTx: pool,
+            goalIds: parsedGoalIds,
+            orgId: ownerOrgId
+        });
+        if (goalAccessGaps.length > 0) {
+            const goalTitles = goalAccessGaps.map((goal) => goal.title);
+            return res.status(409).json({
+                error: `Selected goals are not visible to the project organization: ${goalTitles.join(', ')}`
+            });
+        }
+
         const result = await pool.request()
-            .input('title', sql.NVarChar, title)
+            .input('title', sql.NVarChar, normalizedTitle)
             .input('description', sql.NVarChar(sql.MAX), description)
             .input('status', sql.NVarChar, status || 'active')
-            .input('orgId', sql.Int, req.orgId)
+            .input('orgId', sql.Int, ownerOrgId)
             .query('INSERT INTO Projects (title, description, status, orgId) OUTPUT INSERTED.id VALUES (@title, @description, @status, @orgId)');
 
         const newId = result.recordset[0].id;
@@ -1563,8 +1691,24 @@ router.post('/', checkPermission('can_create_project'), requireOrg, async (req, 
         }
 
         invalidateProjectCache();
-        logAudit({ action: 'project.create', entityType: 'project', entityId: newId.toString(), entityTitle: title, user: getAuthUser(req), after: { title, description, goalIds: parsedGoalIds }, req });
-        res.json({ id: newId.toString(), title, description, goalIds: parsedGoalIds.map(String), goalId: parsedGoalIds[0]?.toString() || null, tasks: [], statusReports: [] });
+        logAudit({ action: 'project.create', entityType: 'project', entityId: newId.toString(), entityTitle: normalizedTitle, user: getAuthUser(req), after: { title: normalizedTitle, description, status: status || 'active', orgId: ownerOrgId, goalIds: parsedGoalIds }, req });
+        res.json({
+            id: newId.toString(),
+            title: normalizedTitle,
+            description,
+            status: status || 'active',
+            orgId: String(ownerOrgId),
+            goalIds: parsedGoalIds.map(String),
+            goalId: parsedGoalIds[0]?.toString() || null,
+            linkedGoalCount: parsedGoalIds.length,
+            visibleGoalCount: parsedGoalIds.length,
+            goalContextStatus: mapGoalContextStatus({ linkedGoalCount: parsedGoalIds.length, visibleGoalCount: parsedGoalIds.length }),
+            goalContextMissing: false,
+            accessLevel: 'owner',
+            hasWriteAccess: true,
+            tasks: [],
+            statusReports: []
+        });
     } catch (err) {
         handleError(res, 'creating project', err);
     }
@@ -1577,7 +1721,10 @@ router.put('/:id', checkPermission('can_edit_project'), withSharedScope, checkPr
         if (!title) {
             return res.status(400).json({ error: 'Missing required field: title' });
         }
-        const id = parseInt(req.params.id);
+        const id = parseInt(req.params.id, 10);
+        if (Number.isNaN(id)) {
+            return res.status(400).json({ error: 'Invalid project id' });
+        }
 
         const { parsed: parsedGoalIds, invalid: invalidGoalIds } = parseGoalIdsFromBody(req.body);
         if (invalidGoalIds.length > 0) {
@@ -1603,16 +1750,70 @@ router.put('/:id', checkPermission('can_edit_project'), withSharedScope, checkPr
             }
         }
 
-        const prev = await pool.request().input('id', sql.Int, id).query('SELECT title, description, status FROM Projects WHERE id = @id');
+        const prev = await pool.request().input('id', sql.Int, id).query('SELECT title, description, status, orgId FROM Projects WHERE id = @id');
+        if (prev.recordset.length === 0) {
+            return res.status(404).json({ error: 'Project not found' });
+        }
         const beforeState = prev.recordset[0];
+        const hasOrgIdInput = Object.prototype.hasOwnProperty.call(req.body || {}, 'orgId');
+        let projectOrgId = beforeState.orgId === null || beforeState.orgId === undefined
+            ? null
+            : Number(beforeState.orgId);
+
+        if (hasOrgIdInput) {
+            if (!isAdminUser(req.user)) {
+                return res.status(403).json({ error: 'Only admins can change a project organization' });
+            }
+            try {
+                projectOrgId = resolveOwnedOrgId({
+                    user: req.user,
+                    requestedOrgId: req.body?.orgId,
+                    missingUserOrgMessage: 'No organization assigned. Contact your administrator to update project ownership.',
+                    adminOrgRequiredMessage: 'orgId is required when updating a project without an owner organization'
+                });
+                await ensureOrganizationExists(pool, projectOrgId);
+            } catch (orgErr) {
+                return res.status(400).json({ error: orgErr?.message || 'Unable to resolve project organization' });
+            }
+        }
+
+        if (projectOrgId === null || projectOrgId === undefined) {
+            return res.status(409).json({
+                error: 'Project organization is not assigned. Run the org ownership backfill or provide orgId as an admin.'
+            });
+        }
+
+        const goalAccessGaps = await findGoalAccessGapsForOrg({
+            dbOrTx: pool,
+            goalIds: parsedGoalIds,
+            orgId: projectOrgId
+        });
+        if (goalAccessGaps.length > 0) {
+            const goalTitles = goalAccessGaps.map((goal) => goal.title);
+            return res.status(409).json({
+                error: `Selected goals are not visible to the project organization: ${goalTitles.join(', ')}`
+            });
+        }
 
         // Update project fields
-        await pool.request()
+        const projectUpdateRequest = pool.request()
             .input('id', sql.Int, id)
             .input('title', sql.NVarChar, title)
             .input('description', sql.NVarChar(sql.MAX), description)
-            .input('status', sql.NVarChar, status)
-            .query('UPDATE Projects SET title = @title, description = @description, status = @status WHERE id = @id');
+            .input('status', sql.NVarChar, status);
+
+        if (hasOrgIdInput) {
+            projectUpdateRequest.input('orgId', sql.Int, projectOrgId);
+        }
+
+        await projectUpdateRequest.query(`
+            UPDATE Projects
+            SET title = @title,
+                description = @description,
+                status = @status
+                ${hasOrgIdInput ? ', orgId = @orgId' : ''}
+            WHERE id = @id
+        `);
 
         // Replace goal associations
         await pool.request().input('projectId', sql.Int, id)
@@ -1626,7 +1827,7 @@ router.put('/:id', checkPermission('can_edit_project'), withSharedScope, checkPr
         }
 
         invalidateProjectCache();
-        logAudit({ action: 'project.update', entityType: 'project', entityId: id, entityTitle: title, user: getAuthUser(req), before: beforeState, after: { title, description, status, goalIds: parsedGoalIds }, req });
+        logAudit({ action: 'project.update', entityType: 'project', entityId: id, entityTitle: title, user: getAuthUser(req), before: beforeState, after: { title, description, status, orgId: projectOrgId, goalIds: parsedGoalIds }, req });
         res.json({ success: true });
     } catch (err) {
         handleError(res, 'updating project', err);

@@ -8,6 +8,12 @@ import { EditGoalForm } from './EditGoalForm';
 import { KPIManager } from './KPIManager';
 import './KPI.css';
 import { getDescendantGoalIds } from '../../utils/goalHelpers';
+import {
+    GOAL_LEAF_TYPE,
+    getGoalTypeGoalLabel,
+    getGoalTypeLabel,
+    getNextGoalType
+} from '../../../shared/goalLevels.js';
 
 export function GoalItem({
     goal,
@@ -129,19 +135,38 @@ export function GoalItem({
         return Math.round(total / completions.length);
     })();
 
-    const typeLabels = {
-        org: 'Organization',
-        div: 'Division',
-        dept: 'Department',
-        branch: 'Branch'
+    const typeColors = {
+        enterprise: '#1d4ed8',
+        portfolio: '#047857',
+        service: '#b45309',
+        team: '#be185d',
     };
 
-    const typeColors = {
-        org: 'var(--accent-primary)',
-        div: '#10b981',
-        dept: '#f59e0b',
-        branch: '#ec4899',
+    const typeBadgeStyles = {
+        enterprise: {
+            background: 'linear-gradient(135deg, #1d4ed8 0%, #2563eb 100%)',
+            color: '#eff6ff',
+            borderColor: 'rgba(37, 99, 235, 0.45)'
+        },
+        portfolio: {
+            background: 'linear-gradient(135deg, #047857 0%, #059669 100%)',
+            color: '#ecfdf5',
+            borderColor: 'rgba(5, 150, 105, 0.4)'
+        },
+        service: {
+            background: 'linear-gradient(135deg, #b45309 0%, #d97706 100%)',
+            color: '#fff7ed',
+            borderColor: 'rgba(217, 119, 6, 0.42)'
+        },
+        team: {
+            background: 'linear-gradient(135deg, #be185d 0%, #db2777 100%)',
+            color: '#fff1f2',
+            borderColor: 'rgba(219, 39, 119, 0.4)'
+        }
     };
+
+    const nextGoalType = getNextGoalType(goal.type);
+    const nextGoalLabel = nextGoalType ? getGoalTypeGoalLabel(nextGoalType) : 'Sub-goal';
 
     useEffect(() => {
         const handleClickOutside = (e) => {
@@ -210,9 +235,13 @@ export function GoalItem({
                         <div className="goal-top-row">
                             <span
                                 className="goal-type-badge"
-                                style={{ backgroundColor: typeColors[goal.type] || 'gray' }}
+                                style={typeBadgeStyles[goal.type] || {
+                                    background: 'linear-gradient(135deg, #475569 0%, #64748b 100%)',
+                                    color: '#f8fafc',
+                                    borderColor: 'rgba(100, 116, 139, 0.35)'
+                                }}
                             >
-                                {typeLabels[goal.type]}
+                                {getGoalTypeLabel(goal.type)}
                             </span>
                             <div className="goal-actions">
                                 {/* KPI indicator */}
@@ -238,8 +267,8 @@ export function GoalItem({
                                     <Folder size={14} />
                                     <span>{projectCount}</span>
                                 </button>
-                                {canCreateGoal && goal.type !== 'branch' && (
-                                    <button className="icon-btn" onClick={() => setShowAddModal(true)} title="Add Sub-goal">
+                                {canCreateGoal && goal.type !== GOAL_LEAF_TYPE && (
+                                    <button className="icon-btn" onClick={() => setShowAddModal(true)} title={`Add ${nextGoalLabel}`}>
                                         <Plus size={16} />
                                     </button>
                                 )}
@@ -313,7 +342,7 @@ export function GoalItem({
             <Modal
                 isOpen={showAddModal}
                 onClose={() => setShowAddModal(false)}
-                title={`Add Objective under "${goal.title}"`}
+                title={`Add ${nextGoalLabel} under "${goal.title}"`}
                 closeOnOverlayClick={false}
             >
                 <AddGoalForm onClose={() => setShowAddModal(false)} parentId={goal.id} parentType={goal.type} />

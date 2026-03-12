@@ -5,8 +5,136 @@ import { withSharedScope, checkGoalAccess, requireGoalWriteAccess } from '../mid
 import { handleError } from '../utils/errorHandler.js';
 import { logAudit } from '../utils/auditLogger.js';
 import { buildInClause, addParams } from '../utils/sqlHelpers.js';
+import { ensureOrganizationExists, resolveOwnedOrgId } from '../utils/orgOwnership.js';
+import {
+    GOAL_LEAF_TYPE,
+    GOAL_LEVEL_CODES,
+    GOAL_ROOT_TYPE,
+    getGoalTypeLabel,
+    getNextGoalType,
+    isValidChildGoalType,
+    isValidGoalType,
+    isValidRootGoalType,
+    normalizeGoalType
+} from '../../shared/goalLevels.js';
 
 const router = express.Router();
+
+const mapProjectContextStatus = ({ totalLinkedProjectCount, visibleLinkedProjectCount }) => {
+    if (totalLinkedProjectCount <= 0) return 'no-projects-linked';
+    if (visibleLinkedProjectCount <= 0) return 'none-visible';
+    if (visibleLinkedProjectCount < totalLinkedProjectCount) return 'partial';
+    return 'complete';
+};
+
+const formatAllowedGoalTypes = () => GOAL_LEVEL_CODES.join(', ');
+
+const validateGoalTypePosition = ({ type, parentGoal = null, childGoals = [] }) => {
+    const normalizedType = normalizeGoalType(type);
+    if (!isValidGoalType(normalizedType)) {
+        return {
+            valid: false,
+            error: `Goal type must be one of: ${formatAllowedGoalTypes()}.`
+        };
+    }
+
+    if (!parentGoal) {
+        if (!isValidRootGoalType(normalizedType)) {
+            return {
+                valid: false,
+                error: `Root goals must use the "${GOAL_ROOT_TYPE}" type.`
+            };
+        }
+    } else if (!isValidChildGoalType(parentGoal.type, normalizedType)) {
+        const expectedType = getNextGoalType(parentGoal.type);
+        if (!expectedType) {
+            return {
+                valid: false,
+                error: `${getGoalTypeLabel(parentGoal.type)} goals cannot have child goals.`
+            };
+        }
+
+        return {
+            valid: false,
+            error: `Child goals under a ${getGoalTypeLabel(parentGoal.type).toLowerCase()} goal must use the "${expectedType}" type.`
+        };
+    }
+
+    if (Array.isArray(childGoals) && childGoals.length > 0) {
+        if (normalizedType === GOAL_LEAF_TYPE) {
+            return {
+                valid: false,
+                error: `${getGoalTypeLabel(normalizedType)} goals cannot have child goals.`
+            };
+        }
+
+        const invalidChild = childGoals.find((child) => !isValidChildGoalType(normalizedType, child.type));
+        if (invalidChild) {
+            return {
+                valid: false,
+                error: `Goals of type "${normalizedType}" can only contain "${getNextGoalType(normalizedType)}" child goals.`
+            };
+        }
+    }
+
+    return { valid: true, normalizedType };
+};
+
+const fetchGoalProjectContextMap = async (pool, orgId) => {
+    const request = pool.request();
+
+    const query = orgId === null || orgId === undefined
+        ? `
+            WITH GoalProjectLinks AS (
+                SELECT pg.goalId, pg.projectId
+                FROM ProjectGoals pg
+                UNION
+                SELECT p.goalId, p.id AS projectId
+                FROM Projects p
+                WHERE p.goalId IS NOT NULL
+            )
+            SELECT
+                gpl.goalId,
+                COUNT(DISTINCT gpl.projectId) AS totalLinkedProjectCount,
+                COUNT(DISTINCT gpl.projectId) AS visibleLinkedProjectCount
+            FROM GoalProjectLinks gpl
+            GROUP BY gpl.goalId
+        `
+        : `
+            WITH GoalProjectLinks AS (
+                SELECT pg.goalId, pg.projectId
+                FROM ProjectGoals pg
+                UNION
+                SELECT p.goalId, p.id AS projectId
+                FROM Projects p
+                WHERE p.goalId IS NOT NULL
+            )
+            SELECT
+                gpl.goalId,
+                COUNT(DISTINCT gpl.projectId) AS totalLinkedProjectCount,
+                SUM(CASE WHEN p.orgId = @orgId OR poa.projectId IS NOT NULL THEN 1 ELSE 0 END) AS visibleLinkedProjectCount
+            FROM GoalProjectLinks gpl
+            INNER JOIN Projects p ON p.id = gpl.projectId
+            LEFT JOIN ProjectOrgAccess poa
+                ON poa.projectId = p.id
+               AND poa.orgId = @orgId
+               AND (poa.expiresAt IS NULL OR poa.expiresAt > GETDATE())
+            GROUP BY gpl.goalId
+        `;
+
+    if (orgId !== null && orgId !== undefined) {
+        request.input('orgId', sql.Int, orgId);
+    }
+
+    const result = await request.query(query);
+    return new Map(result.recordset.map((row) => [
+        Number(row.goalId),
+        {
+            totalLinkedProjectCount: Number(row.totalLinkedProjectCount || 0),
+            visibleLinkedProjectCount: Number(row.visibleLinkedProjectCount || 0)
+        }
+    ]));
+};
 
 // Get all goals with KPIs and project stats
 router.get('/', checkPermission(['can_view_goals', 'can_view_exec_dashboard']), withSharedScope, async (req, res) => {
@@ -18,25 +146,41 @@ router.get('/', checkPermission(['can_view_goals', 'can_view_exec_dashboard']), 
         if (req.orgId === null || req.orgId === undefined) {
             // Admin: see all goals
             goalsResult = await pool.request()
-                .query('SELECT * FROM Goals ORDER BY id');
+                .query(`
+                    SELECT
+                        g.*,
+                        CAST('owner' AS NVARCHAR(20)) AS accessLevel
+                    FROM Goals g
+                    ORDER BY g.id
+                `);
         } else {
             goalsResult = await pool.request()
                 .input('orgId', sql.Int, req.orgId)
-                .query(`SELECT * FROM Goals 
-                        WHERE orgId = @orgId 
-                           OR id IN (
-                               SELECT goalId
-                               FROM GoalOrgAccess
-                               WHERE orgId = @orgId
-                                 AND (expiresAt IS NULL OR expiresAt > GETDATE())
-                           )
-                        ORDER BY id`);
+                .query(`
+                    SELECT
+                        g.*,
+                        CASE
+                            WHEN g.orgId = @orgId THEN 'owner'
+                            WHEN goa.accessLevel = 'write' THEN 'write'
+                            WHEN goa.accessLevel = 'read' THEN 'read'
+                            ELSE 'none'
+                        END AS accessLevel
+                    FROM Goals g
+                    LEFT JOIN GoalOrgAccess goa
+                        ON goa.goalId = g.id
+                       AND goa.orgId = @orgId
+                       AND (goa.expiresAt IS NULL OR goa.expiresAt > GETDATE())
+                    WHERE g.orgId = @orgId
+                       OR goa.goalId IS NOT NULL
+                    ORDER BY g.id
+                `);
         }
         console.log(`Goals fetched: ${goalsResult.recordset.length}`);
 
         console.log('Querying KPIs...');
         const kpisResult = await pool.request().query('SELECT * FROM KPIs');
         console.log(`KPIs fetched: ${kpisResult.recordset.length}`);
+        const goalProjectContextMap = await fetchGoalProjectContextMap(pool, req.orgId ?? null);
 
         const tagIdsParam = req.query.tagIds || '';
         const tagIds = tagIdsParam ? tagIdsParam.split(',').map(id => parseInt(id)).filter(id => !isNaN(id)) : [];
@@ -104,15 +248,25 @@ router.get('/', checkPermission(['can_view_goals', 'can_view_exec_dashboard']), 
 
         const goals = goalsResult.recordset.map(goal => {
             const stats = statsByGoal[goal.id] || { count: 0, sum: 0 };
+            const projectContext = goalProjectContextMap.get(Number(goal.id)) || {
+                totalLinkedProjectCount: 0,
+                visibleLinkedProjectCount: 0
+            };
             return {
                 id: goal.id.toString(),
                 title: goal.title,
                 description: goal.description || null,
                 type: goal.type,
                 parentId: goal.parentId ? goal.parentId.toString() : null,
+                orgId: goal.orgId ? String(goal.orgId) : null,
+                accessLevel: goal.accessLevel || 'owner',
+                hasWriteAccess: (goal.accessLevel || 'owner') === 'owner' || goal.accessLevel === 'write',
                 createdAt: goal.createdAt,
                 directProjectCount: stats.count,
                 directCompletionSum: stats.sum,
+                totalLinkedProjectCount: projectContext.totalLinkedProjectCount,
+                visibleLinkedProjectCount: projectContext.visibleLinkedProjectCount,
+                projectContextStatus: mapProjectContextStatus(projectContext),
                 kpis: kpisResult.recordset
                     .filter(k => k.goalId === goal.id)
                     .map(k => ({
@@ -132,19 +286,49 @@ router.get('/', checkPermission(['can_view_goals', 'can_view_exec_dashboard']), 
 });
 
 // Create goal
-router.post('/', checkPermission('can_create_goal'), withSharedScope, async (req, res) => {
+router.post('/', checkPermission('can_create_goal'), async (req, res) => {
     try {
         const { title, description, type, parentId } = req.body;
         if (!title || !type) {
             return res.status(400).json({ error: 'Missing required fields: title, type' });
         }
         const pool = await getPool();
+        const user = getAuthUser(req);
+        const ownerOrgId = resolveOwnedOrgId({
+            user,
+            requestedOrgId: req.body?.orgId,
+            adminOrgRequiredMessage: 'orgId is required for admin-created goals'
+        });
+        await ensureOrganizationExists(pool, ownerOrgId);
+
+        let parentGoal = null;
+        if (parentId) {
+            const parentResult = await pool.request()
+                .input('parentId', sql.Int, parseInt(parentId, 10))
+                .query('SELECT TOP 1 id, orgId, type FROM Goals WHERE id = @parentId');
+            if (parentResult.recordset.length === 0) {
+                return res.status(400).json({ error: 'Invalid parentId' });
+            }
+            parentGoal = parentResult.recordset[0];
+            if (Number(parentGoal.orgId || 0) !== ownerOrgId) {
+                return res.status(400).json({ error: 'Parent goal must belong to the same organization.' });
+            }
+        }
+
+        const hierarchyValidation = validateGoalTypePosition({
+            type,
+            parentGoal
+        });
+        if (!hierarchyValidation.valid) {
+            return res.status(400).json({ error: hierarchyValidation.error });
+        }
+
         const result = await pool.request()
             .input('title', sql.NVarChar, title)
             .input('description', sql.NVarChar(sql.MAX), description || null)
-            .input('type', sql.NVarChar, type)
+            .input('type', sql.NVarChar, hierarchyValidation.normalizedType)
             .input('parentId', sql.Int, parentId ? parseInt(parentId) : null)
-            .input('orgId', sql.Int, req.orgId)
+            .input('orgId', sql.Int, ownerOrgId)
             .query(`
                 INSERT INTO Goals (title, description, type, parentId, orgId)
                 OUTPUT INSERTED.id
@@ -157,12 +341,34 @@ router.post('/', checkPermission('can_create_goal'), withSharedScope, async (req
             entityType: 'goal',
             entityId: newId,
             entityTitle: title,
-            user: getAuthUser(req),
-            after: { title, description: description || null, type, parentId },
+            user,
+            after: {
+                title,
+                description: description || null,
+                type: hierarchyValidation.normalizedType,
+                parentId,
+                orgId: ownerOrgId
+            },
             req
         });
-        res.json({ id: newId, title, description: description || null, type, parentId, kpis: [] });
+        res.json({
+            id: newId,
+            title,
+            description: description || null,
+            type: hierarchyValidation.normalizedType,
+            parentId,
+            orgId: String(ownerOrgId),
+            accessLevel: 'owner',
+            hasWriteAccess: true,
+            totalLinkedProjectCount: 0,
+            visibleLinkedProjectCount: 0,
+            projectContextStatus: 'no-projects-linked',
+            kpis: []
+        });
     } catch (err) {
+        if (err?.message?.includes('organization') || err?.message?.includes('orgId')) {
+            return res.status(400).json({ error: err.message });
+        }
         handleError(res, 'creating goal', err);
     }
 });
@@ -172,14 +378,42 @@ router.put('/:id', checkPermission('can_edit_goal'), withSharedScope, checkGoalA
     try {
         const { title, description, type } = req.body;
         const id = parseInt(req.params.id);
+        if (!title || !type) {
+            return res.status(400).json({ error: 'Missing required fields: title, type' });
+        }
         const pool = await getPool();
-        const prev = await pool.request().input('id', sql.Int, id).query('SELECT title, description, type FROM Goals WHERE id = @id');
+        const prev = await pool.request()
+            .input('id', sql.Int, id)
+            .query('SELECT id, title, description, type, parentId FROM Goals WHERE id = @id');
+        if (prev.recordset.length === 0) {
+            return res.status(404).json({ error: 'Goal not found' });
+        }
         const beforeState = prev.recordset[0];
+
+        const parentGoal = beforeState.parentId
+            ? (await pool.request()
+                .input('parentId', sql.Int, beforeState.parentId)
+                .query('SELECT TOP 1 id, type FROM Goals WHERE id = @parentId')).recordset[0] || null
+            : null;
+
+        const childGoalsResult = await pool.request()
+            .input('id', sql.Int, id)
+            .query('SELECT id, type FROM Goals WHERE parentId = @id');
+
+        const hierarchyValidation = validateGoalTypePosition({
+            type,
+            parentGoal,
+            childGoals: childGoalsResult.recordset
+        });
+        if (!hierarchyValidation.valid) {
+            return res.status(400).json({ error: hierarchyValidation.error });
+        }
+
         await pool.request()
             .input('id', sql.Int, id)
             .input('title', sql.NVarChar, title)
             .input('description', sql.NVarChar(sql.MAX), description || null)
-            .input('type', sql.NVarChar, type)
+            .input('type', sql.NVarChar, hierarchyValidation.normalizedType)
             .query('UPDATE Goals SET title = @title, description = @description, type = @type WHERE id = @id');
 
         logAudit({
@@ -189,7 +423,7 @@ router.put('/:id', checkPermission('can_edit_goal'), withSharedScope, checkGoalA
             entityTitle: title,
             user: getAuthUser(req),
             before: beforeState,
-            after: { title, description: description || null, type },
+            after: { title, description: description || null, type: hierarchyValidation.normalizedType },
             req
         });
         res.json({ success: true });

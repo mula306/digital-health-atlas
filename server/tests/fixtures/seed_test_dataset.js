@@ -111,8 +111,8 @@ export const seedTestDataset = async () => {
             SET IDENTITY_INSERT Goals ON;
             INSERT INTO Goals (id, title, description, type, parentId, orgId)
             VALUES
-                (${FIXTURE_IDS.GOAL_1}, 'Test Goal Org1', 'Deterministic fixture goal for org1', 'org', NULL, ${FIXTURE_IDS.ORG_1}),
-                (${FIXTURE_IDS.GOAL_2}, 'Test Goal Org2', 'Deterministic fixture goal for org2', 'org', NULL, ${FIXTURE_IDS.ORG_2});
+                (${FIXTURE_IDS.GOAL_1}, 'Test Goal Org1', 'Deterministic fixture goal for org1', 'enterprise', NULL, ${FIXTURE_IDS.ORG_1}),
+                (${FIXTURE_IDS.GOAL_2}, 'Test Goal Org2', 'Deterministic fixture goal for org2', 'enterprise', NULL, ${FIXTURE_IDS.ORG_2});
             SET IDENTITY_INSERT Goals OFF;
 
             SET IDENTITY_INSERT Projects ON;
@@ -272,7 +272,8 @@ export const seedTestDataset = async () => {
             INSERT INTO GovernanceMembership (boardId, userOid, role, isActive, createdByOid)
             VALUES
                 (${FIXTURE_IDS.BOARD_1}, '${TEST_PERSONAS.governance_member.oid}', 'member', 1, '${TEST_PERSONAS.admin.oid}'),
-                (${FIXTURE_IDS.BOARD_1}, '${TEST_PERSONAS.governance_chair.oid}', 'chair', 1, '${TEST_PERSONAS.admin.oid}');
+                (${FIXTURE_IDS.BOARD_1}, '${TEST_PERSONAS.governance_chair.oid}', 'chair', 1, '${TEST_PERSONAS.admin.oid}'),
+                (${FIXTURE_IDS.BOARD_1}, '${TEST_PERSONAS.org2_intake_manager.oid}', 'member', 1, '${TEST_PERSONAS.admin.oid}');
 
             INSERT INTO GovernanceReviewParticipant (reviewId, userOid, participantRole, isEligibleVoter)
             VALUES

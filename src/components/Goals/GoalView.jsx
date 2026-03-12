@@ -7,6 +7,7 @@ import { AddGoalForm } from './AddGoalForm';
 import { FilterBar } from '../UI/FilterBar';
 import { EmptyState } from '../UI/EmptyState';
 import './Goals.css';
+import { getGoalTypeGoalLabel } from '../../../shared/goalLevels.js';
 
 const STATUS_OPTIONS = [
     { id: 'red', label: 'Red', color: '#ef4444' },
@@ -120,7 +121,7 @@ export function GoalView({ onNavigateToProjects, onNavigateToMetrics }) {
                 {filteredRootGoals.length === 0 ? (
                     <EmptyState
                         title="No goals found"
-                        message="No goals defined. Start by adding an Organization Goal."
+                        message={`No goals defined. Start by adding an ${getGoalTypeGoalLabel('enterprise')}.`}
                     />
                 ) : (
                     filteredRootGoals.map(goal => (

@@ -39,6 +39,14 @@ export const TEST_PERSONAS = Object.freeze({
         roles: ['IntakeManager'],
         orgId: 1
     }),
+    org2_intake_manager: normalizeMockPersona({
+        oid: 'test-org2-intake-manager-oid',
+        tid: 'test-tenant-id',
+        name: 'Test Org2 Intake Manager',
+        email: 'org2-intake-manager@test.local',
+        roles: ['IntakeManager'],
+        orgId: 2
+    }),
     governance_member: normalizeMockPersona({
         oid: 'test-governance-member-oid',
         tid: 'test-tenant-id',
@@ -69,4 +77,3 @@ export const getMockTestPersona = (personaKey) => {
     const normalizedKey = String(personaKey || '').trim().toLowerCase();
     return TEST_PERSONAS[normalizedKey] || null;
 };
-

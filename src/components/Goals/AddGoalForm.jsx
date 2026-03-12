@@ -1,35 +1,71 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useData } from '../../context/DataContext';
 import { useToast } from '../../context/ToastContext';
-
-// Map parent type to child type
-const NEXT_LEVEL = {
-    'org': 'div',
-    'div': 'dept',
-    'dept': 'branch',
-    'branch': 'branch' // Can't go lower than branch
-};
+import { getAllowedGoalTypes, getGoalLevelDefinition, GOAL_ROOT_TYPE } from '../../../shared/goalLevels.js';
 
 export function AddGoalForm({ onClose, parentId = null, parentType = null }) {
-    const { addGoal } = useData();
+    const { addGoal, currentUser, fetchOrganizations, hasRole } = useData();
     const toast = useToast();
+    const isAdmin = hasRole('Admin');
     const [title, setTitle] = useState('');
     const [description, setDescription] = useState('');
-    // Auto-select next level based on parent, default to 'org' if no parent
-    const [type, setType] = useState(parentType ? NEXT_LEVEL[parentType] : 'org');
+    const allowedTypeOptions = useMemo(
+        () => getAllowedGoalTypes({ parentType }),
+        [parentType]
+    );
+    const [type, setType] = useState(() => allowedTypeOptions[0] || GOAL_ROOT_TYPE);
     const [progress, setProgress] = useState(0);
+    const [organizations, setOrganizations] = useState([]);
+    const [selectedOrgId, setSelectedOrgId] = useState(currentUser?.orgId ? String(currentUser.orgId) : '');
 
-    const handleSubmit = (e) => {
+    useEffect(() => {
+        let cancelled = false;
+        async function loadOrganizations() {
+            if (!isAdmin) return;
+            try {
+                const orgs = await fetchOrganizations();
+                if (!cancelled) {
+                    setOrganizations(Array.isArray(orgs) ? orgs : []);
+                }
+            } catch (err) {
+                console.warn('Failed to load organizations for goal creation', err);
+                if (!cancelled) {
+                    setOrganizations([]);
+                }
+            }
+        }
+        loadOrganizations();
+        return () => {
+            cancelled = true;
+        };
+    }, [fetchOrganizations, isAdmin]);
+
+    const handleSubmit = async (e) => {
         e.preventDefault();
-        addGoal({
-            title,
-            description,
-            type,
-            parentId,
-            progress: parseInt(progress)
-        });
-        toast.success('Goal created successfully');
-        onClose();
+        if (isAdmin && !selectedOrgId) {
+            toast.error('Select an owning organization for this goal');
+            return;
+        }
+
+        if (!type) {
+            toast.error('This goal cannot accept additional sub-goals.');
+            return;
+        }
+
+        try {
+            await addGoal({
+                title,
+                description,
+                type,
+                parentId,
+                progress: parseInt(progress),
+                ...(isAdmin ? { orgId: selectedOrgId } : {})
+            });
+            toast.success('Goal created successfully');
+            onClose();
+        } catch (err) {
+            toast.error(err.message || 'Failed to create goal');
+        }
     };
 
 
@@ -48,14 +84,47 @@ export function AddGoalForm({ onClose, parentId = null, parentType = null }) {
             </div>
 
             <div className="form-group">
-                <label>Type</label>
-                <select value={type} onChange={e => setType(e.target.value)} className="form-select">
-                    <option value="org">Organization</option>
-                    <option value="div">Division</option>
-                    <option value="dept">Department</option>
-                    <option value="branch">Branch</option>
+                <label>Goal Level</label>
+                <select
+                    value={type}
+                    onChange={e => setType(e.target.value)}
+                    className="form-select"
+                    disabled={allowedTypeOptions.length <= 1}
+                >
+                    {allowedTypeOptions.map((option) => {
+                        const level = getGoalLevelDefinition(option);
+                        return (
+                            <option key={option} value={option}>
+                                {level?.label || option}
+                            </option>
+                        );
+                    })}
                 </select>
+                <div className="form-hint">
+                    {parentType
+                        ? `Sub-goals at this point in the cascade are created as ${getGoalLevelDefinition(type)?.goalLabel || 'goals'}.`
+                        : 'Root goals start at the Enterprise level.'}
+                </div>
             </div>
+
+            {isAdmin && (
+                <div className="form-group">
+                    <label>Owning Organization</label>
+                    <select
+                        value={selectedOrgId}
+                        onChange={(e) => setSelectedOrgId(e.target.value)}
+                        className="form-select"
+                        required
+                    >
+                        <option value="">Select organization</option>
+                        {organizations.map((organization) => (
+                            <option key={organization.id} value={organization.id}>
+                                {organization.name}
+                            </option>
+                        ))}
+                    </select>
+                </div>
+            )}
 
             <div className="form-group">
                 <label>Description</label>

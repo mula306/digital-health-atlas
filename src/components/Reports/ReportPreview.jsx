@@ -5,6 +5,10 @@ import { StatusReportView } from '../StatusReport/StatusReportView';
 import { useData } from '../../context/DataContext';
 
 import { API_BASE } from '../../apiClient';
+import { getGoalAtLevel } from '../../utils/goalHierarchy';
+import { GOAL_LEVELS } from '../../../shared/goalLevels.js';
+
+const PORTFOLIO_LEVEL_CODE = GOAL_LEVELS[1].code;
 
 export function ReportPreview({ selectedProjectIds, allProjects = [] }) {
     const { projects, goals, getLatestStatusReport, authFetch } = useData();
@@ -76,41 +80,24 @@ export function ReportPreview({ selectedProjectIds, allProjects = [] }) {
         return () => { isMounted = false; };
     }, [reportProjects, fullReports, authFetch]); // dependency on reportProjects encompasses selectedProjectIds changes
 
-    // Helper: Find the Division level (second level in hierarchy, child of root organization) for a project
-    const getDivision = (goalId) => {
-        let current = goals.find(g => g.id === goalId);
-        if (!current) return null;
-
-        // Build the path from current goal up to root
-        const path = [current];
-        while (current && current.parentId) {
-            const parent = goals.find(g => g.id === current.parentId);
-            if (!parent) break;
-            path.unshift(parent);
-            current = parent;
-        }
-
-        // path[0] is Organization (root), path[1] is Division
-        // Return the Division level (index 1), or the project's direct goal if hierarchy is shallow
-        return path.length >= 2 ? path[1] : path[0];
-    };
-
-    // Group projects by Division (second level in hierarchy)
+    // Group projects by the portfolio level, or by the deepest linked goal if the hierarchy is shallow.
     const groupedProjects = {};
 
     reportProjects.forEach(p => {
-        const division = getDivision(p.goalId || (p.goalIds && p.goalIds[0]) || null);
-        const groupName = division ? division.title : 'Uncategorized';
+        const portfolio = getGoalAtLevel(goals, p.goalId || (p.goalIds && p.goalIds[0]) || null, PORTFOLIO_LEVEL_CODE, {
+            fallbackToDeepest: true
+        });
+        const groupName = portfolio ? portfolio.title : 'Uncategorized';
         if (!groupedProjects[groupName]) {
             groupedProjects[groupName] = {
-                division: division,
+                portfolio,
                 projects: []
             };
         }
         groupedProjects[groupName].projects.push(p);
     });
 
-    // Sort groups alphabetically by department name
+    // Sort groups alphabetically by their grouping label.
     const sortedGroupEntries = Object.entries(groupedProjects).sort((a, b) =>
         a[0].localeCompare(b[0])
     );

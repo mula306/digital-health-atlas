@@ -93,21 +93,21 @@ const ensureGoals = async (pool, orgId, goalsHaveOrgId) => {
         return result.recordset[0].id;
     };
 
-    const rootGoalId = await insertGoal({ title: 'Health System Transformation', type: 'org' });
-    const div1 = await insertGoal({
+    const rootGoalId = await insertGoal({ title: 'Health System Transformation', type: 'enterprise' });
+    const portfolio1 = await insertGoal({
         title: 'Digital Front Door',
-        type: 'div',
+        type: 'portfolio',
         parentId: rootGoalId
     });
-    const div2 = await insertGoal({
+    const portfolio2 = await insertGoal({
         title: 'Clinical Platform Modernization',
-        type: 'div',
+        type: 'portfolio',
         parentId: rootGoalId
     });
-    await insertGoal({ title: 'Virtual Care Access', type: 'dept', parentId: div1 });
-    await insertGoal({ title: 'Scheduling and Referrals', type: 'dept', parentId: div1 });
-    await insertGoal({ title: 'EHR Optimization', type: 'dept', parentId: div2 });
-    await insertGoal({ title: 'Data and Reporting', type: 'dept', parentId: div2 });
+    await insertGoal({ title: 'Virtual Care Access', type: 'service', parentId: portfolio1 });
+    await insertGoal({ title: 'Scheduling and Referrals', type: 'service', parentId: portfolio1 });
+    await insertGoal({ title: 'EHR Optimization', type: 'service', parentId: portfolio2 });
+    await insertGoal({ title: 'Data and Reporting', type: 'service', parentId: portfolio2 });
 
     const seededGoalsResult = await pool.request().query('SELECT id FROM Goals');
     const seededGoalIds = seededGoalsResult.recordset.map((row) => row.id);
