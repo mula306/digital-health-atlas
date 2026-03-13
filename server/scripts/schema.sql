@@ -1,6 +1,8 @@
-﻿-- Digital Health Atlas Canonical SQL Server Schema
+-- Digital Health Atlas Canonical SQL Server Schema
 -- Fresh installs should run this via `npm run setup-db` (or `npm run setup-db:full` for RBAC seed data).
--- Includes governance phases 0-3, multi-org sharing, watchlists, task tracking, wave2 session/SLA, and wave3 benefits/capacity features.
+-- Includes the Enterprise -> Portfolio -> Service -> Team goal cascade, org-centric ownership,
+-- governance phases 0-3, multi-org sharing, watchlists, task tracking, session/SLA, and
+-- benefits/capacity features.
 
 -- Create database
 IF NOT EXISTS (SELECT * FROM sys.databases WHERE name = 'DHAtlas')
@@ -12,7 +14,7 @@ GO
 USE DHAtlas;
 GO
 
--- Goals table (hierarchical with Enterprise -> Portfolio -> Service -> Team)
+-- Goals table (goal cascade hierarchy only; ownership is stored separately in Goals.orgId later in this script)
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'Goals')
 CREATE TABLE Goals (
     id INT IDENTITY(1,1) PRIMARY KEY,
@@ -43,6 +45,7 @@ BEGIN
 END
 GO
 
+-- Convert legacy goal taxonomy values in-place for existing databases.
 UPDATE Goals
 SET type = CASE type
     WHEN 'org' THEN 'enterprise'
@@ -72,7 +75,8 @@ CREATE TABLE KPIs (
 );
 GO
 
--- Projects (linked to Goals)
+-- Projects (legacy single-goal column kept for compatibility; canonical multi-goal links live in ProjectGoals.
+-- Ownership is stored separately in Projects.orgId later in this script.)
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'Projects')
 CREATE TABLE Projects (
     id INT IDENTITY(1,1) PRIMARY KEY,
@@ -236,6 +240,7 @@ GO
 --   2. Project Name     -> { systemKey: 'project_name', type: 'text', required: true }
 --   3. Description      -> { systemKey: 'project_description', type: 'textarea', required: true }
 -- Additional custom fields may follow after these locked system fields.
+-- Intake forms are org-owned via IntakeForms.orgId later in this script.
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'IntakeForms')
 CREATE TABLE IntakeForms (
     id INT IDENTITY(1,1) PRIMARY KEY,
@@ -249,6 +254,9 @@ CREATE TABLE IntakeForms (
 GO
 
 -- Intake Submissions
+-- orgId stores the submission home organization (normally the submitter's org).
+-- submitterId / submitterName / submitterEmail preserve requester identity for audit and conversion.
+-- Server-side conversion writes convertedProjectId and keeps the converted project's owner aligned to submission org.
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'IntakeSubmissions')
 CREATE TABLE IntakeSubmissions (
     id INT IDENTITY(1,1) PRIMARY KEY,
@@ -401,6 +409,7 @@ END
 GO
 
 -- Governance boards
+-- orgId is added later in this script to store the board home org used for board administration and capacity analytics.
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'GovernanceBoard')
 CREATE TABLE GovernanceBoard (
     id INT IDENTITY(1,1) PRIMARY KEY,
@@ -1076,7 +1085,10 @@ CREATE TABLE Organizations (
 );
 GO
 
--- Multi-org columns and relationships
+-- Multi-org ownership columns and relationships.
+-- Application behavior expects new goals, projects, intake forms, intake submissions, and governance boards
+-- to carry a single home organization. Existing upgraded databases can audit/fill legacy null ownership using
+-- the backfill_org_ownership.js script before enforcing org-scoped workflows everywhere.
 IF COL_LENGTH('Users', 'orgId') IS NULL
 BEGIN
     ALTER TABLE Users ADD orgId INT NULL;
@@ -1217,7 +1229,7 @@ BEGIN
 END
 GO
 
--- Project â†” Tag junction
+-- Project <-> Tag junction
 IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'ProjectTags')
 BEGIN
     CREATE TABLE ProjectTags (
@@ -1229,7 +1241,9 @@ BEGIN
 END
 GO
 
--- Cross-org sharing for projects
+-- Cross-org sharing for projects.
+-- Ownership remains on Projects.orgId; ProjectOrgAccess stores explicit recipient-org exception access only.
+-- Application logic may auto-share linked goals read-only to preserve context for recipient orgs.
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'ProjectOrgAccess')
 CREATE TABLE ProjectOrgAccess (
     projectId   INT NOT NULL,
@@ -1252,7 +1266,8 @@ BEGIN
 END
 GO
 
--- Cross-org sharing for goals
+-- Cross-org sharing for goals.
+-- Goal sharing governs goal-tree and KPI visibility only; it does not implicitly share linked projects.
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'GoalOrgAccess')
 CREATE TABLE GoalOrgAccess (
     goalId       INT NOT NULL,
@@ -1303,7 +1318,9 @@ CREATE TABLE OrgSharingRequest (
 );
 GO
 
--- Multi-goal associations
+-- Canonical project-to-goal associations.
+-- Projects.goalId is retained for backwards compatibility, while ProjectGoals supports multi-goal linkage
+-- used by intake conversion and cross-org context sharing.
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'ProjectGoals')
 BEGIN
     CREATE TABLE ProjectGoals (

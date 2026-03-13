@@ -3,10 +3,18 @@
 //   node scripts/setup_db.js
 //   npm run setup-db
 //
+// Existing upgraded environments may also need:
+//   npm run backfill:org-ownership
+//   npm run backfill:org-ownership:apply
+//
 // Environment resolution:
 // - reads DB_* values from the current process environment
 // - also loads `.env` via `server/db.js` (`dotenv/config`) on each invocation
 // - `server/.env` is the expected local source for repeatable setup-db runs
+// - canonical schema setup also converts legacy goal type values
+//   (`org/div/dept/branch` -> `enterprise/portfolio/service/team`)
+// - org ownership backfill intentionally remains a separate step so existing environments can
+//   review an exception report before any legacy null ownership is changed
 
 import path from 'path';
 import { fileURLToPath } from 'url';

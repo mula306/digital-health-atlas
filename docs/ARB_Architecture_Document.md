@@ -1,7 +1,7 @@
 # Digital Health Atlas - Architecture Review Board Document
 
-**Document Version:** 2.0  
-**Review Date:** March 9, 2026  
+**Document Version:** 2.1
+**Review Date:** March 13, 2026
 **Author:** Digital Health IT Portfolio Management  
 **Classification:** Internal - Architecture Review Board
 
@@ -42,7 +42,7 @@ Digital Health Atlas has evolved from a portfolio tracking tool into an end-to-e
 - **Business fit:** Strong. Core operational workflows are now integrated across intake, governance, projects, and reporting.
 - **Security posture:** Good for current scale. Entra-based authentication and DB-driven RBAC are implemented with route-level enforcement.
 - **Data and workflow traceability:** Good. Governance decisions, votes, sharing requests, and audit trails are persisted.
-- **Operational maturity:** Moderate. Key gaps remain in production-grade observability, scheduler high availability controls, and API contract governance.
+- **Operational maturity:** Moderate to strong. Phase-gated CI, deterministic mock-auth test paths, and backend/frontend/E2E coverage are now in place. Key gaps remain in production-grade observability, scheduler high availability controls, and API contract governance.
 
 ### ARB conclusion
 
@@ -52,7 +52,7 @@ The platform is architecturally sound for current adoption and can support near-
 
 ## 2. Review Scope and Method
 
-This review was completed against the current repository state as of March 9, 2026 and included:
+This review was completed against the current repository state as of March 13, 2026 and included:
 
 - Frontend architecture and workflow implementations (`src/components/*`, `src/context/*`, `src/utils/*`)
 - Backend service and route architecture (`server/index.js`, `server/routes/*`, `server/utils/*`)
@@ -74,14 +74,14 @@ Review objectives:
 
 | Capability Domain | Current Implementation Status | Notes |
 |---|---|---|
-| Strategy and portfolio alignment | Implemented | Goal hierarchy, KPI linkage, goal-to-project relationships |
+| Strategy and portfolio alignment | Implemented | Enterprise/Portfolio/Service/Team goal cascade, KPI linkage, goal-to-project relationships |
 | Delivery execution | Implemented | Kanban/task management, assignment, checklist subtasks, status reporting |
 | Intake workflow | Implemented | Guided 4-stage intake flow with stage readiness, KPI strip, and normalized required system fields on forms |
 | Governance workflow | Implemented | Board/member/criteria config, voting, decisions, session mode, queue filters |
-| Intake-to-execution handoff | Implemented | Governance-aware conversion with kickoff task blueprints and explicit Project Name / Description mapping |
+| Intake-to-execution handoff | Implemented | Governance-aware server-side conversion with kickoff task blueprints, explicit Project Name / Description mapping, and submission-org project ownership |
 | Executive oversight | Implemented | Executive Summary view, risk signals, report export |
 | Executive reporting automation | Implemented | Scheduled/manual executive packs, run history, due-run scheduler |
-| Multi-organization collaboration | Implemented | Project/goal sharing, request approvals, expiry and attestation |
+| Multi-organization collaboration | Implemented | Org-centric ownership, project/goal sharing, request approvals, expiry, attestation, and admin ownership transfer |
 | Personal productivity | Implemented | My Work Hub with deep links into projects/intake/governance |
 
 ### Value stream architecture (target-state in operation)
@@ -197,7 +197,7 @@ This is materially improved over older dual-check drift patterns, but should be 
 
 ### 6.1 Canonical schema status
 
-The canonical schema (`server/scripts/schema.sql`) contains the current feature set and includes **33 tables** across portfolio, governance, intake, reporting, sharing, and admin domains.
+The canonical schema (`server/scripts/schema.sql`) contains the current feature set across portfolio, governance, intake, reporting, sharing, and admin domains.
 
 ### 6.2 Domain-oriented data model
 
@@ -214,7 +214,10 @@ The canonical schema (`server/scripts/schema.sql`) contains the current feature 
 
 - **Fresh install:** `setup-db:full` applies canonical schema + seeds permissions.
 - **Operational model:** schema-first bootstrap only; migrations are not required for environment setup.
+- **Goal taxonomy:** canonical schema converts legacy goal types (`org/div/dept/branch`) to `enterprise/portfolio/service/team` in-place on rerun.
 - **Intake form contract:** `IntakeForms.fields` is JSON-backed and now reserves three required system fields (`requester_name`, `project_name`, `project_description`) to stabilize requester prefill and intake-to-project conversion semantics.
+- **Ownership model:** new goal, project, intake form, intake submission, and governance board rows are application-scoped to a single home org; older null-org records can be audited/backfilled with `server/scripts/backfill_org_ownership.js`.
+- **Conversion model:** intake-to-project conversion is server-side and preserves submission-org ownership while adding read-only cross-org goal context shares where needed.
 - **Setup behavior:** `setup-db` scripts re-read `DB_*` configuration from `server/.env` or the shell environment on every invocation; they are intentionally stateless.
 
 ### 6.4 Data governance observations
@@ -225,6 +228,7 @@ Strengths:
 - Governance and sharing auditability.
 - Expiry-aware org-sharing controls.
 - Stable intake form semantics through explicit system-field metadata rather than positional fallback rules.
+- Clear separation between home-org ownership and explicit sharing exceptions for goals/projects.
 
 Gaps to address:
 
@@ -242,6 +246,7 @@ Gaps to address:
 - Tenant-specific enforcement (`AZURE_TENANT_ID` not `common`).
 - Audience and issuer validation are enforced.
 - First-login user auto-provisioning into `Users` table.
+- Mock auth remains test-only and is blocked in production mode.
 
 ### 7.2 Authorization
 
@@ -349,21 +354,26 @@ Primary operational architecture risk is scheduler duplication in multi-instance
 ### Current baseline
 
 - Frontend linting (`npm run lint`)
-- Backend contract tests (`npm run test:contracts`)
+- Backend phase suites (`npm run test:phase-a`, `npm run test:phase-b`)
+- Frontend unit/integration suites (`npm run test:ui`)
+- Frontend coverage gate (`npm run test:ui:coverage`)
+- Playwright smoke and critical suites (`npm run test:e2e:smoke`, `npm run test:e2e:critical`)
 - RBAC catalog checks (`npm run lint:rbac`)
+- GitHub Actions phase gates for blocking/advisory enforcement
 
 ### Gaps
 
-- No comprehensive E2E smoke suite across critical business flows.
 - No formal SLOs/SLIs documented (availability, p95 latency, workflow completion time).
 - Limited documented incident response playbook.
+- Coverage thresholds are intentionally conservative today and should continue to ratchet upward as the suite matures.
+- Quarantine governance exists, but flaky-test triage discipline still needs operationalization.
 
 ### Recommended quality actions
 
-- Add E2E smoke tests for:
-  - intake submit -> governance vote -> decision -> conversion,
-  - sharing request lifecycle,
-  - executive pack create/run flows.
+- Expand automated coverage depth for:
+  - org ownership transfer and recipient-org visibility edge cases,
+  - intake conversion with multi-org goal linkage,
+  - executive pack scope and scheduler lifecycle edge cases.
 - Define and publish SLOs for API and workflow processing.
 
 ---
@@ -375,10 +385,11 @@ Primary operational architecture risk is scheduler duplication in multi-instance
 | Area | Finding |
 |---|---|
 | Workflow architecture | Intake, governance, and execution are now connected end-to-end |
-| Data model | Canonical schema reflects wave2/wave3 capabilities and traceability needs |
+| Data model | Canonical schema reflects goal-cascade rename, org-centric ownership, sharing semantics, and traceability needs |
 | Access model | Entra + DB RBAC with role normalization and seeded defaults is mature |
 | UX architecture | Staged workflow patterns and filter consistency improved usability |
-| Multi-org control | Sharing requests + expiry + attestation strengthen governance |
+| Multi-org control | Home-org ownership plus explicit sharing exceptions keeps visibility controllable without forcing blanket sharing |
+| Test posture | Phase-gated backend/frontend/E2E suite materially reduces cross-domain regression risk |
 
 ### 12.2 Priority recommendations
 
@@ -387,7 +398,7 @@ Primary operational architecture risk is scheduler duplication in multi-instance
 | P1 | Externalize scheduler coordination (single-run guarantee) | Prevent duplicate executive pack runs in scaled API deployments |
 | P1 | Publish OpenAPI contracts + schema validation middleware | Reduce drift, improve integration confidence, support contract governance |
 | P1 | Add centralized observability (structured logs, trace IDs, metrics dashboards) | Required for production troubleshooting and ARB auditability |
-| P1 | Add E2E smoke automation for core cross-domain flows | Protect release quality across intake-governance-project lifecycle |
+| P2 | Publish a concise ownership/sharing reference model for admins and product owners | Reduces confusion between org ownership, goal cascade levels, and explicit sharing behavior |
 | P2 | Define data retention/classification policies by table | Required for compliance, storage management, and legal defensibility |
 | P2 | Formalize effective-permission API contract | Further reduce UI/API authorization drift risk |
 | P3 | Evaluate event-driven integration for notifications and downstream consumers | Improves extensibility as ecosystem integration needs grow |
@@ -401,6 +412,7 @@ Primary operational architecture risk is scheduler duplication in multi-instance
 - **Wave 1:** My Work Hub, intake-to-execution blueprint, permission convergence improvements, URL/state routing, baseline contract testing.
 - **Wave 2:** SLA aging policy, governance session mode, executive pack automation, sharing request workflow with expiry.
 - **Wave 3:** Capacity-aware governance inputs, intake effort estimates, benefits realization loop, executive pack org scoping, predictive risk surfaces.
+- **Wave 4:** Org-centric ownership normalization, goal taxonomy rename, server-side intake conversion, recipient-org sharing UX cleanup, and phase-gated automated test program.
 
 ### Recommended next architecture wave
 
@@ -420,8 +432,11 @@ Primary operational architecture risk is scheduler duplication in multi-instance
 cd server
 npm run setup-db:full
 
-# Contract tests
-npm run test:contracts
+# Existing upgraded data ownership audit
+npm run backfill:org-ownership
+
+# Phase-gated validation
+npm run test:phase-b
 
 # RBAC catalog consistency
 npm run lint:rbac
@@ -439,4 +454,4 @@ npm run lint:rbac
 
 ---
 
-*End of ARB Architecture Review (Current State, March 2026)*
+*End of ARB Architecture Review (Current State, March 13, 2026)*

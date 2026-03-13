@@ -6,7 +6,7 @@ Digital Health Atlas is an intake, governance, and portfolio execution platform 
 
 ### 1. Strategy to execution portfolio management
 
-- Hierarchical goals (organization, division, department, branch) with KPI tracking.
+- Hierarchical goals (`Enterprise -> Portfolio -> Service -> Team`) with KPI tracking.
 - Projects linked to one or more goals, with hierarchy-aware filtering.
 - Project workspace with card and table list modes, watchlist support, and detailed delivery board views.
 - Task tracking with assignees, priorities, blockers, and checklist items.
@@ -23,7 +23,7 @@ Digital Health Atlas is an intake, governance, and portfolio execution platform 
 - Governance routing with structured reason templates (apply/skip governance) and validation.
 - Governance queue with server-backed pagination, board/status/decision filters, `My pending votes`, and `Needs chair decision`.
 - Voting and decision UX gated by true review state (eligible voter checks, deadline checks, quorum/chair rules, clear blocker text).
-- Intake-to-execution conversion blueprints that create kickoff tasks and preserve governance context on project creation.
+- Server-side intake-to-execution conversion that creates kickoff tasks, preserves governance context, and assigns converted project ownership to the submission organization.
 
 ### 3. Governance administration and operations
 
@@ -51,9 +51,11 @@ Digital Health Atlas is an intake, governance, and portfolio execution platform 
 ### 5. Multi-organization collaboration and sharing governance
 
 - Organization administration aligned to a step-based workflow (`Organizations`, `Members`, `Sharing`).
-- Project and goal sharing across organizations.
+- Org-centric ownership for goals, projects, intake forms, intake submissions, and governance boards.
+- Project and goal sharing across organizations with recipient-org focused admin UX.
 - Sharing request workflow with expiry dates, owner attestation, approve/reject/revoke actions.
 - Expiry-aware shared access enforcement for project and goal access.
+- Admin ownership transfer for projects without changing the underlying sharing model.
 
 ### 6. Personal productivity (My Work Hub)
 
@@ -101,8 +103,22 @@ Digital Health Atlas is an intake, governance, and portfolio execution platform 
 
 - Canonical schema: `server/scripts/schema.sql`
 - Fresh installs use canonical schema only; migration scripts are not required
-- Included feature tables cover governance phases, multi-org sharing, project watchlist, task tracking, wave2, and wave3 additions
+- Included feature tables cover the goal cascade taxonomy rename, org-centric ownership, server-side intake conversion, governance phases, multi-org sharing, project watchlist, task tracking, and later wave additions
 - `IntakeForms.fields` is a JSON contract, not a separate relational table. It now carries optional `systemKey` and `locked` metadata for required system fields.
+- `Projects.goalId` remains for backwards compatibility, while `ProjectGoals` is the canonical multi-goal association table used by modern project and conversion flows.
+
+### Ownership and sharing model
+
+- Each goal, project, intake form, intake submission, and governance board has one home organization.
+- Non-admin created goals/projects/forms inherit the creator's org; admin-created org-bound records require an explicit `orgId`.
+- Converted intake projects inherit the submission org, not the converter's org.
+- Project visibility follows `Projects.orgId` plus `ProjectOrgAccess`.
+- Goal and KPI visibility follows `Goals.orgId` plus `GoalOrgAccess`.
+- Sharing a project may auto-share linked goals as read-only context when needed.
+- Sharing a goal does not implicitly share linked projects.
+- Existing upgraded databases with legacy null ownership can be audited and backfilled with:
+  - `cd server && npm run backfill:org-ownership`
+  - `cd server && npm run backfill:org-ownership:apply`
 
 ### Quality baseline
 
@@ -211,12 +227,17 @@ npm run setup-db:full
 - waits for SQL readiness
 - creates database if missing
 - applies canonical `schema.sql`
+- converts legacy goal type values in-place (org/div/dept/branch -> enterprise/portfolio/service/team) when rerun against an existing database
 - seeds default RBAC role-permission entries
 
 Operational note:
 
 - The setup scripts are stateless and start a fresh Node process each run, so they re-read `server/.env` each time by design.
 - That is expected behavior, not a one-time bootstrap cache.
+- If this is an upgraded environment with older null `orgId` ownership data, run the backfill script after setup so the app can enforce org-scoped workflows consistently:
+  - `cd server && npm run backfill:org-ownership`
+  - review the generated report
+  - `cd server && npm run backfill:org-ownership:apply` when you are comfortable applying the unambiguous fixes
 
 This command is idempotent and safe to re-run.
 
@@ -226,6 +247,13 @@ This command is idempotent and safe to re-run.
 cd server
 npm run seed:faker
 ```
+
+Faker seed notes:
+
+- ensures at least two active organizations exist
+- creates a distinct `Enterprise -> Portfolio -> Service -> Team` goal cascade per org
+- associates seeded projects to the org that owns the linked goal
+- avoids assigning seeded projects to the top `Enterprise` level
 
 Optional controls:
 
@@ -292,6 +320,8 @@ npm run db:down
 cd server
 npm run setup-db
 npm run setup-db:full
+npm run backfill:org-ownership
+npm run backfill:org-ownership:apply
 npm run seed:permissions
 npm run seed:test-fixtures
 npm run seed:faker
