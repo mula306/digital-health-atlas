@@ -1,6 +1,6 @@
 import express from 'express';
 import { getPool, sql } from '../db.js';
-import { checkPermission, getAuthUser, hasPermission } from '../middleware/authMiddleware.js';
+import { checkPermission, getAuthUser } from '../middleware/authMiddleware.js';
 import { withSharedScope } from '../middleware/orgScope.js';
 import { handleError } from '../utils/errorHandler.js';
 import { logAudit } from '../utils/auditLogger.js';
@@ -16,8 +16,9 @@ let schedulerRunning = false;
 let lastSchedulerSweepAt = null;
 let lastSchedulerResult = null;
 
-const canManageAllPacks = async (user) => {
-    return hasPermission(user, ['can_run_exec_pack_scheduler']);
+const canManageAllPacks = (user) => {
+    const roles = Array.isArray(user?.roles) ? user.roles : [];
+    return roles.includes('Admin');
 };
 
 const parseJsonSafe = (raw, fallback) => {
@@ -525,7 +526,7 @@ const computePackSummary = async ({ pool, orgId, viewerOid, pack, lastRunAt }) =
 };
 
 // List configured executive packs
-router.get('/packs', checkPermission(['can_view_reports', 'can_view_exec_dashboard']), async (req, res) => {
+router.get('/packs', checkPermission(['can_view_exec_packs', 'can_view_exec_dashboard']), async (req, res) => {
     try {
         const user = getAuthUser(req);
         const pool = await getPool();
@@ -564,7 +565,7 @@ router.get('/packs', checkPermission(['can_view_reports', 'can_view_exec_dashboa
 });
 
 // Create a new executive pack
-router.post('/packs', checkPermission(['can_create_reports', 'can_view_exec_dashboard']), async (req, res) => {
+router.post('/packs', checkPermission(['can_manage_exec_packs', 'can_view_exec_dashboard']), async (req, res) => {
     try {
         const user = getAuthUser(req);
         const payload = normalizePackPayload(req.body || {});
@@ -638,7 +639,7 @@ router.post('/packs', checkPermission(['can_create_reports', 'can_view_exec_dash
 });
 
 // Update an existing pack
-router.put('/packs/:id', checkPermission(['can_create_reports', 'can_view_exec_dashboard']), async (req, res) => {
+router.put('/packs/:id', checkPermission(['can_manage_exec_packs', 'can_view_exec_dashboard']), async (req, res) => {
     try {
         const packId = Number.parseInt(req.params.id, 10);
         if (Number.isNaN(packId)) return res.status(400).json({ error: 'Invalid pack id' });
@@ -777,7 +778,7 @@ router.put('/packs/:id', checkPermission(['can_create_reports', 'can_view_exec_d
 });
 
 // List run history for a pack
-router.get('/packs/:id/runs', checkPermission(['can_view_reports', 'can_view_exec_dashboard']), async (req, res) => {
+router.get('/packs/:id/runs', checkPermission(['can_view_exec_packs', 'can_view_exec_dashboard']), async (req, res) => {
     try {
         const packId = Number.parseInt(req.params.id, 10);
         if (Number.isNaN(packId)) return res.status(400).json({ error: 'Invalid pack id' });
@@ -819,7 +820,7 @@ router.get('/packs/:id/runs', checkPermission(['can_view_reports', 'can_view_exe
 });
 
 // Run a pack immediately
-router.post('/packs/:id/run-now', checkPermission(['can_create_reports', 'can_view_exec_dashboard']), withSharedScope, async (req, res) => {
+router.post('/packs/:id/run-now', checkPermission(['can_manage_exec_packs', 'can_view_exec_dashboard']), withSharedScope, async (req, res) => {
     try {
         const packId = Number.parseInt(req.params.id, 10);
         if (Number.isNaN(packId)) return res.status(400).json({ error: 'Invalid pack id' });
@@ -877,7 +878,7 @@ router.post('/packs/:id/run-now', checkPermission(['can_create_reports', 'can_vi
 });
 
 // Scheduler status for automated executive packs
-router.get('/scheduler/status', checkPermission(['can_view_reports', 'can_view_exec_dashboard']), async (_req, res) => {
+router.get('/scheduler/status', checkPermission(['can_view_exec_packs', 'can_view_exec_dashboard']), async (_req, res) => {
     try {
         const status = await getExecutivePackSchedulerStatus();
         res.json(status);

@@ -65,6 +65,22 @@
     gap: 1rem;
 }
 
+.form-hint {
+    display: block;
+    margin-top: 0.55rem;
+    font-size: 0.78rem;
+    line-height: 1.45;
+    color: var(--text-tertiary);
+}
+
+.form-hint-warning {
+    padding: 0.65rem 0.8rem;
+    border: 1px solid color-mix(in srgb, var(--accent-primary) 18%, var(--border-color));
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--accent-primary) 7%, var(--bg-secondary));
+    color: var(--text-secondary);
+}
+
 /* Range slider polish */
 .form-range {
     width: 100%;

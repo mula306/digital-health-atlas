@@ -43,6 +43,21 @@ test('bulk share projects auto-shares linked goals for context', async () => {
     assert.ok(projectEntry);
     assert.equal(projectEntry.goalContextMissing, false);
     assert.equal(projectEntry.goalContextStatus, 'complete');
+    assert.equal(Number(projectEntry.ownerOrgId), TEST_FIXTURE_IDS.ORG_1);
+    assert.equal(projectEntry.ownerOrgName, 'Test Org One');
+
+    const pickerResponse = await admin.get('/api/admin/sharing-picker-data');
+    assert.equal(pickerResponse.status, 200);
+    const pickerProject = pickerResponse.body?.projects?.find(
+        (item) => Number.parseInt(item.id, 10) === TEST_FIXTURE_IDS.PROJECT_1
+    );
+    const pickerGoal = pickerResponse.body?.goals?.find(
+        (item) => Number.parseInt(item.id, 10) === TEST_FIXTURE_IDS.GOAL_1
+    );
+    assert.equal(Number(pickerProject?.ownerOrgId), TEST_FIXTURE_IDS.ORG_1);
+    assert.equal(pickerProject?.ownerOrgName, 'Test Org One');
+    assert.equal(Number(pickerGoal?.ownerOrgId), TEST_FIXTURE_IDS.ORG_1);
+    assert.equal(pickerGoal?.ownerOrgName, 'Test Org One');
 });
 
 test('bulk unshare removes explicit project access entry', async () => {
@@ -60,4 +75,3 @@ test('non-admin persona without permission cannot manage sharing summary', async
     const response = await org2Editor.get(`/api/admin/organizations/${TEST_FIXTURE_IDS.ORG_2}/sharing-summary`);
     assert.equal(response.status, 403);
 });
-

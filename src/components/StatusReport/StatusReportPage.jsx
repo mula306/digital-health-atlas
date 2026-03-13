@@ -12,7 +12,8 @@ import './StatusReport.css';
 import { API_BASE } from '../../apiClient';
 
 export function StatusReportPage({ project, onClose: _onClose }) {
-    const { authFetch } = useData();
+    const { authFetch, hasPermission } = useData();
+    const canCreateStatusReports = hasPermission('can_create_status_reports');
     const [reports, setReports] = useState([]);
     const [loading, setLoading] = useState(true);
     const [activeTab, setActiveTab] = useState('current'); // 'current', 'history', 'edit'
@@ -86,9 +87,11 @@ export function StatusReportPage({ project, onClose: _onClose }) {
                 >
                     <History size={16} /> History ({reports.length})
                 </button>
-                <button className="btn-primary btn-new-report" onClick={handleCreateNew}>
-                    <Plus size={16} /> New Report
-                </button>
+                {canCreateStatusReports && (
+                    <button className="btn-primary btn-new-report" onClick={handleCreateNew}>
+                        <Plus size={16} /> New Report
+                    </button>
+                )}
             </div>
 
             {loading ? (
@@ -109,9 +112,11 @@ export function StatusReportPage({ project, onClose: _onClose }) {
                                 <div className="empty-reports">
                                     <FileText size={48} />
                                     <p>No status reports yet. Create your first report to establish a governance baseline.</p>
-                                    <button className="btn-primary" onClick={handleCreateNew}>
-                                        <Plus size={16} /> Create First Report
-                                    </button>
+                                    {canCreateStatusReports && (
+                                        <button className="btn-primary" onClick={handleCreateNew}>
+                                            <Plus size={16} /> Create First Report
+                                        </button>
+                                    )}
                                 </div>
                             )}
                         </>
@@ -143,7 +148,7 @@ export function StatusReportPage({ project, onClose: _onClose }) {
                     )}
                 </div>
             )}
-            {activeTab === 'edit' && (
+            {activeTab === 'edit' && canCreateStatusReports && (
                 <Modal
                     isOpen={true}
                     onClose={() => setActiveTab(latestReport ? 'current' : 'current')}

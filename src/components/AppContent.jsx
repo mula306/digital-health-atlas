@@ -234,7 +234,7 @@ export function AppContent() {
         if (hasPermission('can_view_metrics')) views.push('metrics');
         if (hasPermission('can_view_dashboard')) views.push('dashboard');
         if (hasPermission('can_view_projects')) views.push('projects');
-        if (hasPermission('can_view_reports')) views.push('reports');
+        if (hasPermission('can_view_exec_packs')) views.push('reports');
         if (canAccessIntakeWorkspace) views.push('intake');
         if (canAccessAdminPanel) views.push('admin');
         return views;
@@ -453,7 +453,7 @@ export function AppContent() {
                                 />
                             ) : <div className="p-4">Access Denied</div>;
                         case 'reports':
-                            return hasPermission('can_view_reports') ?
+                            return hasPermission('can_view_exec_packs') ?
                                 <ReportsView /> :
                                 <div className="p-4">Access Denied</div>;
                         case 'metrics':

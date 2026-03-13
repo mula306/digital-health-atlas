@@ -64,7 +64,9 @@ export function ReportsView() {
         isActive: true,
         filters: { ...DEFAULT_PACK_FILTERS }
     });
-    const canRunDuePacks = hasPermission('can_run_exec_pack_scheduler');
+    const canViewReportsModule = hasPermission('can_view_exec_packs') || hasPermission('can_view_exec_dashboard');
+    const canManagePacks = hasPermission('can_manage_exec_packs');
+    const canRunDuePacks = canViewReportsModule && hasPermission('can_run_exec_pack_scheduler');
 
     const availableGoals = useMemo(() => {
         const sourceGoals = Array.isArray(goals) ? goals : [];
@@ -369,6 +371,10 @@ export function ReportsView() {
     };
 
     const handleRunDuePacks = async () => {
+        if (!canRunDuePacks) {
+            toast.error('You do not have permission to run due executive packs.');
+            return;
+        }
         try {
             setRunningDue(true);
             const result = await runDueExecutivePacks(20);
@@ -427,19 +433,21 @@ export function ReportsView() {
                         </button>
                         {canRunDuePacks && (
                             <button className="btn-secondary" onClick={handleRunDuePacks} disabled={runningDue}>
-                                {runningDue ? 'Running Due...' : 'Run Due Packs'}
+                                {runningDue ? 'Running Due Executive Packs...' : 'Run Due Executive Packs'}
                             </button>
                         )}
                         <button className="btn-secondary" onClick={loadExecutivePacks} disabled={loadingPacks}>
                             <RefreshCw size={14} /> {loadingPacks ? 'Refreshing...' : 'Refresh'}
                         </button>
-                        <button className="btn-primary" onClick={startCreatePack}>
-                            New Pack
-                        </button>
+                        {canManagePacks && (
+                            <button className="btn-primary" onClick={startCreatePack}>
+                                New Pack
+                            </button>
+                        )}
                     </div>
                 </div>
 
-                {showPackEditor && (
+                {showPackEditor && canManagePacks && (
                     <div className="reports-pack-editor">
                         <div className="reports-pack-editor-grid">
                             <div className="form-group">
@@ -649,18 +657,20 @@ export function ReportsView() {
                                 <span>Next run: {formatDateTime(pack.nextRunAt)}</span>
                                 <span>{getPackFilterSummary(pack)}</span>
                             </div>
-                            <div className="reports-pack-card-actions">
-                                <button className="btn-secondary btn-sm" onClick={() => startEditPack(pack)}>
-                                    Edit
-                                </button>
-                                <button
-                                    className="btn-primary btn-sm"
-                                    onClick={() => handleRunPackNow(pack.id)}
-                                    disabled={runningPackId === String(pack.id)}
-                                >
-                                    {runningPackId === String(pack.id) ? 'Running...' : 'Run Now'}
-                                </button>
-                            </div>
+                            {canManagePacks && (
+                                <div className="reports-pack-card-actions">
+                                    <button className="btn-secondary btn-sm" onClick={() => startEditPack(pack)}>
+                                        Edit
+                                    </button>
+                                    <button
+                                        className="btn-primary btn-sm"
+                                        onClick={() => handleRunPackNow(pack.id)}
+                                        disabled={runningPackId === String(pack.id)}
+                                    >
+                                        {runningPackId === String(pack.id) ? 'Running...' : 'Run Now'}
+                                    </button>
+                                </div>
+                            )}
                         </article>
                     ))}
                 </div>

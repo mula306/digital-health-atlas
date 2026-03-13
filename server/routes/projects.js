@@ -7,7 +7,7 @@ import { logAudit } from '../utils/auditLogger.js';
 import { cache, CACHE_KEYS, invalidateProjectCache } from '../utils/cache.js';
 import { buildInClause, addParams } from '../utils/sqlHelpers.js';
 import { validateGoalAssignment, loadGoalsForValidation } from '../utils/goalValidation.js';
-import { findGoalAccessGapsForOrg } from '../utils/goalAccess.js';
+import { ensureReadGoalAccessForOrg, findGoalAccessGapsForOrg } from '../utils/goalAccess.js';
 import { ensureOrganizationExists, isAdminUser, resolveOwnedOrgId } from '../utils/orgOwnership.js';
 
 const router = express.Router();
@@ -1755,10 +1755,11 @@ router.put('/:id', checkPermission('can_edit_project'), withSharedScope, checkPr
             return res.status(404).json({ error: 'Project not found' });
         }
         const beforeState = prev.recordset[0];
-        const hasOrgIdInput = Object.prototype.hasOwnProperty.call(req.body || {}, 'orgId');
-        let projectOrgId = beforeState.orgId === null || beforeState.orgId === undefined
+        const beforeOrgId = beforeState.orgId === null || beforeState.orgId === undefined
             ? null
             : Number(beforeState.orgId);
+        const hasOrgIdInput = Object.prototype.hasOwnProperty.call(req.body || {}, 'orgId');
+        let projectOrgId = beforeOrgId;
 
         if (hasOrgIdInput) {
             if (!isAdminUser(req.user)) {
@@ -1780,6 +1781,22 @@ router.put('/:id', checkPermission('can_edit_project'), withSharedScope, checkPr
         if (projectOrgId === null || projectOrgId === undefined) {
             return res.status(409).json({
                 error: 'Project organization is not assigned. Run the org ownership backfill or provide orgId as an admin.'
+            });
+        }
+
+        const ownershipChanged = hasOrgIdInput && beforeOrgId !== projectOrgId;
+        let ensuredGoalContext = {
+            linkedGoalCount: 0,
+            insertedGoalCount: 0,
+            refreshedExpiredGoalCount: 0
+        };
+
+        if (ownershipChanged && parsedGoalIds.length > 0) {
+            ensuredGoalContext = await ensureReadGoalAccessForOrg({
+                dbOrTx: pool,
+                goalIds: parsedGoalIds,
+                orgId: projectOrgId,
+                grantedByOid: req.user?.oid || null
             });
         }
 
@@ -1815,19 +1832,88 @@ router.put('/:id', checkPermission('can_edit_project'), withSharedScope, checkPr
             WHERE id = @id
         `);
 
-        // Replace goal associations
-        await pool.request().input('projectId', sql.Int, id)
-            .query('DELETE FROM ProjectGoals WHERE projectId = @projectId');
-
-        for (const gId of parsedGoalIds) {
+        if (ownershipChanged) {
             await pool.request()
                 .input('projectId', sql.Int, id)
-                .input('goalId', sql.Int, gId)
-                .query('INSERT INTO ProjectGoals (projectId, goalId) VALUES (@projectId, @goalId)');
+                .input('orgId', sql.Int, projectOrgId)
+                .query(`
+                    DELETE FROM ProjectOrgAccess
+                    WHERE projectId = @projectId
+                      AND orgId = @orgId
+                `);
+        }
+
+        // Replace goal associations (ownership-aware for shared users)
+        const isSharedUser = !isAdminUser(req.user) && req.orgId !== undefined && req.orgId !== null && Number(req.orgId) !== Number(projectOrgId);
+
+        if (isSharedUser) {
+            // Shared users: only replace goals belonging to their own org, preserve owner-org goals
+            const existingGoals = await pool.request()
+                .input('projectId', sql.Int, id)
+                .query(`
+                    SELECT pg.goalId, g.orgId
+                    FROM ProjectGoals pg
+                    INNER JOIN Goals g ON g.id = pg.goalId
+                    WHERE pg.projectId = @projectId
+                `);
+
+            // Owner-org goals that must be preserved
+            const ownerOrgGoalIds = existingGoals.recordset
+                .filter(row => Number(row.orgId) === Number(projectOrgId))
+                .map(row => Number(row.goalId));
+
+            // Delete only the shared user's org goals (non-owner goals)
+            const userOrgGoalIds = existingGoals.recordset
+                .filter(row => Number(row.orgId) !== Number(projectOrgId))
+                .map(row => Number(row.goalId));
+
+            for (const gId of userOrgGoalIds) {
+                await pool.request()
+                    .input('projectId', sql.Int, id)
+                    .input('goalId', sql.Int, gId)
+                    .query('DELETE FROM ProjectGoals WHERE projectId = @projectId AND goalId = @goalId');
+            }
+
+            // Insert goals from request that are NOT already owner-org goals
+            for (const gId of parsedGoalIds) {
+                if (!ownerOrgGoalIds.includes(gId)) {
+                    await pool.request()
+                        .input('projectId', sql.Int, id)
+                        .input('goalId', sql.Int, gId)
+                        .query('INSERT INTO ProjectGoals (projectId, goalId) VALUES (@projectId, @goalId)');
+                }
+            }
+        } else {
+            // Owner-org users and admins: full replace
+            await pool.request().input('projectId', sql.Int, id)
+                .query('DELETE FROM ProjectGoals WHERE projectId = @projectId');
+
+            for (const gId of parsedGoalIds) {
+                await pool.request()
+                    .input('projectId', sql.Int, id)
+                    .input('goalId', sql.Int, gId)
+                    .query('INSERT INTO ProjectGoals (projectId, goalId) VALUES (@projectId, @goalId)');
+            }
         }
 
         invalidateProjectCache();
-        logAudit({ action: 'project.update', entityType: 'project', entityId: id, entityTitle: title, user: getAuthUser(req), before: beforeState, after: { title, description, status, orgId: projectOrgId, goalIds: parsedGoalIds }, req });
+        logAudit({
+            action: ownershipChanged ? 'project.transfer_ownership' : 'project.update',
+            entityType: 'project',
+            entityId: id,
+            entityTitle: title,
+            user: getAuthUser(req),
+            before: beforeState,
+            after: {
+                title,
+                description,
+                status,
+                orgId: projectOrgId,
+                goalIds: parsedGoalIds,
+                ensuredGoalContext
+            },
+            req
+        });
         res.json({ success: true });
     } catch (err) {
         handleError(res, 'updating project', err);
@@ -2032,7 +2118,7 @@ router.post('/:projectId/tasks', checkPermission('can_edit_project'), withShared
 });
 
 // Get status reports for a project
-router.get('/:projectId/reports', checkPermission('can_view_projects'), withSharedScope, checkProjectWriteAccess((req) => req.params.projectId), async (req, res) => {
+router.get('/:projectId/reports', checkPermission(['can_view_projects', 'can_view_exec_dashboard']), withSharedScope, checkProjectWriteAccess((req) => req.params.projectId), async (req, res) => {
     try {
         const projectId = parseInt(req.params.projectId);
         const pool = await getPool();
@@ -2056,7 +2142,7 @@ router.get('/:projectId/reports', checkPermission('can_view_projects'), withShar
 });
 
 // Add status report to project
-router.post('/:projectId/reports', checkPermission('can_create_reports'), withSharedScope, checkProjectWriteAccess((req) => req.params.projectId), requireProjectWriteAccess, async (req, res) => {
+router.post('/:projectId/reports', checkPermission('can_create_status_reports'), withSharedScope, checkProjectWriteAccess((req) => req.params.projectId), requireProjectWriteAccess, async (req, res) => {
     try {
         const { reportData, restoredFrom } = req.body;
         const authUser = getAuthUser(req);

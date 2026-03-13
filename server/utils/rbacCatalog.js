@@ -75,10 +75,17 @@ const PERMISSION_GROUPS = [
         ]
     },
     {
+        category: 'Status Reports',
+        items: [
+            { key: 'can_view_status_reports', label: 'View Status Reports' },
+            { key: 'can_create_status_reports', label: 'Create Status Reports' }
+        ]
+    },
+    {
         category: 'Reports',
         items: [
-            { key: 'can_view_reports', label: 'View Status Reports' },
-            { key: 'can_create_reports', label: 'Create Status Reports' },
+            { key: 'can_view_exec_packs', label: 'View Reports' },
+            { key: 'can_manage_exec_packs', label: 'Manage Executive Packs' },
             { key: 'can_run_exec_pack_scheduler', label: 'Run Due Executive Packs' }
         ]
     },
@@ -122,7 +129,8 @@ const ROLE_DEFAULT_ALLOWLIST = {
         'can_view_goals',
         'can_view_projects',
         'can_view_dashboard',
-        'can_view_reports',
+        'can_view_status_reports',
+        'can_view_exec_packs',
         'can_view_metrics'
     ],
     Editor: [
@@ -133,9 +141,11 @@ const ROLE_DEFAULT_ALLOWLIST = {
         'can_view_projects',
         'can_create_project',
         'can_edit_project',
-        'can_create_reports',
+        'can_view_status_reports',
+        'can_create_status_reports',
+        'can_view_exec_packs',
+        'can_manage_exec_packs',
         'can_view_dashboard',
-        'can_view_reports',
         'can_view_metrics'
     ],
     IntakeManager: [
@@ -152,7 +162,8 @@ const ROLE_DEFAULT_ALLOWLIST = {
     ExecView: [
         'can_view_dashboard',
         'can_view_exec_dashboard',
-        'can_view_reports',
+        'can_view_status_reports',
+        'can_view_exec_packs',
         'can_view_metrics',
         'can_view_governance_queue'
     ],

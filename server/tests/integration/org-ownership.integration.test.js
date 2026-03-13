@@ -50,6 +50,43 @@ const resetSubmissionConversionState = async (submissionId) => {
     }
 };
 
+const resetProjectOwnershipState = async () => {
+    const pool = await getPool();
+    await pool.request()
+        .input('projectId', sql.Int, TEST_FIXTURE_IDS.PROJECT_1)
+        .input('ownerOrgId', sql.Int, TEST_FIXTURE_IDS.ORG_1)
+        .input('sharedOrgId', sql.Int, TEST_FIXTURE_IDS.ORG_2)
+        .input('goalId', sql.Int, TEST_FIXTURE_IDS.GOAL_1)
+        .input('grantedByOid', sql.NVarChar(100), 'test-admin-oid')
+        .query(`
+            UPDATE Projects
+            SET
+                title = 'Test Project Org1',
+                description = 'Deterministic fixture project for org1',
+                status = 'active',
+                goalId = @goalId,
+                orgId = @ownerOrgId
+            WHERE id = @projectId;
+
+            DELETE FROM ProjectGoals WHERE projectId = @projectId;
+            INSERT INTO ProjectGoals (projectId, goalId)
+            SELECT @projectId, @goalId
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM ProjectGoals
+                WHERE projectId = @projectId AND goalId = @goalId
+            );
+
+            DELETE FROM ProjectOrgAccess WHERE projectId = @projectId;
+            INSERT INTO ProjectOrgAccess (projectId, orgId, accessLevel, expiresAt, grantedByOid)
+            VALUES (@projectId, @sharedOrgId, 'read', DATEADD(day, 7, GETDATE()), @grantedByOid);
+
+            DELETE FROM GoalOrgAccess
+            WHERE goalId = @goalId
+              AND orgId = @sharedOrgId;
+        `);
+};
+
 test('admin-created org-bound records require explicit orgId', async () => {
     const admin = asPersona(request, 'admin');
 
@@ -139,4 +176,47 @@ test('cross-org governance conversion keeps submission org ownership and auto-sh
     assert.equal(String(goalShareResult.recordset[0]?.accessLevel), 'read');
 
     await resetSubmissionConversionState(TEST_FIXTURE_IDS.SUBMISSION_2);
+});
+
+test('admin can transfer project ownership to another organization and redundant owner shares are removed', async () => {
+    await resetProjectOwnershipState();
+    const admin = asPersona(request, 'admin');
+
+    const updateResponse = await admin
+        .put(`/api/projects/${TEST_FIXTURE_IDS.PROJECT_1}`)
+        .send({
+            title: 'Transferred Project Ownership',
+            description: 'Ownership moved to org 2',
+            status: 'active',
+            orgId: TEST_FIXTURE_IDS.ORG_2,
+            goalIds: [TEST_FIXTURE_IDS.GOAL_1]
+        });
+
+    assert.equal(updateResponse.status, 200);
+    assert.equal(updateResponse.body.success, true);
+
+    const pool = await getPool();
+    const projectResult = await pool.request()
+        .input('projectId', sql.Int, TEST_FIXTURE_IDS.PROJECT_1)
+        .query('SELECT orgId FROM Projects WHERE id = @projectId');
+    assert.equal(Number(projectResult.recordset[0]?.orgId), TEST_FIXTURE_IDS.ORG_2);
+
+    const redundantShareResult = await pool.request()
+        .input('projectId', sql.Int, TEST_FIXTURE_IDS.PROJECT_1)
+        .input('orgId', sql.Int, TEST_FIXTURE_IDS.ORG_2)
+        .query('SELECT COUNT(*) AS count FROM ProjectOrgAccess WHERE projectId = @projectId AND orgId = @orgId');
+    assert.equal(Number(redundantShareResult.recordset[0]?.count), 0);
+
+    const goalShareResult = await pool.request()
+        .input('goalId', sql.Int, TEST_FIXTURE_IDS.GOAL_1)
+        .input('orgId', sql.Int, TEST_FIXTURE_IDS.ORG_2)
+        .query(`
+            SELECT TOP 1 accessLevel
+            FROM GoalOrgAccess
+            WHERE goalId = @goalId
+              AND orgId = @orgId
+        `);
+    assert.equal(String(goalShareResult.recordset[0]?.accessLevel), 'read');
+
+    await resetProjectOwnershipState();
 });

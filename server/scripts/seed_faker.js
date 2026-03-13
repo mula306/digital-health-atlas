@@ -13,6 +13,70 @@ const DEFAULT_SEED_ORGANIZATIONS = Object.freeze([
     { name: 'Clinical Operations', slug: 'clinical-operations' },
     { name: 'Digital Health Delivery', slug: 'digital-health-delivery' }
 ]);
+const GOAL_HIERARCHY_TEMPLATES = Object.freeze([
+    {
+        enterprise: 'Patient Flow and Access Transformation',
+        portfolios: [
+            {
+                title: 'Urgent and Acute Access',
+                services: [
+                    {
+                        title: 'Referral Navigation',
+                        teams: ['Referral Intake Team', 'Referral Triage Team']
+                    },
+                    {
+                        title: 'Bed Management',
+                        teams: ['Bed Coordination Team', 'Discharge Planning Team']
+                    }
+                ]
+            },
+            {
+                title: 'Clinical Workflow Enablement',
+                services: [
+                    {
+                        title: 'Documentation and Orders',
+                        teams: ['Documentation Improvement Team', 'Order Set Team']
+                    },
+                    {
+                        title: 'Care Team Collaboration',
+                        teams: ['Huddle Coordination Team', 'Escalation Response Team']
+                    }
+                ]
+            }
+        ]
+    },
+    {
+        enterprise: 'Digital Experience and Automation Modernization',
+        portfolios: [
+            {
+                title: 'Virtual Care Expansion',
+                services: [
+                    {
+                        title: 'Virtual Visit Delivery',
+                        teams: ['Virtual Visit Operations Team', 'Remote Care Support Team']
+                    },
+                    {
+                        title: 'Patient Self-Service',
+                        teams: ['Portal Experience Team', 'Digital Intake Team']
+                    }
+                ]
+            },
+            {
+                title: 'Data and Automation',
+                services: [
+                    {
+                        title: 'Automation and Integration',
+                        teams: ['Workflow Automation Team', 'Integration Reliability Team']
+                    },
+                    {
+                        title: 'Analytics and Reporting',
+                        teams: ['Insights Delivery Team', 'Performance Reporting Team']
+                    }
+                ]
+            }
+        ]
+    }
+]);
 
 const existsTable = async (pool, tableName) => {
     const result = await pool.request()
@@ -172,70 +236,49 @@ const ensureGoal = async (pool, { title, type, parentId = null, orgId = null, go
     return result.recordset[0].id;
 };
 
-const ensureGoalHierarchyForOrg = async (pool, { orgId = null, goalsHaveOrgId }) => {
+const ensureGoalHierarchyForOrg = async (pool, { orgId = null, goalsHaveOrgId, hierarchyTemplate }) => {
     let scopedGoals = await loadGoalsForScope(pool, { goalsHaveOrgId, orgId });
     if (scopedGoals.some((goal) => goal.parentId)) {
         return scopedGoals;
     }
 
     const rootGoalId = await ensureGoal(pool, {
-        title: 'Health System Transformation',
+        title: hierarchyTemplate.enterprise,
         type: 'enterprise',
         parentId: null,
         orgId,
         goalsHaveOrgId
     });
-    const portfolio1 = await ensureGoal(pool, {
-        title: 'Digital Front Door',
-        type: 'portfolio',
-        parentId: rootGoalId,
-        orgId,
-        goalsHaveOrgId
-    });
-    const portfolio2 = await ensureGoal(pool, {
-        title: 'Clinical Platform Modernization',
-        type: 'portfolio',
-        parentId: rootGoalId,
-        orgId,
-        goalsHaveOrgId
-    });
-    const service1 = await ensureGoal(pool, {
-        title: 'Virtual Care Access',
-        type: 'service',
-        parentId: portfolio1,
-        orgId,
-        goalsHaveOrgId
-    });
-    const service2 = await ensureGoal(pool, {
-        title: 'Scheduling and Referrals',
-        type: 'service',
-        parentId: portfolio1,
-        orgId,
-        goalsHaveOrgId
-    });
-    const service3 = await ensureGoal(pool, {
-        title: 'EHR Optimization',
-        type: 'service',
-        parentId: portfolio2,
-        orgId,
-        goalsHaveOrgId
-    });
-    const service4 = await ensureGoal(pool, {
-        title: 'Data and Reporting',
-        type: 'service',
-        parentId: portfolio2,
-        orgId,
-        goalsHaveOrgId
-    });
 
-    await ensureGoal(pool, { title: 'Virtual Care Intake Team', type: 'team', parentId: service1, orgId, goalsHaveOrgId });
-    await ensureGoal(pool, { title: 'Virtual Care Delivery Team', type: 'team', parentId: service1, orgId, goalsHaveOrgId });
-    await ensureGoal(pool, { title: 'Referral Optimization Team', type: 'team', parentId: service2, orgId, goalsHaveOrgId });
-    await ensureGoal(pool, { title: 'Scheduling Operations Team', type: 'team', parentId: service2, orgId, goalsHaveOrgId });
-    await ensureGoal(pool, { title: 'Clinical Workflow Team', type: 'team', parentId: service3, orgId, goalsHaveOrgId });
-    await ensureGoal(pool, { title: 'Platform Reliability Team', type: 'team', parentId: service3, orgId, goalsHaveOrgId });
-    await ensureGoal(pool, { title: 'Analytics Delivery Team', type: 'team', parentId: service4, orgId, goalsHaveOrgId });
-    await ensureGoal(pool, { title: 'Performance Reporting Team', type: 'team', parentId: service4, orgId, goalsHaveOrgId });
+    for (const portfolio of hierarchyTemplate.portfolios) {
+        const portfolioId = await ensureGoal(pool, {
+            title: portfolio.title,
+            type: 'portfolio',
+            parentId: rootGoalId,
+            orgId,
+            goalsHaveOrgId
+        });
+
+        for (const service of portfolio.services) {
+            const serviceId = await ensureGoal(pool, {
+                title: service.title,
+                type: 'service',
+                parentId: portfolioId,
+                orgId,
+                goalsHaveOrgId
+            });
+
+            for (const teamTitle of service.teams) {
+                await ensureGoal(pool, {
+                    title: teamTitle,
+                    type: 'team',
+                    parentId: serviceId,
+                    orgId,
+                    goalsHaveOrgId
+                });
+            }
+        }
+    }
 
     scopedGoals = await loadGoalsForScope(pool, { goalsHaveOrgId, orgId });
     return scopedGoals;
@@ -243,15 +286,20 @@ const ensureGoalHierarchyForOrg = async (pool, { orgId = null, goalsHaveOrgId })
 
 const ensureGoals = async (pool, organizations, goalsHaveOrgId) => {
     if (!goalsHaveOrgId) {
-        await ensureGoalHierarchyForOrg(pool, { orgId: null, goalsHaveOrgId: false });
+        await ensureGoalHierarchyForOrg(pool, {
+            orgId: null,
+            goalsHaveOrgId: false,
+            hierarchyTemplate: GOAL_HIERARCHY_TEMPLATES[0]
+        });
         return loadGoalsForScope(pool, { goalsHaveOrgId: false });
     }
 
     const scopedGoals = [];
-    for (const organization of organizations) {
+    for (const [index, organization] of organizations.entries()) {
         const goalsForOrg = await ensureGoalHierarchyForOrg(pool, {
             orgId: organization.id,
-            goalsHaveOrgId
+            goalsHaveOrgId,
+            hierarchyTemplate: GOAL_HIERARCHY_TEMPLATES[index % GOAL_HIERARCHY_TEMPLATES.length]
         });
         scopedGoals.push(...goalsForOrg);
     }

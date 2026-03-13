@@ -20,9 +20,8 @@ vi.mock('../../components/Kanban/GanttView.jsx', () => ({
     GanttView: () => <div>Gantt View</div>
 }));
 
-vi.mock('../../components/Kanban/CalendarView.jsx', () => ({
-    CalendarView: () => <div>Calendar View</div>
-}));
+
+
 
 vi.mock('../../components/StatusReport/StatusReportPage.jsx', () => ({
     StatusReportPage: () => <div>Status Reports</div>

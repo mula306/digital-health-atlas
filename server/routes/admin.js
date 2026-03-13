@@ -790,7 +790,8 @@ router.get('/sharing-picker-data', checkPermission('can_manage_sharing_requests'
                 SELECT
                     p.id,
                     p.title,
-                    p.orgId,
+                    p.orgId AS ownerOrgId,
+                    ownerOrg.name AS ownerOrgName,
                     COUNT(DISTINCT pgl.goalId) AS linkedGoalCount,
                     SUM(CASE
                         WHEN p.orgId IS NOT NULL
@@ -801,7 +802,8 @@ router.get('/sharing-picker-data', checkPermission('can_manage_sharing_requests'
                 FROM Projects p
                 LEFT JOIN ProjectGoalLinks pgl ON pgl.projectId = p.id
                 LEFT JOIN Goals g ON g.id = pgl.goalId
-                GROUP BY p.id, p.title, p.orgId
+                LEFT JOIN Organizations ownerOrg ON ownerOrg.id = p.orgId
+                GROUP BY p.id, p.title, p.orgId, ownerOrg.name
                 ORDER BY p.title ASC
             `),
             pool.request().query(`
@@ -810,7 +812,10 @@ router.get('/sharing-picker-data', checkPermission('can_manage_sharing_requests'
                 INNER JOIN Tags t ON pt.tagId = t.id
             `),
             pool.request().query(`
-                SELECT id, title, type, parentId, orgId FROM Goals ORDER BY title ASC
+                SELECT g.id, g.title, g.type, g.parentId, g.orgId AS ownerOrgId, ownerOrg.name AS ownerOrgName
+                FROM Goals g
+                LEFT JOIN Organizations ownerOrg ON ownerOrg.id = g.orgId
+                ORDER BY g.title ASC
             `)
         ]);
 
@@ -825,7 +830,8 @@ router.get('/sharing-picker-data', checkPermission('can_manage_sharing_requests'
             projects: projectsResult.recordset.map(p => ({
                 id: p.id.toString(),
                 title: p.title,
-                orgId: p.orgId,
+                ownerOrgId: p.ownerOrgId,
+                ownerOrgName: p.ownerOrgName || null,
                 linkedGoalCount: Number(p.linkedGoalCount || 0),
                 externalGoalLinkCount: Number(p.externalGoalLinkCount || 0),
                 tags: tagMap[p.id] || []
@@ -835,7 +841,8 @@ router.get('/sharing-picker-data', checkPermission('can_manage_sharing_requests'
                 title: g.title,
                 type: g.type,
                 parentId: g.parentId ? g.parentId.toString() : null,
-                orgId: g.orgId
+                ownerOrgId: g.ownerOrgId,
+                ownerOrgName: g.ownerOrgName || null
             }))
         });
     } catch (err) {
@@ -854,9 +861,17 @@ router.get('/organizations/:orgId/sharing-summary', checkPermission('can_manage_
         const projectsResult = await pool.request()
             .input('orgId', sql.Int, orgId)
             .query(`
-                SELECT poa.projectId, poa.accessLevel, poa.grantedAt, poa.expiresAt, p.title AS projectTitle
+                SELECT
+                    poa.projectId,
+                    poa.accessLevel,
+                    poa.grantedAt,
+                    poa.expiresAt,
+                    p.title AS projectTitle,
+                    p.orgId AS ownerOrgId,
+                    ownerOrg.name AS ownerOrgName
                 FROM ProjectOrgAccess poa
                 INNER JOIN Projects p ON p.id = poa.projectId
+                LEFT JOIN Organizations ownerOrg ON ownerOrg.id = p.orgId
                 WHERE poa.orgId = @orgId
                   AND ${getScopedEntityAccessPredicate()}
                 ORDER BY p.title ASC
@@ -865,9 +880,19 @@ router.get('/organizations/:orgId/sharing-summary', checkPermission('can_manage_
         const goalsResult = await pool.request()
             .input('orgId', sql.Int, orgId)
             .query(`
-                SELECT goa.goalId, goa.accessLevel, goa.grantedAt, goa.expiresAt, g.title AS goalTitle, g.type AS goalType, g.parentId
+                SELECT
+                    goa.goalId,
+                    goa.accessLevel,
+                    goa.grantedAt,
+                    goa.expiresAt,
+                    g.title AS goalTitle,
+                    g.type AS goalType,
+                    g.parentId,
+                    g.orgId AS ownerOrgId,
+                    ownerOrg.name AS ownerOrgName
                 FROM GoalOrgAccess goa
                 INNER JOIN Goals g ON g.id = goa.goalId
+                LEFT JOIN Organizations ownerOrg ON ownerOrg.id = g.orgId
                 WHERE goa.orgId = @orgId
                   AND ${getScopedEntityAccessPredicate()}
                 ORDER BY g.title ASC
@@ -917,6 +942,8 @@ router.get('/organizations/:orgId/sharing-summary', checkPermission('can_manage_
             projects: projectsResult.recordset.map(r => ({
                 projectId: r.projectId.toString(),
                 projectTitle: r.projectTitle,
+                ownerOrgId: r.ownerOrgId === null || r.ownerOrgId === undefined ? null : Number(r.ownerOrgId),
+                ownerOrgName: r.ownerOrgName || null,
                 accessLevel: r.accessLevel,
                 grantedAt: r.grantedAt,
                 expiresAt: r.expiresAt || null,
@@ -944,6 +971,8 @@ router.get('/organizations/:orgId/sharing-summary', checkPermission('can_manage_
                 goalTitle: r.goalTitle,
                 goalType: r.goalType,
                 parentId: r.parentId ? r.parentId.toString() : null,
+                ownerOrgId: r.ownerOrgId === null || r.ownerOrgId === undefined ? null : Number(r.ownerOrgId),
+                ownerOrgName: r.ownerOrgName || null,
                 accessLevel: r.accessLevel,
                 grantedAt: r.grantedAt,
                 expiresAt: r.expiresAt || null,

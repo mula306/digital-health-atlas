@@ -1,10 +1,9 @@
 import { useState, useCallback, useMemo, useEffect } from 'react';
-import { Settings, LayoutGrid, Table, GanttChart, FileText, Calendar, Activity, Star, BarChart3 } from 'lucide-react';
+import { Settings, LayoutGrid, Table, GanttChart, FileText, Activity, Star, BarChart3 } from 'lucide-react';
 import { useData } from '../../context/DataContext';
 import { KanbanColumn } from './KanbanColumn';
 import { TaskTableView } from './TaskTableView';
 import { GanttView } from './GanttView';
-import { CalendarView } from './CalendarView';
 import { StatusReportPage } from '../StatusReport/StatusReportPage';
 import { ProjectBenefitsPanel } from './ProjectBenefitsPanel';
 import { Modal } from '../UI/Modal';
@@ -18,7 +17,7 @@ const PROJECT_TASK_FOCUS_STORAGE_KEY = 'dha_project_focus_task_payload';
 const PROJECT_TASK_FOCUS_TTL_MS = 2 * 60 * 1000;
 const PROJECT_VIEW_PREFERENCE_STORAGE_KEY = 'dha_project_view_preference';
 const PROJECT_VIEW_PREFERENCE_TTL_MS = 2 * 60 * 1000;
-const PROJECT_VIEW_MODES = new Set(['table', 'calendar', 'gantt', 'kanban', 'reports', 'benefits', 'activity']);
+const PROJECT_VIEW_MODES = new Set(['table', 'gantt', 'kanban', 'reports', 'benefits', 'activity']);
 
 const COLUMNS = [
     { id: 'todo', title: 'To Do', color: 'var(--text-secondary)' },
@@ -288,13 +287,6 @@ export function KanbanBoard({ project, onBack, goalTitle }) {
                             <Table size={18} />
                         </button>
                         <button
-                            className={`view-toggle-btn ${viewMode === 'calendar' ? 'active' : ''}`}
-                            onClick={() => setViewMode('calendar')}
-                            title="Calendar View"
-                        >
-                            <Calendar size={18} />
-                        </button>
-                        <button
                             className={`view-toggle-btn ${viewMode === 'gantt' ? 'active' : ''}`}
                             onClick={() => setViewMode('gantt')}
                             title="Gantt View"
@@ -308,13 +300,15 @@ export function KanbanBoard({ project, onBack, goalTitle }) {
                         >
                             <LayoutGrid size={18} />
                         </button>
-                        <button
-                            className={`view-toggle-btn ${viewMode === 'reports' ? 'active' : ''}`}
-                            onClick={() => setViewMode('reports')}
-                            title="Status Reports"
-                        >
-                            <FileText size={18} />
-                        </button>
+                        {hasPermission('can_view_status_reports') && (
+                            <button
+                                className={`view-toggle-btn ${viewMode === 'reports' ? 'active' : ''}`}
+                                onClick={() => setViewMode('reports')}
+                                title="Status Reports"
+                            >
+                                <FileText size={18} />
+                            </button>
+                        )}
                         <button
                             className={`view-toggle-btn ${viewMode === 'benefits' ? 'active' : ''}`}
                             onClick={() => setViewMode('benefits')}
@@ -400,12 +394,7 @@ export function KanbanBoard({ project, onBack, goalTitle }) {
                 />
             )}
 
-            {viewMode === 'calendar' && (
-                <CalendarView
-                    project={projectForView}
-                    onTaskClick={handleTaskClick}
-                />
-            )}
+
 
             {viewMode === 'gantt' && (
                 <GanttView

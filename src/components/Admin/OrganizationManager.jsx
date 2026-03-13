@@ -13,6 +13,19 @@ import './OrganizationManager.css';
 
 const ORG_SECTIONS = new Set(['orgs', 'members', 'sharing']);
 const ORG_SHARING_TABS = new Set(['projects', 'goals']);
+const ORG_SHARING_VIEWS = new Set(['available', 'shared']);
+
+const normalizeComparableId = (value) => (
+    value === null || value === undefined || value === '' ? '' : String(value)
+);
+
+const sortByOwnerThenTitle = (a, b) => {
+    const ownerCompare = String(a.ownerOrgName || '').localeCompare(String(b.ownerOrgName || ''));
+    if (ownerCompare !== 0) return ownerCompare;
+    return String(a.title || a.projectTitle || a.goalTitle || '').localeCompare(
+        String(b.title || b.projectTitle || b.goalTitle || '')
+    );
+};
 
 export function OrganizationManager({
     initialSection = null,
@@ -50,8 +63,10 @@ export function OrganizationManager({
 
     // ─── Data Sharing State ───
     const [sharingSubTabState, setSharingSubTabState] = useState('projects'); // projects | goals
+    const [sharingViewState, setSharingViewState] = useState('available'); // available | shared
     const [sharingSummary, setSharingSummary] = useState({ projects: [], goals: [] });
     const [loadingSummary, setLoadingSummary] = useState(false);
+    const [loadedSharingSummaryOrgId, setLoadedSharingSummaryOrgId] = useState(null);
     const [projectSearch, setProjectSearch] = useState('');
     const [goalSearch, setGoalSearch] = useState('');
     const [selectedProjectIds, setSelectedProjectIds] = useState(new Set());
@@ -98,6 +113,7 @@ export function OrganizationManager({
     const sharingSubTab = isSharingTabControlled
         ? normalizedInitialSharingTab
         : (ORG_SHARING_TABS.has(sharingSubTabState) ? sharingSubTabState : normalizedInitialSharingTab);
+    const sharingView = ORG_SHARING_VIEWS.has(sharingViewState) ? sharingViewState : 'available';
 
     const openSection = useCallback((nextSection) => {
         if (!ORG_SECTIONS.has(nextSection) || !availableSections.includes(nextSection)) return;
@@ -125,11 +141,25 @@ export function OrganizationManager({
     }, [isSectionControlled, activeSection, initialSection, onSectionChange]);
 
     useEffect(() => {
+        if (isSectionControlled) return;
+        setActiveSectionState((currentSection) => (
+            currentSection === normalizedInitialSection ? currentSection : normalizedInitialSection
+        ));
+    }, [isSectionControlled, normalizedInitialSection]);
+
+    useEffect(() => {
         if (!isSharingTabControlled) return;
         if (initialSharingTab !== sharingSubTab) {
             onSharingTabChange?.(sharingSubTab);
         }
     }, [isSharingTabControlled, sharingSubTab, initialSharingTab, onSharingTabChange]);
+
+    useEffect(() => {
+        if (isSharingTabControlled) return;
+        setSharingSubTabState((currentTab) => (
+            currentTab === normalizedInitialSharingTab ? currentTab : normalizedInitialSharingTab
+        ));
+    }, [isSharingTabControlled, normalizedInitialSharingTab]);
 
     const toIsoOrNull = (value) => {
         if (!value) return null;
@@ -281,6 +311,7 @@ export function OrganizationManager({
 
     const handleSelectOrg = (orgId) => {
         setSelectedOrgId(orgId);
+        setSharingViewState('available');
         setUserSearchQuery('');
         setSelectedUserIds(new Set());
         setSelectedProjectIds(new Set());
@@ -376,9 +407,11 @@ export function OrganizationManager({
         try {
             const summary = await fetchOrgSharingSummary(orgId);
             setSharingSummary(summary);
+            setLoadedSharingSummaryOrgId(normalizeComparableId(orgId));
         } catch {
             showError('Failed to load sharing summary');
             setSharingSummary({ projects: [], goals: [] });
+            setLoadedSharingSummaryOrgId(normalizeComparableId(orgId));
         } finally {
             setLoadingSummary(false);
         }
@@ -388,66 +421,219 @@ export function OrganizationManager({
         if (activeSection !== 'sharing') return;
         if (!sharingTargetOrg) {
             setSharingSummary({ projects: [], goals: [] });
+            setLoadedSharingSummaryOrgId(null);
             return;
         }
+        setLoadedSharingSummaryOrgId((currentOrgId) => (
+            normalizeComparableId(currentOrgId) === normalizeComparableId(sharingTargetOrg)
+                ? currentOrgId
+                : null
+        ));
         loadSharingSummary(sharingTargetOrg);
     }, [activeSection, sharingTargetOrg, loadSharingSummary]);
 
-    // Project list: owner projects only (not from target org)
+    const sharingSummaryReady = normalizeComparableId(loadedSharingSummaryOrgId) === normalizeComparableId(sharingTargetOrg);
+    const isSharingSummaryLoading = loadingSummary || (!!sharingTargetOrg && !sharingSummaryReady);
+
     const sharingTargetOrgObj = useMemo(() =>
-        organizations.find(o => String(o.id) === String(sharingTargetOrg)),
+        organizations.find(o => normalizeComparableId(o.id) === normalizeComparableId(sharingTargetOrg)),
         [organizations, sharingTargetOrg]
     );
 
-    // Build shared-project-id set for quick lookup
-    const sharedProjectIds = useMemo(() =>
-        new Set(sharingSummary.projects.map(p => String(p.projectId))),
-        [sharingSummary.projects]
+    const projectsById = useMemo(
+        () => new Map((allProjects || []).map((project) => [normalizeComparableId(project.id), project])),
+        [allProjects]
     );
-
-    const sharedGoalIds = useMemo(() =>
-        new Set(sharingSummary.goals.map(g => String(g.goalId))),
-        [sharingSummary.goals]
+    const goalsById = useMemo(
+        () => new Map((allGoals || []).map((goal) => [normalizeComparableId(goal.id), goal])),
+        [allGoals]
     );
+    const allRootGoals = useMemo(
+        () => (allGoals || []).filter((goal) => !goal.parentId),
+        [allGoals]
+    );
+    const goalChildrenByParentId = useMemo(() => {
+        const map = new Map();
+        for (const goal of allGoals || []) {
+            const parentId = normalizeComparableId(goal.parentId);
+            if (!parentId) continue;
+            if (!map.has(parentId)) map.set(parentId, []);
+            map.get(parentId).push(goal);
+        }
+        return map;
+    }, [allGoals]);
+    const goalRootIdById = useMemo(() => {
+        const map = new Map();
 
-    // Filtered projects for the sharing list
-    const filteredProjects = useMemo(() => {
-        if (!allProjects) return [];
-        let list = [...allProjects];
-        if (projectSearch.trim()) {
-            const q = projectSearch.toLowerCase().trim();
-            list = list.filter(p =>
-                (p.title || '').toLowerCase().includes(q) ||
-                (p.tags || []).some(t => (t.tagName || t.name || '').toLowerCase().includes(q))
+        for (const goal of allGoals || []) {
+            const goalId = normalizeComparableId(goal.id);
+            let current = goal;
+            const visited = new Set([goalId]);
+
+            while (current?.parentId) {
+                const parentId = normalizeComparableId(current.parentId);
+                if (!parentId || visited.has(parentId)) break;
+                visited.add(parentId);
+                current = goalsById.get(parentId);
+            }
+
+            map.set(goalId, normalizeComparableId(current?.id || goal.id));
+        }
+
+        return map;
+    }, [allGoals, goalsById]);
+    const goalIdsByRootId = useMemo(() => {
+        const map = new Map();
+        for (const goal of allGoals || []) {
+            const goalId = normalizeComparableId(goal.id);
+            const rootId = goalRootIdById.get(goalId) || goalId;
+            if (!map.has(rootId)) map.set(rootId, []);
+            map.get(rootId).push(goalId);
+        }
+        return map;
+    }, [allGoals, goalRootIdById]);
+
+    const matchesProjectSearch = useCallback((project, rawQuery) => {
+        const query = String(rawQuery || '').trim().toLowerCase();
+        if (!query) return true;
+        return (project.title || '').toLowerCase().includes(query) ||
+            (project.tags || []).some((tag) => String(tag.tagName || tag.name || '').toLowerCase().includes(query)) ||
+            String(project.ownerOrgName || '').toLowerCase().includes(query);
+    }, []);
+
+    const matchesGoalSearch = useCallback((goal, rawQuery) => {
+        const query = String(rawQuery || '').trim().toLowerCase();
+        if (!query) return true;
+
+        const rootId = normalizeComparableId(goal.id);
+        const goalIds = goalIdsByRootId.get(rootId) || [rootId];
+        return goalIds.some((goalId) => {
+            const candidate = goalsById.get(goalId);
+            return (
+                String(candidate?.title || '').toLowerCase().includes(query) ||
+                String(candidate?.ownerOrgName || '').toLowerCase().includes(query)
             );
-        }
-        return list.sort((a, b) => {
-            const aShared = sharedProjectIds.has(String(a.id)) ? 1 : 0;
-            const bShared = sharedProjectIds.has(String(b.id)) ? 1 : 0;
-            if (aShared !== bShared) return bShared - aShared; // shared first
-            return (a.title || '').localeCompare(b.title || '');
         });
-    }, [allProjects, projectSearch, sharedProjectIds]);
+    }, [goalIdsByRootId, goalsById]);
 
-    // Filtered goals (root-level) for sharing
-    const rootGoals = useMemo(() => {
-        if (!allGoals) return [];
-        let list = allGoals.filter(g => !g.parentId);
-        if (goalSearch.trim()) {
-            const q = goalSearch.toLowerCase().trim();
-            // Show root goals that match OR have matching children
-            list = list.filter(g => {
-                if ((g.title || '').toLowerCase().includes(q)) return true;
-                return allGoals.some(child => String(child.parentId) === String(g.id) && (child.title || '').toLowerCase().includes(q));
-            });
+    const allSharedProjects = useMemo(() => (
+        (sharingSummary.projects || [])
+            .filter((project) => normalizeComparableId(project.ownerOrgId) !== normalizeComparableId(sharingTargetOrg))
+            .map((project) => ({
+                ...(projectsById.get(normalizeComparableId(project.projectId)) || {}),
+                id: normalizeComparableId(project.projectId),
+                title: project.projectTitle,
+                ownerOrgId: project.ownerOrgId,
+                ownerOrgName: project.ownerOrgName || null,
+                accessLevel: project.accessLevel,
+                grantedAt: project.grantedAt,
+                expiresAt: project.expiresAt || null,
+                isExpired: !!project.isExpired,
+                linkedGoalCount: Number(project.linkedGoalCount || 0),
+                linkedGoalsSharedCount: Number(project.linkedGoalsSharedCount || 0),
+                goalContextStatus: project.goalContextStatus,
+                goalContextMissing: !!project.goalContextMissing
+            }))
+            .sort(sortByOwnerThenTitle)
+    ), [projectsById, sharingSummary.projects, sharingTargetOrg]);
+    const sharedProjectIds = useMemo(
+        () => new Set(allSharedProjects.map((project) => normalizeComparableId(project.id))),
+        [allSharedProjects]
+    );
+    const allAvailableProjects = useMemo(() => (
+        (allProjects || [])
+            .filter((project) => normalizeComparableId(project.ownerOrgId) !== normalizeComparableId(sharingTargetOrg))
+            .filter((project) => !sharedProjectIds.has(normalizeComparableId(project.id)))
+            .sort(sortByOwnerThenTitle)
+    ), [allProjects, sharingTargetOrg, sharedProjectIds]);
+    const visibleAvailableProjects = useMemo(
+        () => allAvailableProjects.filter((project) => matchesProjectSearch(project, projectSearch)),
+        [allAvailableProjects, matchesProjectSearch, projectSearch]
+    );
+    const visibleSharedProjects = useMemo(
+        () => allSharedProjects.filter((project) => matchesProjectSearch(project, projectSearch)),
+        [allSharedProjects, matchesProjectSearch, projectSearch]
+    );
+    const visibleProjects = sharingView === 'shared' ? visibleSharedProjects : visibleAvailableProjects;
+
+    const allSharedGoalEntries = useMemo(() => (
+        (sharingSummary.goals || [])
+            .filter((goal) => normalizeComparableId(goal.ownerOrgId) !== normalizeComparableId(sharingTargetOrg))
+            .map((goal) => {
+                const goalId = normalizeComparableId(goal.goalId);
+                return {
+                    ...goal,
+                    goalId,
+                    rootGoalId: goalRootIdById.get(goalId) || goalId
+                };
+            })
+    ), [goalRootIdById, sharingSummary.goals, sharingTargetOrg]);
+    const sharedGoalIds = useMemo(
+        () => new Set(allSharedGoalEntries.map((goal) => normalizeComparableId(goal.goalId))),
+        [allSharedGoalEntries]
+    );
+    const sharedRootGoalInfoById = useMemo(() => {
+        const map = new Map();
+
+        for (const goalEntry of allSharedGoalEntries) {
+            const rootGoalId = normalizeComparableId(goalEntry.rootGoalId);
+            const rootGoal = goalsById.get(rootGoalId);
+            const existing = map.get(rootGoalId) || {
+                goalId: rootGoalId,
+                title: rootGoal?.title || goalEntry.goalTitle,
+                type: rootGoal?.type || goalEntry.goalType,
+                ownerOrgId: rootGoal?.ownerOrgId ?? goalEntry.ownerOrgId ?? null,
+                ownerOrgName: rootGoal?.ownerOrgName || goalEntry.ownerOrgName || null,
+                accessLevel: 'read',
+                expiresAt: null,
+                hasDirectShare: false,
+                hasDescendantShare: false
+            };
+
+            existing.accessLevel = goalEntry.accessLevel === 'write' || existing.accessLevel === 'write' ? 'write' : 'read';
+            if (!existing.expiresAt || (goalEntry.expiresAt && new Date(goalEntry.expiresAt).getTime() > new Date(existing.expiresAt).getTime())) {
+                existing.expiresAt = goalEntry.expiresAt || existing.expiresAt;
+            }
+            if (rootGoalId === normalizeComparableId(goalEntry.goalId)) {
+                existing.hasDirectShare = true;
+            } else {
+                existing.hasDescendantShare = true;
+            }
+
+            map.set(rootGoalId, existing);
         }
-        return list.sort((a, b) => {
-            const aShared = sharedGoalIds.has(String(a.id)) ? 1 : 0;
-            const bShared = sharedGoalIds.has(String(b.id)) ? 1 : 0;
-            if (aShared !== bShared) return bShared - aShared;
-            return (a.title || '').localeCompare(b.title || '');
-        });
-    }, [allGoals, goalSearch, sharedGoalIds]);
+
+        return map;
+    }, [allSharedGoalEntries, goalsById]);
+    const allAvailableRootGoals = useMemo(() => (
+        allRootGoals
+            .filter((goal) => normalizeComparableId(goal.ownerOrgId) !== normalizeComparableId(sharingTargetOrg))
+            .filter((goal) => !sharedRootGoalInfoById.has(normalizeComparableId(goal.id)))
+            .sort(sortByOwnerThenTitle)
+    ), [allRootGoals, sharingTargetOrg, sharedRootGoalInfoById]);
+    const allSharedRootGoals = useMemo(() => (
+        Array.from(sharedRootGoalInfoById.values())
+            .map((goal) => ({
+                ...(goalsById.get(normalizeComparableId(goal.goalId)) || {}),
+                ...goal,
+                id: normalizeComparableId(goal.goalId)
+            }))
+            .sort(sortByOwnerThenTitle)
+    ), [goalsById, sharedRootGoalInfoById]);
+    const visibleAvailableRootGoals = useMemo(
+        () => allAvailableRootGoals.filter((goal) => matchesGoalSearch(goal, goalSearch)),
+        [allAvailableRootGoals, matchesGoalSearch, goalSearch]
+    );
+    const visibleSharedRootGoals = useMemo(
+        () => allSharedRootGoals.filter((goal) => matchesGoalSearch(goal, goalSearch)),
+        [allSharedRootGoals, matchesGoalSearch, goalSearch]
+    );
+    const visibleGoalRoots = sharingView === 'shared' ? visibleSharedRootGoals : visibleAvailableRootGoals;
+
+    useEffect(() => {
+        setSelectedProjectIds(new Set());
+        setSelectedGoalIds(new Set());
+    }, [sharingSubTab, sharingView, sharingTargetOrg]);
 
     // Selection handlers
     const toggleProjectSelect = (id) => {
@@ -468,26 +654,14 @@ export function OrganizationManager({
         });
     };
 
-    const selectAllFilteredProjects = () => {
-        const unsharedFiltered = filteredProjects.filter(p => !sharedProjectIds.has(String(p.id)));
-        setSelectedProjectIds(new Set(unsharedFiltered.map(p => String(p.id))));
-    };
-
-    const selectAllFilteredSharedProjects = () => {
-        const sharedFiltered = filteredProjects.filter(p => sharedProjectIds.has(String(p.id)));
-        setSelectedProjectIds(new Set(sharedFiltered.map(p => String(p.id))));
+    const selectAllVisibleProjects = () => {
+        setSelectedProjectIds(new Set(visibleProjects.map((project) => String(project.id))));
     };
 
     const deselectAllProjects = () => setSelectedProjectIds(new Set());
 
-    const selectAllFilteredGoals = () => {
-        const unsharedFiltered = rootGoals.filter(g => !sharedGoalIds.has(String(g.id)));
-        setSelectedGoalIds(new Set(unsharedFiltered.map(g => String(g.id))));
-    };
-
-    const selectAllFilteredSharedGoals = () => {
-        const sharedFiltered = rootGoals.filter(g => sharedGoalIds.has(String(g.id)));
-        setSelectedGoalIds(new Set(sharedFiltered.map(g => String(g.id))));
+    const selectAllVisibleGoals = () => {
+        setSelectedGoalIds(new Set(visibleGoalRoots.map((goal) => String(goal.id || goal.goalId))));
     };
 
     const deselectAllGoals = () => setSelectedGoalIds(new Set());
@@ -610,7 +784,8 @@ export function OrganizationManager({
     const totalMembers = organizations.reduce((sum, o) => sum + (o.memberCount || 0), 0);
     const activeOrgs = activeOrganizations.length;
     const orgsWithMembersCount = activeOrganizations.filter(org => Number(org.memberCount || 0) > 0).length;
-    const selectedOrgSharedCount = sharingSummary.projects.length + sharingSummary.goals.length;
+    const selectedOrgAvailableCount = allAvailableProjects.length + allAvailableRootGoals.length;
+    const selectedOrgSharedCount = allSharedProjects.length + allSharedRootGoals.length;
 
     const workflowSteps = useMemo(() => ([
         {
@@ -666,44 +841,19 @@ export function OrganizationManager({
     }, []);
 
     // Selection state helpers
-    const allFilteredUnsharedProjectsSelected = useMemo(() => {
-        const unshared = filteredProjects.filter(p => !sharedProjectIds.has(String(p.id)));
-        return unshared.length > 0 && unshared.every(p => selectedProjectIds.has(String(p.id)));
-    }, [filteredProjects, sharedProjectIds, selectedProjectIds]);
-
-    const allFilteredSharedProjectsSelected = useMemo(() => {
-        const shared = filteredProjects.filter(p => sharedProjectIds.has(String(p.id)));
-        return shared.length > 0 && shared.every(p => selectedProjectIds.has(String(p.id)));
-    }, [filteredProjects, sharedProjectIds, selectedProjectIds]);
+    const allVisibleProjectsSelected = useMemo(() => (
+        visibleProjects.length > 0 &&
+        visibleProjects.every((project) => selectedProjectIds.has(String(project.id)))
+    ), [visibleProjects, selectedProjectIds]);
 
     const someProjectsSelected = selectedProjectIds.size > 0;
 
-    const allFilteredUnsharedGoalsSelected = useMemo(() => {
-        const unshared = rootGoals.filter(g => !sharedGoalIds.has(String(g.id)));
-        return unshared.length > 0 && unshared.every(g => selectedGoalIds.has(String(g.id)));
-    }, [rootGoals, sharedGoalIds, selectedGoalIds]);
-
-    const allFilteredSharedGoalsSelected = useMemo(() => {
-        const shared = rootGoals.filter(g => sharedGoalIds.has(String(g.id)));
-        return shared.length > 0 && shared.every(g => selectedGoalIds.has(String(g.id)));
-    }, [rootGoals, sharedGoalIds, selectedGoalIds]);
+    const allVisibleGoalsSelected = useMemo(() => (
+        visibleGoalRoots.length > 0 &&
+        visibleGoalRoots.every((goal) => selectedGoalIds.has(String(goal.id || goal.goalId)))
+    ), [visibleGoalRoots, selectedGoalIds]);
 
     const someGoalsSelected = selectedGoalIds.size > 0;
-
-    // Determine if selected items are shared or unshared (for contextual buttons)
-    const selectedAreShared = useMemo(() => {
-        if (sharingSubTab === 'projects') {
-            return Array.from(selectedProjectIds).every(id => sharedProjectIds.has(id));
-        }
-        return Array.from(selectedGoalIds).every(id => sharedGoalIds.has(id));
-    }, [sharingSubTab, selectedProjectIds, selectedGoalIds, sharedProjectIds, sharedGoalIds]);
-
-    const selectedAreUnshared = useMemo(() => {
-        if (sharingSubTab === 'projects') {
-            return Array.from(selectedProjectIds).every(id => !sharedProjectIds.has(id));
-        }
-        return Array.from(selectedGoalIds).every(id => !sharedGoalIds.has(id));
-    }, [sharingSubTab, selectedProjectIds, selectedGoalIds, sharedProjectIds, sharedGoalIds]);
 
     const allFilteredUnassignedUsersSelected = useMemo(() => {
         if (!selectedOrgForMembers) return false;
@@ -1098,7 +1248,7 @@ export function OrganizationManager({
                     <div className="org-section-header">
                         <div>
                             <h3><Share2 size={18} /> Step 3 of 3: Cross-Organization Sharing</h3>
-                            <p className="org-section-subtitle">Use the same selected organization to configure data sharing.</p>
+                            <p className="org-section-subtitle">Choose what other organizations share with the selected recipient organization.</p>
                         </div>
                     </div>
                     {activeOrganizations.length < 2 && (
@@ -1108,7 +1258,7 @@ export function OrganizationManager({
                     <div className="org-sharing-layout">
                         {/* Org Selector Sidebar */}
                         <div className="org-sharing-sidebar">
-                            <label className="org-field-label">Selected Organization</label>
+                            <label className="org-field-label">Recipient Organization</label>
                             <div className="org-member-org-list">
                                 {activeOrganizations.map(org => (
                                     <button
@@ -1119,8 +1269,8 @@ export function OrganizationManager({
                                         <Building2 size={14} />
                                         <span className="org-member-org-name">{org.name}</span>
                                         <span className="org-sharing-badge-count">
-                                            {sharingSummary.projects.length + sharingSummary.goals.length > 0 && String(sharingTargetOrg) === String(org.id)
-                                                ? `${sharingSummary.projects.length + sharingSummary.goals.length}`
+                                            {selectedOrgSharedCount > 0 && String(sharingTargetOrg) === String(org.id)
+                                                ? `${selectedOrgSharedCount}`
                                                 : ''
                                             }
                                         </span>
@@ -1137,39 +1287,66 @@ export function OrganizationManager({
                                     <div className="org-sharing-main-header">
                                         <h4>
                                             <ChevronRight size={14} />
-                                            Sharing with <strong>{sharingTargetOrgObj?.name || 'Organization'}</strong>
+                                            Share data with <strong>{sharingTargetOrgObj?.name || 'Organization'}</strong>
                                         </h4>
                                         <div className="org-sharing-summary-badges">
                                             <span className="org-sharing-summary-badge">
-                                                {sharingSummary.projects.length} project{sharingSummary.projects.length !== 1 ? 's' : ''} shared
+                                                {selectedOrgAvailableCount} available to share
                                             </span>
                                             <span className="org-sharing-summary-badge">
-                                                {sharingSummary.goals.length} goal{sharingSummary.goals.length !== 1 ? 's' : ''} shared
+                                                {selectedOrgSharedCount} currently shared
                                             </span>
                                         </div>
+                                    </div>
+
+                                    <div className="org-info-note">
+                                        <Share2 size={14} />
+                                        <span>Only cross-organization items appear here. Items already owned by <strong>{sharingTargetOrgObj?.name || 'this organization'}</strong> are hidden because they do not need sharing.</span>
                                     </div>
 
                                     {/* Sub-tabs: Projects | Goals */}
                                     <div className="org-sharing-sub-tabs">
                                         <button
                                             className={`org-sharing-sub-tab ${sharingSubTab === 'projects' ? 'active' : ''}`}
-                                            onClick={() => { openSharingSubTab('projects'); setSelectedGoalIds(new Set()); }}
+                                            onClick={() => {
+                                                openSharingSubTab('projects');
+                                                setSharingViewState('available');
+                                                setSelectedGoalIds(new Set());
+                                            }}
                                         >
-                                            <Filter size={13} /> Projects ({allProjects?.length || 0})
+                                            <Filter size={13} /> Projects ({allAvailableProjects.length + allSharedProjects.length})
                                         </button>
                                         <button
                                             className={`org-sharing-sub-tab ${sharingSubTab === 'goals' ? 'active' : ''}`}
-                                            onClick={() => { openSharingSubTab('goals'); setSelectedProjectIds(new Set()); }}
+                                            onClick={() => {
+                                                openSharingSubTab('goals');
+                                                setSharingViewState('available');
+                                                setSelectedProjectIds(new Set());
+                                            }}
                                         >
-                                            <Target size={13} /> Goals ({rootGoals.length})
+                                            <Target size={13} /> Goals ({allAvailableRootGoals.length + allSharedRootGoals.length})
                                         </button>
                                     </div>
 
-                                    {loadingSummary ? (
+                                    {isSharingSummaryLoading ? (
                                         <div className="org-member-hint">Loading sharing data...</div>
                                     ) : sharingSubTab === 'projects' ? (
                                         /* ─── Projects Tab ─── */
                                         <div className="org-sharing-list-panel">
+                                            <div className="org-sharing-view-toggle">
+                                                <button
+                                                    className={`org-sharing-view-btn ${sharingView === 'available' ? 'active' : ''}`}
+                                                    onClick={() => setSharingViewState('available')}
+                                                >
+                                                    Available to Share ({allAvailableProjects.length})
+                                                </button>
+                                                <button
+                                                    className={`org-sharing-view-btn ${sharingView === 'shared' ? 'active' : ''}`}
+                                                    onClick={() => setSharingViewState('shared')}
+                                                >
+                                                    Currently Shared ({allSharedProjects.length})
+                                                </button>
+                                            </div>
                                             {/* Toolbar */}
                                             <div className="org-sharing-toolbar">
                                                 <div className="org-sharing-search-box">
@@ -1189,17 +1366,10 @@ export function OrganizationManager({
                                                 <div className="org-sharing-toolbar-actions">
                                                     <button
                                                         className="org-sharing-select-btn"
-                                                        onClick={allFilteredUnsharedProjectsSelected ? deselectAllProjects : selectAllFilteredProjects}
+                                                        onClick={allVisibleProjectsSelected ? deselectAllProjects : selectAllVisibleProjects}
                                                     >
-                                                        {allFilteredUnsharedProjectsSelected ? <MinusSquare size={13} /> : <CheckSquare size={13} />}
-                                                        {allFilteredUnsharedProjectsSelected ? 'Deselect All' : 'Select Unshared'}
-                                                    </button>
-                                                    <button
-                                                        className="org-sharing-select-btn"
-                                                        onClick={allFilteredSharedProjectsSelected ? deselectAllProjects : selectAllFilteredSharedProjects}
-                                                    >
-                                                        {allFilteredSharedProjectsSelected ? <MinusSquare size={13} /> : <CheckSquare size={13} />}
-                                                        {allFilteredSharedProjectsSelected ? 'Deselect All' : 'Select Shared'}
+                                                        {allVisibleProjectsSelected ? <MinusSquare size={13} /> : <CheckSquare size={13} />}
+                                                        {allVisibleProjectsSelected ? 'Deselect All' : 'Select All'}
                                                     </button>
                                                 </div>
                                             </div>
@@ -1211,32 +1381,34 @@ export function OrganizationManager({
                                                         {selectedProjectIds.size} selected
                                                     </span>
                                                     <div className="org-sharing-bulk-actions">
-                                                        <select
-                                                            value={shareAccessLevel}
-                                                            onChange={(e) => setShareAccessLevel(e.target.value)}
-                                                            className="org-sharing-access-select"
-                                                        >
-                                                            <option value="read">Read Only</option>
-                                                            <option value="write">Read & Write</option>
-                                                        </select>
-                                                        <input
-                                                            type="datetime-local"
-                                                            value={shareExpiresAt}
-                                                            onChange={(e) => setShareExpiresAt(e.target.value)}
-                                                            className="org-sharing-access-select"
-                                                            title="Optional expiry for new sharing grants"
-                                                        />
-                                                        {selectedAreUnshared && (
-                                                            <button
-                                                                className="btn-primary btn-sm"
-                                                                onClick={handleBulkShareProjects}
-                                                                disabled={bulkActionLoading}
-                                                            >
-                                                                <Share2 size={13} />
-                                                                {bulkActionLoading ? 'Sharing...' : `Share ${selectedProjectIds.size}`}
-                                                            </button>
+                                                        {sharingView === 'available' && (
+                                                            <>
+                                                                <select
+                                                                    value={shareAccessLevel}
+                                                                    onChange={(e) => setShareAccessLevel(e.target.value)}
+                                                                    className="org-sharing-access-select"
+                                                                >
+                                                                    <option value="read">Read Only</option>
+                                                                    <option value="write">Read & Write</option>
+                                                                </select>
+                                                                <input
+                                                                    type="datetime-local"
+                                                                    value={shareExpiresAt}
+                                                                    onChange={(e) => setShareExpiresAt(e.target.value)}
+                                                                    className="org-sharing-access-select"
+                                                                    title="Optional expiry for new sharing grants"
+                                                                />
+                                                                <button
+                                                                    className="btn-primary btn-sm"
+                                                                    onClick={handleBulkShareProjects}
+                                                                    disabled={bulkActionLoading}
+                                                                >
+                                                                    <Share2 size={13} />
+                                                                    {bulkActionLoading ? 'Sharing...' : `Share ${selectedProjectIds.size}`}
+                                                                </button>
+                                                            </>
                                                         )}
-                                                        {selectedAreShared && (
+                                                        {sharingView === 'shared' && (
                                                             <button
                                                                 className="org-action-btn danger"
                                                                 onClick={handleBulkUnshareProjects}
@@ -1255,27 +1427,34 @@ export function OrganizationManager({
 
                                             {/* Project List */}
                                             <div className="org-sharing-item-list">
-                                                {filteredProjects.length === 0 ? (
+                                                {visibleProjects.length === 0 ? (
                                                     <div className="org-member-hint">
-                                                        {projectSearch ? `No projects matching "${projectSearch}"` : 'No projects available'}
+                                                        {projectSearch
+                                                            ? `No projects matching "${projectSearch}"`
+                                                            : (sharingView === 'available'
+                                                                ? 'No cross-org items available to share'
+                                                                : 'No items are currently shared with this organization')}
                                                     </div>
                                                 ) : (
-                                                    filteredProjects.map(project => {
-                                                        const isShared = sharedProjectIds.has(String(project.id));
+                                                    visibleProjects.map(project => {
+                                                        const isShared = sharingView === 'shared';
                                                         const isSelected = selectedProjectIds.has(String(project.id));
-                                                        const shareInfo = sharingSummary.projects.find(p => String(p.projectId) === String(project.id));
+                                                        const shareInfo = project;
 
                                                         return (
                                                             <div
                                                                 key={project.id}
                                                                 className={`org-sharing-item ${isShared ? 'shared' : ''} ${isSelected ? 'selected' : ''}`}
-                                                                onClick={() => isShared ? toggleProjectSelect(String(project.id)) : toggleProjectSelect(String(project.id))}
+                                                                onClick={() => toggleProjectSelect(String(project.id))}
                                                             >
                                                                 <div className="org-sharing-item-checkbox">
                                                                     {isSelected ? <CheckSquare size={16} /> : <Square size={16} />}
                                                                 </div>
                                                                 <div className="org-sharing-item-info">
                                                                     <span className="org-sharing-item-name">{project.title}</span>
+                                                                    <span className="org-sharing-owner-line">
+                                                                        Owned by {project.ownerOrgName || 'Unknown organization'}
+                                                                    </span>
                                                                     {project.tags && project.tags.length > 0 && (
                                                                         <div className="org-sharing-item-tags">
                                                                             {project.tags.slice(0, 3).map(t => (
@@ -1346,13 +1525,28 @@ export function OrganizationManager({
                                             </div>
 
                                             <div className="org-sharing-list-footer">
-                                                Showing {filteredProjects.length} of {allProjects?.length || 0} projects
-                                                {sharedProjectIds.size > 0 && ` · ${sharedProjectIds.size} currently shared`}
+                                                {sharingView === 'available'
+                                                    ? `Showing ${visibleAvailableProjects.length} available project${visibleAvailableProjects.length !== 1 ? 's' : ''}`
+                                                    : `Showing ${visibleSharedProjects.length} currently shared project${visibleSharedProjects.length !== 1 ? 's' : ''}`}
                                             </div>
                                         </div>
                                     ) : (
                                         /* ─── Goals Tab ─── */
                                         <div className="org-sharing-list-panel">
+                                            <div className="org-sharing-view-toggle">
+                                                <button
+                                                    className={`org-sharing-view-btn ${sharingView === 'available' ? 'active' : ''}`}
+                                                    onClick={() => setSharingViewState('available')}
+                                                >
+                                                    Available to Share ({allAvailableRootGoals.length})
+                                                </button>
+                                                <button
+                                                    className={`org-sharing-view-btn ${sharingView === 'shared' ? 'active' : ''}`}
+                                                    onClick={() => setSharingViewState('shared')}
+                                                >
+                                                    Currently Shared ({allSharedRootGoals.length})
+                                                </button>
+                                            </div>
                                             {/* Toolbar */}
                                             <div className="org-sharing-toolbar">
                                                 <div className="org-sharing-search-box">
@@ -1372,17 +1566,10 @@ export function OrganizationManager({
                                                 <div className="org-sharing-toolbar-actions">
                                                     <button
                                                         className="org-sharing-select-btn"
-                                                        onClick={allFilteredUnsharedGoalsSelected ? deselectAllGoals : selectAllFilteredGoals}
+                                                        onClick={allVisibleGoalsSelected ? deselectAllGoals : selectAllVisibleGoals}
                                                     >
-                                                        {allFilteredUnsharedGoalsSelected ? <MinusSquare size={13} /> : <CheckSquare size={13} />}
-                                                        {allFilteredUnsharedGoalsSelected ? 'Deselect All' : 'Select Unshared'}
-                                                    </button>
-                                                    <button
-                                                        className="org-sharing-select-btn"
-                                                        onClick={allFilteredSharedGoalsSelected ? deselectAllGoals : selectAllFilteredSharedGoals}
-                                                    >
-                                                        {allFilteredSharedGoalsSelected ? <MinusSquare size={13} /> : <CheckSquare size={13} />}
-                                                        {allFilteredSharedGoalsSelected ? 'Deselect All' : 'Select Shared'}
+                                                        {allVisibleGoalsSelected ? <MinusSquare size={13} /> : <CheckSquare size={13} />}
+                                                        {allVisibleGoalsSelected ? 'Deselect All' : 'Select All'}
                                                     </button>
                                                 </div>
                                             </div>
@@ -1394,32 +1581,34 @@ export function OrganizationManager({
                                                         {selectedGoalIds.size} selected
                                                     </span>
                                                     <div className="org-sharing-bulk-actions">
-                                                        <select
-                                                            value={shareAccessLevel}
-                                                            onChange={(e) => setShareAccessLevel(e.target.value)}
-                                                            className="org-sharing-access-select"
-                                                        >
-                                                            <option value="read">Read Only</option>
-                                                            <option value="write">Read & Write</option>
-                                                        </select>
-                                                        <input
-                                                            type="datetime-local"
-                                                            value={shareExpiresAt}
-                                                            onChange={(e) => setShareExpiresAt(e.target.value)}
-                                                            className="org-sharing-access-select"
-                                                            title="Optional expiry for new sharing grants"
-                                                        />
-                                                        {selectedAreUnshared && (
-                                                            <button
-                                                                className="btn-primary btn-sm"
-                                                                onClick={handleBulkShareGoals}
-                                                                disabled={bulkActionLoading}
-                                                            >
-                                                                <Share2 size={13} />
-                                                                {bulkActionLoading ? 'Sharing...' : `Share ${selectedGoalIds.size} (+ sub-goals)`}
-                                                            </button>
+                                                        {sharingView === 'available' && (
+                                                            <>
+                                                                <select
+                                                                    value={shareAccessLevel}
+                                                                    onChange={(e) => setShareAccessLevel(e.target.value)}
+                                                                    className="org-sharing-access-select"
+                                                                >
+                                                                    <option value="read">Read Only</option>
+                                                                    <option value="write">Read & Write</option>
+                                                                </select>
+                                                                <input
+                                                                    type="datetime-local"
+                                                                    value={shareExpiresAt}
+                                                                    onChange={(e) => setShareExpiresAt(e.target.value)}
+                                                                    className="org-sharing-access-select"
+                                                                    title="Optional expiry for new sharing grants"
+                                                                />
+                                                                <button
+                                                                    className="btn-primary btn-sm"
+                                                                    onClick={handleBulkShareGoals}
+                                                                    disabled={bulkActionLoading}
+                                                                >
+                                                                    <Share2 size={13} />
+                                                                    {bulkActionLoading ? 'Sharing...' : `Share ${selectedGoalIds.size} (+ sub-goals)`}
+                                                                </button>
+                                                            </>
                                                         )}
-                                                        {selectedAreShared && (
+                                                        {sharingView === 'shared' && (
                                                             <button
                                                                 className="org-action-btn danger"
                                                                 onClick={handleBulkUnshareGoals}
@@ -1438,22 +1627,27 @@ export function OrganizationManager({
 
                                             {/* Goal List */}
                                             <div className="org-sharing-item-list">
-                                                {rootGoals.length === 0 ? (
+                                                {visibleGoalRoots.length === 0 ? (
                                                     <div className="org-member-hint">
-                                                        {goalSearch ? `No goals matching "${goalSearch}"` : 'No goals available'}
+                                                        {goalSearch
+                                                            ? `No goals matching "${goalSearch}"`
+                                                            : (sharingView === 'available'
+                                                                ? 'No cross-org items available to share'
+                                                                : 'No items are currently shared with this organization')}
                                                     </div>
                                                 ) : (
-                                                    rootGoals.map(goal => {
-                                                        const isShared = sharedGoalIds.has(String(goal.id));
-                                                        const isSelected = selectedGoalIds.has(String(goal.id));
-                                                        const childGoals = allGoals.filter(g => String(g.parentId) === String(goal.id));
-                                                        const shareInfo = sharingSummary.goals.find(g => String(g.goalId) === String(goal.id));
+                                                    visibleGoalRoots.map(goal => {
+                                                        const goalId = String(goal.id || goal.goalId);
+                                                        const isShared = sharingView === 'shared';
+                                                        const isSelected = selectedGoalIds.has(goalId);
+                                                        const childGoals = goalChildrenByParentId.get(goalId) || [];
+                                                        const shareInfo = goal;
 
                                                         return (
-                                                            <div key={goal.id} className="org-sharing-goal-group">
+                                                            <div key={goalId} className="org-sharing-goal-group">
                                                                 <div
                                                                     className={`org-sharing-item goal ${isShared ? 'shared' : ''} ${isSelected ? 'selected' : ''}`}
-                                                                    onClick={() => toggleGoalSelect(String(goal.id))}
+                                                                    onClick={() => toggleGoalSelect(goalId)}
                                                                 >
                                                                     <div className="org-sharing-item-checkbox">
                                                                         {isSelected ? <CheckSquare size={16} /> : <Square size={16} />}
@@ -1462,6 +1656,9 @@ export function OrganizationManager({
                                                                         <span className="org-sharing-item-name">
                                                                             <Target size={13} className="org-sharing-goal-icon" />
                                                                             {goal.title}
+                                                                        </span>
+                                                                        <span className="org-sharing-owner-line">
+                                                                            Owned by {goal.ownerOrgName || 'Unknown organization'}
                                                                         </span>
                                                                         <span className="org-sharing-goal-meta">
                                                                             {getGoalTypeLabel(goal.type)} - {childGoals.length} sub-goal{childGoals.length !== 1 ? 's' : ''}
@@ -1477,6 +1674,9 @@ export function OrganizationManager({
                                                                             {shareInfo?.expiresAt && (
                                                                                 <span className="org-access-badge-mini">expires {formatDateTime(shareInfo.expiresAt)}</span>
                                                                             )}
+                                                                            {shareInfo?.hasDescendantShare && !shareInfo?.hasDirectShare && (
+                                                                                <span className="org-access-badge-mini">descendant share</span>
+                                                                            )}
                                                                         </div>
                                                                     )}
                                                                 </div>
@@ -1485,7 +1685,12 @@ export function OrganizationManager({
                                                                         {childGoals.map(child => (
                                                                             <div key={child.id} className={`org-sharing-child-row ${sharedGoalIds.has(String(child.id)) ? 'shared' : ''}`}>
                                                                                 <span className="org-sharing-child-indent">↳</span>
-                                                                                <span className="org-sharing-child-name">{child.title}</span>
+                                                                                <span className="org-sharing-child-name">
+                                                                                    {child.title}
+                                                                                    {child.ownerOrgName && child.ownerOrgName !== goal.ownerOrgName && (
+                                                                                        <span className="org-sharing-child-owner">Owned by {child.ownerOrgName}</span>
+                                                                                    )}
+                                                                                </span>
                                                                                 {sharedGoalIds.has(String(child.id)) && (
                                                                                     <span className="org-access-badge-mini">shared</span>
                                                                                 )}
@@ -1500,13 +1705,14 @@ export function OrganizationManager({
                                             </div>
 
                                             <div className="org-sharing-list-footer">
-                                                Showing {rootGoals.length} root goals
-                                                {sharedGoalIds.size > 0 && ` · ${sharedGoalIds.size} goals currently shared`}
+                                                {sharingView === 'available'
+                                                    ? `Showing ${visibleAvailableRootGoals.length} available goal tree${visibleAvailableRootGoals.length !== 1 ? 's' : ''}`
+                                                    : `Showing ${visibleSharedRootGoals.length} currently shared goal tree${visibleSharedRootGoals.length !== 1 ? 's' : ''}`}
                                             </div>
 
                                             <div className="org-info-note">
                                                 <Target size={14} />
-                                                <span>Sharing a goal automatically shares its <strong>sub-goals</strong> and <strong>KPIs/metrics</strong> with the target organization.</span>
+                                                <span>Sharing a goal automatically shares its <strong>sub-goals</strong> and <strong>KPIs/metrics</strong> with the recipient organization.</span>
                                             </div>
                                         </div>
                                     )}
@@ -1514,7 +1720,7 @@ export function OrganizationManager({
                             ) : (
                                 <div className="org-member-placeholder">
                                     <Share2 size={28} />
-                                    <p>Select a target organization from the left to manage data sharing</p>
+                                    <p>Select a recipient organization from the left to manage cross-organization sharing.</p>
                                 </div>
                             )}
                         </div>
@@ -1524,3 +1730,4 @@ export function OrganizationManager({
         </div>
     );
 }
+

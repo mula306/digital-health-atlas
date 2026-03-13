@@ -66,10 +66,17 @@ export function AdminPanel({
             ]
         },
         {
+            category: 'Status Reports',
+            items: [
+                { key: 'can_view_status_reports', label: 'View Status Reports' },
+                { key: 'can_create_status_reports', label: 'Create Status Reports' }
+            ]
+        },
+        {
             category: 'Reports',
             items: [
-                { key: 'can_view_reports', label: 'View Status Reports' },
-                { key: 'can_create_reports', label: 'Create Status Reports' },
+                { key: 'can_view_exec_packs', label: 'View Reports' },
+                { key: 'can_manage_exec_packs', label: 'Manage Executive Packs' },
                 { key: 'can_run_exec_pack_scheduler', label: 'Run Due Executive Packs' }
             ]
         },

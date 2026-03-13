@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useData } from '../../context/DataContext';
 import { useToast } from '../../context/ToastContext';
 import { ProjectTagSelector } from '../UI/ProjectTagSelector';
@@ -13,8 +13,9 @@ export function EditProjectForm({
     canEditProject = true,
     canDeleteProject = false
 }) {
-    const { updateProject, updateProjectTags, deleteProject, goals } = useData();
+    const { updateProject, updateProjectTags, deleteProject, goals, currentUser, fetchOrganizations, hasRole } = useData();
     const { success, error: showError } = useToast();
+    const isAdmin = hasRole('Admin');
     const [title, setTitle] = useState(project.title || '');
     // Initialize from goalIds array or fall back to single goalId
     const [goalIds, setGoalIds] = useState(() => {
@@ -31,7 +32,35 @@ export function EditProjectForm({
             isPrimary: !!tag.isPrimary
         }))
     );
+    const [organizations, setOrganizations] = useState([]);
+    const [selectedOrgId, setSelectedOrgId] = useState(
+        project.orgId || (currentUser?.orgId ? String(currentUser.orgId) : '')
+    );
     const [confirmDelete, setConfirmDelete] = useState(false);
+
+    useEffect(() => {
+        let cancelled = false;
+
+        async function loadOrganizations() {
+            if (!isAdmin) return;
+            try {
+                const orgs = await fetchOrganizations();
+                if (!cancelled) {
+                    setOrganizations(Array.isArray(orgs) ? orgs : []);
+                }
+            } catch (err) {
+                console.warn('Failed to load organizations for project editing', err);
+                if (!cancelled) {
+                    setOrganizations([]);
+                }
+            }
+        }
+
+        loadOrganizations();
+        return () => {
+            cancelled = true;
+        };
+    }, [fetchOrganizations, isAdmin]);
 
     const areTagsEqual = (a, b) => {
         if (a.length !== b.length) return false;
@@ -40,6 +69,18 @@ export function EditProjectForm({
             .sort((x, y) => x.tagId.localeCompare(y.tagId));
         return JSON.stringify(normalize(a)) === JSON.stringify(normalize(b));
     };
+
+    const isSharedProject = !isAdmin && String(project.orgId) !== String(currentUser?.orgId);
+
+    // Separate goals into owner-org and user-org groups
+    const ownerOrgGoalIds = goalIds.filter(gid => {
+        const goal = goals.find(g => String(g.id) === String(gid));
+        return goal && String(goal.orgId) === String(project.orgId);
+    });
+    const userOrgGoalIds = goalIds.filter(gid => {
+        const goal = goals.find(g => String(g.id) === String(gid));
+        return !goal || String(goal.orgId) !== String(project.orgId);
+    });
 
     const addGoal = () => {
         if (!pendingGoalId || goalIds.includes(String(pendingGoalId))) return;
@@ -53,6 +94,11 @@ export function EditProjectForm({
     };
 
     const removeGoal = (id) => {
+        // Shared users cannot remove owner-org goals
+        if (isSharedProject) {
+            const goal = goals.find(g => String(g.id) === String(id));
+            if (goal && String(goal.orgId) === String(project.orgId)) return;
+        }
         setGoalIds(prev => prev.filter(gid => gid !== String(id)));
     };
 
@@ -69,9 +115,20 @@ export function EditProjectForm({
         }
         const normalizedPendingGoalId = String(pendingGoalId || '').trim();
         const hasPendingGoal = normalizedPendingGoalId !== '' && !goalIds.includes(normalizedPendingGoalId);
-        const effectiveGoalIds = hasPendingGoal
+        let effectiveGoalIds = hasPendingGoal
             ? [...goalIds, normalizedPendingGoalId]
-            : goalIds;
+            : [...goalIds];
+
+        // Safety: for shared users, always ensure owner-org goals are preserved
+        if (isSharedProject) {
+            const originalOwnerGoalIds = (project.goalIds || []).filter(gid => {
+                const goal = goals.find(g => String(g.id) === String(gid));
+                return goal && String(goal.orgId) === String(project.orgId);
+            }).map(String);
+            originalOwnerGoalIds.forEach(gid => {
+                if (!effectiveGoalIds.includes(gid)) effectiveGoalIds.push(gid);
+            });
+        }
 
         const goalValidation = validateGoalAssignment(goals, effectiveGoalIds);
         if (!goalValidation.valid) {
@@ -82,8 +139,18 @@ export function EditProjectForm({
             showError('Maximum 8 tags per project');
             return;
         }
+        if (isAdmin && !selectedOrgId) {
+            showError('Select an owning organization for this project');
+            return;
+        }
         try {
-            await updateProject(project.id, { title, goalIds: effectiveGoalIds, description, status });
+            await updateProject(project.id, {
+                title,
+                goalIds: effectiveGoalIds,
+                description,
+                status,
+                ...(isAdmin ? { orgId: selectedOrgId } : {})
+            });
             await updateProjectTags(project.id, projectTags);
             success('Project and tags updated successfully');
             onClose();
@@ -109,6 +176,26 @@ export function EditProjectForm({
             setConfirmDelete(true);
         }
     };
+
+    const renderGoalChip = (gid, canRemove) => (
+        <span key={gid} style={{
+            display: 'inline-flex', alignItems: 'center', gap: '6px',
+            background: canRemove ? 'var(--bg-tertiary)' : 'var(--bg-secondary)',
+            border: `1px solid ${canRemove ? 'var(--border-primary)' : 'var(--border-secondary)'}`,
+            borderRadius: '6px', padding: '4px 10px', fontSize: '0.85rem',
+            opacity: canRemove ? 1 : 0.7
+        }}>
+            {!canRemove && <span title="Managed by owner organization" style={{ fontSize: '0.75rem' }}>🔒</span>}
+            {getGoalTitle(gid)}
+            {canRemove && (
+                <button type="button" onClick={() => removeGoal(gid)}
+                    disabled={!canEditProject}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: 'var(--text-tertiary)', display: 'flex' }}>
+                    <X size={14} />
+                </button>
+            )}
+        </span>
+    );
 
     return (
         <form onSubmit={handleSubmit}>
@@ -141,26 +228,83 @@ export function EditProjectForm({
                 </div>
             </div>
 
+            {isAdmin && (
+                <div className="form-group">
+                    <label>Owning Organization</label>
+                    <select
+                        value={selectedOrgId}
+                        onChange={(e) => setSelectedOrgId(e.target.value)}
+                        className="form-select"
+                        disabled={!canEditProject}
+                        required
+                    >
+                        <option value="">Select organization</option>
+                        {organizations.map((organization) => (
+                            <option key={organization.id} value={organization.id}>
+                                {organization.name}
+                            </option>
+                        ))}
+                    </select>
+                    <div className="form-hint form-hint-warning">
+                        Changing the owning organization moves default visibility and control to that organization.
+                    </div>
+                </div>
+            )}
+
             <div className="form-group">
                 <label>Linked Goals</label>
-                {goalIds.length > 0 && (
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.75rem' }}>
-                        {goalIds.map(gid => (
-                            <span key={gid} style={{
-                                display: 'inline-flex', alignItems: 'center', gap: '6px',
-                                background: 'var(--bg-tertiary)', border: '1px solid var(--border-primary)',
-                                borderRadius: '6px', padding: '4px 10px', fontSize: '0.85rem'
-                            }}>
-                                {getGoalTitle(gid)}
-                                <button type="button" onClick={() => removeGoal(gid)}
-                                    disabled={!canEditProject}
-                                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: 'var(--text-tertiary)', display: 'flex' }}>
-                                    <X size={14} />
-                                </button>
-                            </span>
-                        ))}
+
+                {/* Admin: show grouped goals */}
+                {isAdmin && goalIds.length > 0 && (
+                    <div style={{ marginBottom: '0.75rem' }}>
+                        {ownerOrgGoalIds.length > 0 && (
+                            <div style={{ marginBottom: '0.5rem' }}>
+                                <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Owner Organization</div>
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                                    {ownerOrgGoalIds.map(gid => renderGoalChip(gid, true))}
+                                </div>
+                            </div>
+                        )}
+                        {userOrgGoalIds.length > 0 && (
+                            <div>
+                                <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Other Organizations</div>
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                                    {userOrgGoalIds.map(gid => renderGoalChip(gid, true))}
+                                </div>
+                            </div>
+                        )}
                     </div>
                 )}
+
+                {/* Shared user: owner goals read-only, own goals editable */}
+                {!isAdmin && isSharedProject && goalIds.length > 0 && (
+                    <div style={{ marginBottom: '0.75rem' }}>
+                        {ownerOrgGoalIds.length > 0 && (
+                            <div style={{ marginBottom: '0.5rem' }}>
+                                <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Owner Organization</div>
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                                    {ownerOrgGoalIds.map(gid => renderGoalChip(gid, false))}
+                                </div>
+                            </div>
+                        )}
+                        {userOrgGoalIds.length > 0 && (
+                            <div>
+                                <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Your Organization</div>
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                                    {userOrgGoalIds.map(gid => renderGoalChip(gid, true))}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {/* Owner user: flat list as before */}
+                {!isAdmin && !isSharedProject && goalIds.length > 0 && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                        {goalIds.map(gid => renderGoalChip(gid, true))}
+                    </div>
+                )}
+
                 <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-start' }}>
                     <div style={{ flex: 1 }}>
                         <CascadingGoalFilter value={pendingGoalId} onChange={setPendingGoalId} />
