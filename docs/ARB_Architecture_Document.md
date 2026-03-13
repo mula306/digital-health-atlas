@@ -361,6 +361,14 @@ Primary operational architecture risk is scheduler duplication in multi-instance
 - RBAC catalog checks (`npm run lint:rbac`)
 - GitHub Actions phase gates for blocking/advisory enforcement
 
+### Tooling note
+
+- The frontend lint stack now runs on `eslint 10` and `@eslint/js 10`.
+- As of `March 13, 2026`, the stable React hooks lint plugin line does not yet advertise `eslint 10` support, so the repo temporarily uses `eslint-plugin-react-hooks@7.1.0-canary-c80a0750-20260312`.
+- This is an intentional tooling-only exception, not an application runtime dependency.
+- The repository no longer depends on `eslint-plugin-react`; the active lint policy is enforced through `react-hooks`, `react-refresh`, and `unused-imports`.
+- Exit criterion: move back to a stable `eslint-plugin-react-hooks` release once it publishes an `eslint 10` peer range and rerun `npm run lint` plus `npm run test:phase-c`.
+
 ### Gaps
 
 - No formal SLOs/SLIs documented (availability, p95 latency, workflow completion time).

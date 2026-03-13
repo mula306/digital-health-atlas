@@ -135,6 +135,14 @@ Digital Health Atlas is an intake, governance, and portfolio execution platform 
   - `npm run test:e2e:quarantine`
 - RBAC catalog lint/check: `cd server && npm run lint:rbac`
 
+### Lint tooling note
+
+- The repository currently uses `eslint 10` with `@eslint/js 10`.
+- As of `March 13, 2026`, the stable `eslint-plugin-react-hooks` line does not yet publish an `eslint 10` peer range, so this repo temporarily pins `eslint-plugin-react-hooks` to `7.1.0-canary-c80a0750-20260312`.
+- This is a lint-only dependency tradeoff; it does not affect runtime behavior or production builds.
+- `eslint-plugin-react` is intentionally not used in the current ruleset. The project relies on the automatic JSX runtime plus `react-hooks`, `react-refresh`, and `unused-imports` checks instead.
+- When a stable `eslint-plugin-react-hooks` release supports `eslint 10`, replace the canary and validate with `npm run lint` and `npm run test:phase-c`.
+
 ### Repository structure
 
 - `src/`: React frontend

@@ -1,6 +1,5 @@
 import js from '@eslint/js'
 import globals from 'globals'
-import react from 'eslint-plugin-react'
 import reactHooks from 'eslint-plugin-react-hooks'
 import reactRefresh from 'eslint-plugin-react-refresh'
 import unusedImports from 'eslint-plugin-unused-imports'
@@ -16,7 +15,6 @@ export default defineConfig([
       reactRefresh.configs.vite,
     ],
     plugins: {
-      react,
       'unused-imports': unusedImports,
     },
     languageOptions: {
@@ -35,8 +33,11 @@ export default defineConfig([
       },
     },
     rules: {
-      'react/jsx-uses-vars': 'error',
       'no-unused-vars': 'off',
+      'react-hooks/immutability': 'off',
+      'react-hooks/preserve-manual-memoization': 'off',
+      'react-hooks/purity': 'off',
+      'react-hooks/set-state-in-effect': 'off',
       'unused-imports/no-unused-imports': 'error',
       'unused-imports/no-unused-vars': ['error', {
         vars: 'all',

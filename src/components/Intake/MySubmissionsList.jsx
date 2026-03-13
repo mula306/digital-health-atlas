@@ -36,7 +36,7 @@ export function MySubmissionsList() {
         const rawPayload = localStorage.getItem(INTAKE_FOCUS_STORAGE_KEY);
         if (!rawPayload) return;
 
-        let payload = null;
+        let payload;
         try {
             payload = JSON.parse(rawPayload);
         } catch {

@@ -608,7 +608,7 @@ export function IntakeRequestsList({ initialFilter = 'all', showFilterTabs = tru
         const rawPayload = localStorage.getItem(INTAKE_FOCUS_STORAGE_KEY);
         if (!rawPayload) return;
 
-        let payload = null;
+        let payload;
         try {
             payload = JSON.parse(rawPayload);
         } catch {

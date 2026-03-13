@@ -60,7 +60,7 @@ export function TaskTableView({ project, onTaskClick }) {
     const statusOrder = { 'todo': 0, 'in-progress': 1, 'blocked': 2, 'review': 3, 'done': 4 };
 
     const sortedTasks = [...(project.tasks || [])].sort((a, b) => {
-        let comparison = 0;
+        let comparison;
 
         switch (sortField) {
             case 'title':

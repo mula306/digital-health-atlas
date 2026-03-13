@@ -75,7 +75,8 @@ export const runSqlFile = async ({
             const snippet = batch.split('\n').slice(0, 3).join(' ').slice(0, 180);
             throw new Error(
                 `${filename} failed at batch ${i + 1}/${batches.length}: ${err.message}\n` +
-                `Batch snippet: ${snippet}`
+                `Batch snippet: ${snippet}`,
+                { cause: err }
             );
         }
     }

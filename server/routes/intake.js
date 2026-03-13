@@ -359,11 +359,11 @@ const calculateRequiredVotes = (eligibleVoterCount, policy) => {
 };
 
 const normalizeCriteriaSnapshot = (criteriaJson) => {
-    let parsed = [];
+    let parsed;
     try {
         parsed = JSON.parse(criteriaJson || '[]');
     } catch {
-        parsed = [];
+        return [];
     }
 
     if (!Array.isArray(parsed)) return [];
@@ -2938,7 +2938,7 @@ router.get('/submissions/:id/governance', requireAuth, async (req, res) => {
 
         const criteriaSnapshot = normalizeCriteriaSnapshot(review.criteriaSnapshotJson);
         const votes = votesResult.recordset.map(vote => {
-            let parsedScores = {};
+            let parsedScores;
             try {
                 parsedScores = JSON.parse(vote.scoresJson || '{}');
             } catch {

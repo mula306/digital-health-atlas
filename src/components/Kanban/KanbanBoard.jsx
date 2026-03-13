@@ -168,7 +168,7 @@ export function KanbanBoard({ project, onBack, goalTitle }) {
         const rawPayload = localStorage.getItem(PROJECT_TASK_FOCUS_STORAGE_KEY);
         if (!rawPayload) return;
 
-        let payload = null;
+        let payload;
         try {
             payload = JSON.parse(rawPayload);
         } catch {
@@ -207,7 +207,7 @@ export function KanbanBoard({ project, onBack, goalTitle }) {
         const rawPayload = localStorage.getItem(PROJECT_VIEW_PREFERENCE_STORAGE_KEY);
         if (!rawPayload) return;
 
-        let payload = null;
+        let payload;
         try {
             payload = JSON.parse(rawPayload);
         } catch {
