@@ -22,7 +22,14 @@ vi.mock('../../components/Intake/IntakeFormBuilder', () => ({
 }));
 
 vi.mock('../../components/UI/Modal', () => ({
-    Modal: ({ isOpen, children }) => (isOpen ? <div>{children}</div> : null)
+    Modal: ({ isOpen, title, children }) => (
+        isOpen ? (
+            <div>
+                {title ? <h2>{title}</h2> : null}
+                {children}
+            </div>
+        ) : null
+    )
 }));
 
 const buildPermissionChecker = (keys = []) => {
@@ -48,7 +55,8 @@ const baseContext = {
     mySubmissions: [
         { id: 'mine1', status: 'pending', formName: 'Form One', submittedAt: new Date().toISOString() }
     ],
-    deleteIntakeForm: vi.fn()
+    deleteIntakeForm: vi.fn(),
+    restoreIntakeForm: vi.fn()
 };
 
 describe('IntakePage stage navigation', () => {
@@ -98,5 +106,28 @@ describe('IntakePage stage navigation', () => {
         expect(governanceStep).not.toBeNull();
         expect(governanceStep).toBeDisabled();
         expect(screen.getAllByText('Not Ready').length).toBeGreaterThan(0);
+    });
+
+    it('uses a modal confirmation before retiring or archiving an intake form', async () => {
+        const deleteIntakeForm = vi.fn().mockResolvedValue({});
+        mockUseData.mockReturnValue({
+            ...baseContext,
+            deleteIntakeForm,
+            hasPermission: buildPermissionChecker(['can_manage_intake_forms'])
+        });
+
+        const user = userEvent.setup();
+
+        render(<IntakePage initialStage="form-admin" onStageChange={() => { }} />);
+
+        await user.click(screen.getByTitle('Retire or Archive Form'));
+
+        expect(deleteIntakeForm).not.toHaveBeenCalled();
+        expect(screen.getByText('Archive Intake Form')).toBeInTheDocument();
+        expect(screen.getByText('Archive Form One?')).toBeInTheDocument();
+
+        await user.click(screen.getByRole('button', { name: 'Archive Form' }));
+
+        expect(deleteIntakeForm).toHaveBeenCalledWith('f1');
     });
 });

@@ -1786,6 +1786,50 @@
     border-color: #10b981;
 }
 
+.intake-delete-modal {
+    display: flex;
+    flex-direction: column;
+    gap: 0.9rem;
+}
+
+.intake-delete-modal-message,
+.intake-delete-modal-detail,
+.intake-delete-modal-error {
+    margin: 0;
+}
+
+.intake-delete-modal-message {
+    color: var(--text-primary);
+}
+
+.intake-delete-modal-detail {
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
+
+.intake-delete-modal-error {
+    color: #b91c1c;
+    font-size: 0.9rem;
+}
+
+.intake-delete-modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    margin-top: 0.35rem;
+}
+
+.intake-delete-modal-confirm {
+    background: #dc2626;
+    border-color: #dc2626;
+}
+
+.intake-delete-modal-confirm:hover:not(:disabled) {
+    background: #b91c1c;
+    border-color: #b91c1c;
+}
+
 @media (max-width: 960px) {
     .intake-workflow-nav {
         grid-template-columns: 1fr;

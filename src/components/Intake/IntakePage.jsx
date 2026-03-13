@@ -13,6 +13,7 @@ export function IntakePage({ initialStage = null, onStageChange = null }) {
     const {
         intakeForms,
         deleteIntakeForm,
+        restoreIntakeForm,
         intakeSubmissions,
         mySubmissions,
         hasPermission
@@ -30,6 +31,9 @@ export function IntakePage({ initialStage = null, onStageChange = null }) {
     const [showFormModal, setShowFormModal] = useState(false);
     const [editingForm, setEditingForm] = useState(null);
     const [copiedId, setCopiedId] = useState('');
+    const [deleteConfirmForm, setDeleteConfirmForm] = useState(null);
+    const [deleteConfirmError, setDeleteConfirmError] = useState('');
+    const [isDeletingForm, setIsDeletingForm] = useState(false);
 
     const pendingCount = intakeSubmissions.filter((s) => s.status === 'pending').length;
     const awaitingCount = intakeSubmissions.filter((s) => s.status === 'awaiting-response').length;
@@ -259,11 +263,75 @@ export function IntakePage({ initialStage = null, onStageChange = null }) {
         setTimeout(() => setCopiedId(''), 2000);
     };
 
-    const handleDeleteForm = (formId) => {
-        if (confirm('Are you sure you want to delete this form? Existing submissions will remain.')) {
-            deleteIntakeForm(formId);
+    const closeDeleteConfirm = useCallback(() => {
+        if (isDeletingForm) return;
+        setDeleteConfirmForm(null);
+        setDeleteConfirmError('');
+    }, [isDeletingForm]);
+
+    const getDeleteConfirmCopy = useCallback((form) => {
+        if (!form) {
+            return {
+                title: 'Confirm Form Change',
+                message: '',
+                detail: '',
+                confirmLabel: 'Confirm'
+            };
         }
+
+        const submissionCount = Number(form.submissionCount || 0);
+        const lifecycleState = String(form.lifecycleState || 'active');
+
+        if (submissionCount > 0) {
+            return {
+                title: 'Retire Intake Form',
+                message: `Retire ${form.name}?`,
+                detail: 'Existing submission history will be preserved, and the form will be hidden from new intake until you restore it.',
+                confirmLabel: 'Retire Form'
+            };
+        }
+
+        if (lifecycleState === 'draft') {
+            return {
+                title: 'Delete Draft Intake Form',
+                message: `Delete ${form.name}?`,
+                detail: 'This draft has no submissions and will be permanently removed.',
+                confirmLabel: 'Delete Draft'
+            };
+        }
+
+        return {
+            title: 'Archive Intake Form',
+            message: `Archive ${form.name}?`,
+            detail: 'The form will be hidden from new intake by default, and you can restore it later.',
+            confirmLabel: 'Archive Form'
+        };
+    }, []);
+
+    const handleDeleteForm = (form, submissionCount) => {
+        setDeleteConfirmError('');
+        setDeleteConfirmForm({ ...form, submissionCount });
     };
+
+    const handleRestoreForm = (formId) => {
+        restoreIntakeForm(formId);
+    };
+
+    const confirmDeleteForm = useCallback(async () => {
+        if (!deleteConfirmForm) return;
+
+        setIsDeletingForm(true);
+        setDeleteConfirmError('');
+
+        try {
+            await deleteIntakeForm(deleteConfirmForm.id);
+            setDeleteConfirmForm(null);
+        } catch (err) {
+            setDeleteConfirmError(err?.message || 'Failed to update intake form lifecycle.');
+        } finally {
+            setIsDeletingForm(false);
+        }
+    }, [deleteConfirmForm, deleteIntakeForm]);
 
     const formatDate = (dateStr) => {
         return new Date(dateStr).toLocaleDateString('en-US', {
@@ -280,11 +348,15 @@ export function IntakePage({ initialStage = null, onStageChange = null }) {
     };
 
     const renderFormsGrid = ({ manageMode = false }) => {
-        if (intakeForms.length === 0) {
+        const visibleForms = (manageMode
+            ? intakeForms
+            : intakeForms.filter((form) => String(form.lifecycleState || 'active') === 'active'));
+
+        if (visibleForms.length === 0) {
             return (
                 <div className="intake-empty">
                     <FileText size={48} />
-                    <p>No intake forms available at this time.</p>
+                    <p>{manageMode ? 'No intake forms available yet.' : 'No active intake forms are available at this time.'}</p>
                     {manageMode && canManageForms && (
                         <button className="btn-primary" onClick={() => { setEditingForm(null); setShowFormModal(true); }}>
                             <Plus size={18} /> Create Form
@@ -296,31 +368,50 @@ export function IntakePage({ initialStage = null, onStageChange = null }) {
 
         return (
             <div className="forms-grid">
-                {intakeForms.map((form) => {
+                {visibleForms.map((form) => {
                     const submissionCount = intakeSubmissions.filter((s) => s.formId === form.id).length;
                     const governancePolicy = form.governanceMode
                         ? `Governance: ${form.governanceMode}`
                         : 'Governance: off';
+                    const lifecycleLabel = form.lifecycleState === 'retired'
+                        ? 'Retired'
+                        : form.lifecycleState === 'archived'
+                            ? 'Archived'
+                            : 'Active';
                     return (
                         <div key={form.id} className="form-card">
                             <div className="form-card-header">
                                 <h3>{form.name}</h3>
+                                {manageMode && (
+                                    <span className="project-goal-chip project-goal-chip-more">{lifecycleLabel}</span>
+                                )}
                                 {manageMode && canManageForms && (
                                     <div className="form-card-actions">
                                         <button
                                             className="icon-btn"
                                             title="Edit Form"
                                             onClick={() => { setEditingForm(form); setShowFormModal(true); }}
+                                            disabled={form.lifecycleState === 'retired' || form.lifecycleState === 'archived'}
                                         >
                                             <Edit2 size={16} />
                                         </button>
-                                        <button
-                                            className="icon-btn"
-                                            title="Delete Form"
-                                            onClick={() => handleDeleteForm(form.id)}
-                                        >
-                                            <Trash2 size={16} />
-                                        </button>
+                                        {(form.lifecycleState === 'retired' || form.lifecycleState === 'archived') ? (
+                                            <button
+                                                className="icon-btn"
+                                                title="Restore Form"
+                                                onClick={() => handleRestoreForm(form.id)}
+                                            >
+                                                <Check size={16} />
+                                            </button>
+                                        ) : (
+                                            <button
+                                                className="icon-btn"
+                                                title="Retire or Archive Form"
+                                                onClick={() => handleDeleteForm(form, submissionCount)}
+                                            >
+                                                <Trash2 size={16} />
+                                            </button>
+                                        )}
                                     </div>
                                 )}
                             </div>
@@ -354,6 +445,7 @@ export function IntakePage({ initialStage = null, onStageChange = null }) {
                                     className="btn-primary"
                                     onClick={() => window.open(`/#/intake/${form.id}`, '_blank')}
                                     style={{ flex: 1 }}
+                                    disabled={form.lifecycleState !== 'active'}
                                 >
                                     Start {form.name}
                                 </button>
@@ -375,6 +467,8 @@ export function IntakePage({ initialStage = null, onStageChange = null }) {
             ))}
         </div>
     );
+
+    const deleteConfirmCopy = getDeleteConfirmCopy(deleteConfirmForm);
 
     return (
         <div className="intake-page">
@@ -512,6 +606,42 @@ export function IntakePage({ initialStage = null, onStageChange = null }) {
                     form={editingForm}
                     onClose={() => setShowFormModal(false)}
                 />
+            </Modal>
+
+            <Modal
+                isOpen={!!deleteConfirmForm}
+                onClose={closeDeleteConfirm}
+                title={deleteConfirmCopy.title}
+                size="sm"
+            >
+                <div className="intake-delete-modal">
+                    <p className="intake-delete-modal-message">
+                        <strong>{deleteConfirmCopy.message}</strong>
+                    </p>
+                    <p className="intake-delete-modal-detail">{deleteConfirmCopy.detail}</p>
+                    {deleteConfirmError && (
+                        <p className="intake-delete-modal-error" role="alert">
+                            {deleteConfirmError}
+                        </p>
+                    )}
+                    <div className="intake-delete-modal-actions">
+                        <button
+                            className="btn-secondary"
+                            onClick={closeDeleteConfirm}
+                            disabled={isDeletingForm}
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            className="btn-primary intake-delete-modal-confirm"
+                            onClick={confirmDeleteForm}
+                            disabled={isDeletingForm}
+                        >
+                            <Trash2 size={16} />
+                            {isDeletingForm ? 'Working...' : deleteConfirmCopy.confirmLabel}
+                        </button>
+                    </div>
+                </div>
             </Modal>
         </div>
     );

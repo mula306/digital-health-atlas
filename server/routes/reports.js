@@ -5,6 +5,11 @@ import { withSharedScope } from '../middleware/orgScope.js';
 import { handleError } from '../utils/errorHandler.js';
 import { logAudit } from '../utils/auditLogger.js';
 import { addParams, buildInClause } from '../utils/sqlHelpers.js';
+import {
+    LIFECYCLE_VIEW_MODES,
+    buildLifecycleInClause,
+    getProjectLifecycleViewStates
+} from '../utils/lifecycle.js';
 
 const router = express.Router();
 
@@ -116,7 +121,8 @@ const normalizePackPayload = (payload = {}, fallback = null) => {
         goalIds: normalizeIntArray(rawFilters.goalIds),
         tagIds: normalizeIntArray(rawFilters.tagIds),
         statuses: parseStringArray(rawFilters.statuses).map((status) => status.toLowerCase()),
-        watchedOnly: !!rawFilters.watchedOnly
+        watchedOnly: !!rawFilters.watchedOnly,
+        includeArchived: !!rawFilters.includeArchived
     };
 
     return {
@@ -417,10 +423,17 @@ const computePackSummary = async ({ pool, orgId, viewerOid, pack, lastRunAt }) =
     const params = {
         viewerOid
     };
+    const lifecycleView = pack.filters?.includeArchived ? LIFECYCLE_VIEW_MODES.ALL : LIFECYCLE_VIEW_MODES.ACTIVE;
+    const { text: lifecycleText, params: lifecycleParams } = buildLifecycleInClause(
+        'projectLifecycle',
+        getProjectLifecycleViewStates(lifecycleView)
+    );
 
     if (orgId !== null && orgId !== undefined) {
         params.orgId = orgId;
     }
+    Object.assign(params, lifecycleParams);
+    whereConditions.push(`p.lifecycleState IN (${lifecycleText})`);
 
     if (Array.isArray(pack.filters?.goalIds) && pack.filters.goalIds.length > 0) {
         const { text, params: inParams } = buildInClause('goalId', pack.filters.goalIds);
@@ -521,6 +534,7 @@ const computePackSummary = async ({ pool, orgId, viewerOid, pack, lastRunAt }) =
         overdueProjectCount: overdueProjects.length,
         changedReportsCount,
         exceptionOnly: !!pack.exceptionOnly,
+        includeArchived: !!pack.filters?.includeArchived,
         topExceptions
     };
 };

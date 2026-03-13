@@ -7,6 +7,17 @@ import { logAudit } from '../utils/auditLogger.js';
 import { buildInClause, addParams } from '../utils/sqlHelpers.js';
 import { ensureOrganizationExists, resolveOwnedOrgId } from '../utils/orgOwnership.js';
 import {
+    ACTIVE_PROJECT_LIFECYCLE_STATES,
+    GOAL_LIFECYCLE_STATES,
+    LIFECYCLE_VIEW_MODES,
+    addLifecycleParams,
+    buildLifecycleInClause,
+    getGoalLifecycleViewStates,
+    normalizeGoalLifecycleState,
+    normalizeLifecycleView,
+    touchGoalActivity
+} from '../utils/lifecycle.js';
+import {
     GOAL_LEAF_TYPE,
     GOAL_LEVEL_CODES,
     GOAL_ROOT_TYPE,
@@ -28,6 +39,18 @@ const mapProjectContextStatus = ({ totalLinkedProjectCount, visibleLinkedProject
 };
 
 const formatAllowedGoalTypes = () => GOAL_LEVEL_CODES.join(', ');
+
+const parseGoalLifecycleView = (value) => normalizeLifecycleView(value || LIFECYCLE_VIEW_MODES.ACTIVE);
+
+const mapGoalLifecycleMetadata = (row) => ({
+    lifecycleState: normalizeGoalLifecycleState(row.lifecycleState),
+    retiredAt: row.retiredAt || null,
+    archivedAt: row.archivedAt || null,
+    archivedByOid: row.archivedByOid || null,
+    archiveReason: row.archiveReason || null,
+    lastActivityAt: row.lastActivityAt || null,
+    retentionClass: row.retentionClass || 'confidential'
+});
 
 const validateGoalTypePosition = ({ type, parentGoal = null, childGoals = [] }) => {
     const normalizedType = normalizeGoalType(type);
@@ -82,6 +105,11 @@ const validateGoalTypePosition = ({ type, parentGoal = null, childGoals = [] }) 
 
 const fetchGoalProjectContextMap = async (pool, orgId) => {
     const request = pool.request();
+    const { text: projectLifecycleText, params: projectLifecycleParams } = buildLifecycleInClause(
+        'linkedProjectLifecycle',
+        ACTIVE_PROJECT_LIFECYCLE_STATES
+    );
+    addLifecycleParams(request, projectLifecycleParams);
 
     const query = orgId === null || orgId === undefined
         ? `
@@ -92,6 +120,7 @@ const fetchGoalProjectContextMap = async (pool, orgId) => {
                 SELECT p.goalId, p.id AS projectId
                 FROM Projects p
                 WHERE p.goalId IS NOT NULL
+                  AND p.lifecycleState IN (${projectLifecycleText})
             )
             SELECT
                 gpl.goalId,
@@ -108,6 +137,7 @@ const fetchGoalProjectContextMap = async (pool, orgId) => {
                 SELECT p.goalId, p.id AS projectId
                 FROM Projects p
                 WHERE p.goalId IS NOT NULL
+                  AND p.lifecycleState IN (${projectLifecycleText})
             )
             SELECT
                 gpl.goalId,
@@ -141,21 +171,28 @@ router.get('/', checkPermission(['can_view_goals', 'can_view_exec_dashboard']), 
     try {
         console.log('Fetching goals...');
         const pool = await getPool();
+        const lifecycleView = parseGoalLifecycleView(req.query.lifecycle);
+        const { text: lifecycleText, params: lifecycleParams } = buildLifecycleInClause('goalLifecycle', getGoalLifecycleViewStates(lifecycleView));
         console.log('Pool acquired. Querying Goals...');
         let goalsResult;
         if (req.orgId === null || req.orgId === undefined) {
             // Admin: see all goals
-            goalsResult = await pool.request()
+            const request = pool.request();
+            addLifecycleParams(request, lifecycleParams);
+            goalsResult = await request
                 .query(`
                     SELECT
                         g.*,
                         CAST('owner' AS NVARCHAR(20)) AS accessLevel
                     FROM Goals g
+                    WHERE g.lifecycleState IN (${lifecycleText})
                     ORDER BY g.id
                 `);
         } else {
-            goalsResult = await pool.request()
-                .input('orgId', sql.Int, req.orgId)
+            const request = pool.request()
+                .input('orgId', sql.Int, req.orgId);
+            addLifecycleParams(request, lifecycleParams);
+            goalsResult = await request
                 .query(`
                     SELECT
                         g.*,
@@ -170,8 +207,9 @@ router.get('/', checkPermission(['can_view_goals', 'can_view_exec_dashboard']), 
                         ON goa.goalId = g.id
                        AND goa.orgId = @orgId
                        AND (goa.expiresAt IS NULL OR goa.expiresAt > GETDATE())
-                    WHERE g.orgId = @orgId
-                       OR goa.goalId IS NOT NULL
+                    WHERE (g.orgId = @orgId
+                       OR goa.goalId IS NOT NULL)
+                      AND g.lifecycleState IN (${lifecycleText})
                     ORDER BY g.id
                 `);
         }
@@ -205,6 +243,8 @@ router.get('/', checkPermission(['can_view_goals', 'can_view_exec_dashboard']), 
                 )
             )
         `;
+        const statsProjectLifecycleFilter = `p.lifecycleState IN (${buildLifecycleInClause('statsProjectLifecycle', ACTIVE_PROJECT_LIFECYCLE_STATES).text})`;
+        Object.assign(queryParams, buildLifecycleInClause('statsProjectLifecycle', ACTIVE_PROJECT_LIFECYCLE_STATES).params);
         if (req.orgId !== null && req.orgId !== undefined) {
             queryParams.orgId = req.orgId;
         }
@@ -228,7 +268,9 @@ router.get('/', checkPermission(['can_view_goals', 'can_view_exec_dashboard']), 
                 FROM Tasks t
                 WHERE t.projectId = p.id
             ) tCounts
-            ${statsOrgScope}
+            ${statsOrgScope
+                ? statsOrgScope.replace('WHERE (', `WHERE ${statsProjectLifecycleFilter} AND (`)
+                : `WHERE ${statsProjectLifecycleFilter}`}
             GROUP BY pg.goalId
         `;
 
@@ -257,6 +299,7 @@ router.get('/', checkPermission(['can_view_goals', 'can_view_exec_dashboard']), 
                 title: goal.title,
                 description: goal.description || null,
                 type: goal.type,
+                ...mapGoalLifecycleMetadata(goal),
                 parentId: goal.parentId ? goal.parentId.toString() : null,
                 orgId: goal.orgId ? String(goal.orgId) : null,
                 accessLevel: goal.accessLevel || 'owner',
@@ -329,10 +372,13 @@ router.post('/', checkPermission('can_create_goal'), async (req, res) => {
             .input('type', sql.NVarChar, hierarchyValidation.normalizedType)
             .input('parentId', sql.Int, parentId ? parseInt(parentId) : null)
             .input('orgId', sql.Int, ownerOrgId)
+            .input('lifecycleState', sql.NVarChar(20), GOAL_LIFECYCLE_STATES.ACTIVE)
+            .input('lastActivityAt', sql.DateTime2, new Date())
+            .input('retentionClass', sql.NVarChar(40), 'confidential')
             .query(`
-                INSERT INTO Goals (title, description, type, parentId, orgId)
+                INSERT INTO Goals (title, description, type, parentId, orgId, lifecycleState, lastActivityAt, retentionClass)
                 OUTPUT INSERTED.id
-                VALUES (@title, @description, @type, @parentId, @orgId)
+                VALUES (@title, @description, @type, @parentId, @orgId, @lifecycleState, @lastActivityAt, @retentionClass)
             `);
 
         const newId = result.recordset[0].id.toString();
@@ -356,6 +402,13 @@ router.post('/', checkPermission('can_create_goal'), async (req, res) => {
             title,
             description: description || null,
             type: hierarchyValidation.normalizedType,
+            lifecycleState: GOAL_LIFECYCLE_STATES.ACTIVE,
+            retiredAt: null,
+            archivedAt: null,
+            archivedByOid: null,
+            archiveReason: null,
+            lastActivityAt: new Date(),
+            retentionClass: 'confidential',
             parentId,
             orgId: String(ownerOrgId),
             accessLevel: 'owner',
@@ -384,7 +437,7 @@ router.put('/:id', checkPermission('can_edit_goal'), withSharedScope, checkGoalA
         const pool = await getPool();
         const prev = await pool.request()
             .input('id', sql.Int, id)
-            .query('SELECT id, title, description, type, parentId FROM Goals WHERE id = @id');
+            .query('SELECT id, title, description, type, parentId, lifecycleState, retiredAt, archivedAt, archivedByOid, archiveReason, lastActivityAt, retentionClass FROM Goals WHERE id = @id');
         if (prev.recordset.length === 0) {
             return res.status(404).json({ error: 'Goal not found' });
         }
@@ -414,8 +467,10 @@ router.put('/:id', checkPermission('can_edit_goal'), withSharedScope, checkGoalA
             .input('title', sql.NVarChar, title)
             .input('description', sql.NVarChar(sql.MAX), description || null)
             .input('type', sql.NVarChar, hierarchyValidation.normalizedType)
-            .query('UPDATE Goals SET title = @title, description = @description, type = @type WHERE id = @id');
+            .input('lastActivityAt', sql.DateTime2, new Date())
+            .query('UPDATE Goals SET title = @title, description = @description, type = @type, lastActivityAt = @lastActivityAt WHERE id = @id');
 
+        await touchGoalActivity(pool, [id]);
         logAudit({
             action: 'goal.update',
             entityType: 'goal',
@@ -432,20 +487,133 @@ router.put('/:id', checkPermission('can_edit_goal'), withSharedScope, checkGoalA
     }
 });
 
-// Delete goal
+// Archive goal (legacy delete behavior maps to archive)
 router.delete('/:id', checkPermission('can_delete_goal'), withSharedScope, checkGoalAccess(), requireGoalWriteAccess, async (req, res) => {
     try {
         const id = parseInt(req.params.id);
         const pool = await getPool();
-        const prev = await pool.request().input('id', sql.Int, id).query('SELECT title, type, parentId FROM Goals WHERE id = @id');
+        const archivedAt = new Date();
+        const prev = await pool.request().input('id', sql.Int, id).query('SELECT title, type, parentId, lifecycleState FROM Goals WHERE id = @id');
+        if (!prev.recordset.length) {
+            return res.status(404).json({ error: 'Goal not found' });
+        }
         await pool.request()
             .input('id', sql.Int, id)
-            .query('DELETE FROM Goals WHERE id = @id');
+            .input('archivedAt', sql.DateTime2, archivedAt)
+            .input('archivedByOid', sql.NVarChar(100), req.user?.oid || null)
+            .input('archiveReason', sql.NVarChar(500), 'Archived via delete action')
+            .query(`
+                UPDATE Goals
+                SET lifecycleState = 'archived',
+                    archivedAt = @archivedAt,
+                    archivedByOid = @archivedByOid,
+                    archiveReason = @archiveReason,
+                    lastActivityAt = @archivedAt
+                WHERE id = @id
+            `);
 
-        logAudit({ action: 'goal.delete', entityType: 'goal', entityId: id, entityTitle: prev.recordset[0]?.title, user: getAuthUser(req), before: prev.recordset[0], req });
-        res.json({ success: true });
+        logAudit({ action: 'goal.archive', entityType: 'goal', entityId: id, entityTitle: prev.recordset[0]?.title, user: getAuthUser(req), before: prev.recordset[0], after: { lifecycleState: 'archived', archivedAt }, req });
+        res.json({ success: true, lifecycleState: 'archived', archivedAt });
     } catch (err) {
         handleError(res, 'deleting goal', err);
+    }
+});
+
+router.post('/:id/retire', checkPermission('can_edit_goal'), withSharedScope, checkGoalAccess(), requireGoalWriteAccess, async (req, res) => {
+    try {
+        const id = Number.parseInt(req.params.id, 10);
+        if (Number.isNaN(id)) {
+            return res.status(400).json({ error: 'Invalid goal id' });
+        }
+        const retiredAt = new Date();
+        const pool = await getPool();
+        const previous = await pool.request().input('id', sql.Int, id).query('SELECT title, type, lifecycleState FROM Goals WHERE id = @id');
+        if (!previous.recordset.length) {
+            return res.status(404).json({ error: 'Goal not found' });
+        }
+        await pool.request()
+            .input('id', sql.Int, id)
+            .input('retiredAt', sql.DateTime2, retiredAt)
+            .input('archiveReason', sql.NVarChar(500), String(req.body?.reason || '').trim() || 'Retired manually')
+            .query(`
+                UPDATE Goals
+                SET lifecycleState = 'retired',
+                    retiredAt = @retiredAt,
+                    archivedAt = NULL,
+                    archivedByOid = NULL,
+                    archiveReason = @archiveReason,
+                    lastActivityAt = @retiredAt
+                WHERE id = @id
+            `);
+        logAudit({ action: 'goal.retire', entityType: 'goal', entityId: String(id), entityTitle: previous.recordset[0]?.title, user: getAuthUser(req), before: previous.recordset[0], after: { lifecycleState: 'retired', retiredAt }, req });
+        res.json({ success: true, lifecycleState: 'retired', retiredAt });
+    } catch (err) {
+        handleError(res, 'retiring goal', err);
+    }
+});
+
+router.post('/:id/archive', checkPermission('can_delete_goal'), withSharedScope, checkGoalAccess(), requireGoalWriteAccess, async (req, res) => {
+    try {
+        const id = Number.parseInt(req.params.id, 10);
+        if (Number.isNaN(id)) {
+            return res.status(400).json({ error: 'Invalid goal id' });
+        }
+        const archivedAt = new Date();
+        const pool = await getPool();
+        const previous = await pool.request().input('id', sql.Int, id).query('SELECT title, type, lifecycleState FROM Goals WHERE id = @id');
+        if (!previous.recordset.length) {
+            return res.status(404).json({ error: 'Goal not found' });
+        }
+        await pool.request()
+            .input('id', sql.Int, id)
+            .input('archivedAt', sql.DateTime2, archivedAt)
+            .input('archivedByOid', sql.NVarChar(100), req.user?.oid || null)
+            .input('archiveReason', sql.NVarChar(500), String(req.body?.reason || '').trim() || 'Archived manually')
+            .query(`
+                UPDATE Goals
+                SET lifecycleState = 'archived',
+                    archivedAt = @archivedAt,
+                    archivedByOid = @archivedByOid,
+                    archiveReason = @archiveReason,
+                    lastActivityAt = @archivedAt
+                WHERE id = @id
+            `);
+        logAudit({ action: 'goal.archive', entityType: 'goal', entityId: String(id), entityTitle: previous.recordset[0]?.title, user: getAuthUser(req), before: previous.recordset[0], after: { lifecycleState: 'archived', archivedAt }, req });
+        res.json({ success: true, lifecycleState: 'archived', archivedAt });
+    } catch (err) {
+        handleError(res, 'archiving goal', err);
+    }
+});
+
+router.post('/:id/restore', checkPermission('can_edit_goal'), withSharedScope, checkGoalAccess(), async (req, res) => {
+    try {
+        const id = Number.parseInt(req.params.id, 10);
+        if (Number.isNaN(id)) {
+            return res.status(400).json({ error: 'Invalid goal id' });
+        }
+        const pool = await getPool();
+        const previous = await pool.request().input('id', sql.Int, id).query('SELECT title, type, lifecycleState FROM Goals WHERE id = @id');
+        if (!previous.recordset.length) {
+            return res.status(404).json({ error: 'Goal not found' });
+        }
+        const restoredAt = new Date();
+        await pool.request()
+            .input('id', sql.Int, id)
+            .input('restoredAt', sql.DateTime2, restoredAt)
+            .query(`
+                UPDATE Goals
+                SET lifecycleState = 'active',
+                    retiredAt = NULL,
+                    archivedAt = NULL,
+                    archivedByOid = NULL,
+                    archiveReason = NULL,
+                    lastActivityAt = @restoredAt
+                WHERE id = @id
+            `);
+        logAudit({ action: 'goal.restore', entityType: 'goal', entityId: String(id), entityTitle: previous.recordset[0]?.title, user: getAuthUser(req), before: previous.recordset[0], after: { lifecycleState: 'active', restoredAt }, req });
+        res.json({ success: true, lifecycleState: 'active', lastActivityAt: restoredAt });
+    } catch (err) {
+        handleError(res, 'restoring goal', err);
     }
 });
 
@@ -462,6 +630,7 @@ router.post('/:goalId/kpis', checkPermission('can_manage_kpis'), withSharedScope
             .input('unit', sql.NVarChar, unit)
             .query('INSERT INTO KPIs (goalId, name, target, currentValue, unit) OUTPUT INSERTED.id VALUES (@goalId, @name, @target, @current, @unit)');
 
+        await touchGoalActivity(pool, [req.params.goalId]);
         const newId = result.recordset[0].id.toString();
         logAudit({ action: 'kpi.create', entityType: 'kpi', entityId: newId, entityTitle: name, user: getAuthUser(req), after: { name, target, current, unit, goalId: req.params.goalId }, req });
         res.json({ id: newId, name, target, current, unit });

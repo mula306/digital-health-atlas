@@ -38,9 +38,11 @@ export function KanbanBoard({ project, onBack, goalTitle }) {
         hasPermission
     } = useData();
     const projectHasWriteAccess = project?.hasWriteAccess !== false;
-    const canEditProject = hasPermission('can_edit_project') && projectHasWriteAccess;
-    const canDeleteProject = hasPermission('can_delete_project') && projectHasWriteAccess;
-    const canManageProject = canEditProject || canDeleteProject;
+    const isArchivedProject = String(project?.lifecycleState || '').toLowerCase() === 'archived';
+    const canEditProject = hasPermission('can_edit_project') && projectHasWriteAccess && !isArchivedProject;
+    const canDeleteProject = hasPermission('can_delete_project') && projectHasWriteAccess && !isArchivedProject;
+    const canRestoreProject = hasPermission('can_edit_project') && projectHasWriteAccess && isArchivedProject;
+    const canManageProject = canEditProject || canDeleteProject || canRestoreProject;
     const [showAddModal, setShowAddModal] = useState(false);
     const [showEditModal, setShowEditModal] = useState(false);
     const [selectedTask, setSelectedTask] = useState(null);
@@ -243,6 +245,9 @@ export function KanbanBoard({ project, onBack, goalTitle }) {
                 <div className="board-title">
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                         <h2>{project.title}</h2>
+                        {isArchivedProject && (
+                            <span className="project-goal-chip project-goal-chip-more">Archived</span>
+                        )}
                         <button
                             type="button"
                             onClick={handleToggleWatch}
@@ -447,6 +452,7 @@ export function KanbanBoard({ project, onBack, goalTitle }) {
                     onClose={handleEditClose}
                     canEditProject={canEditProject}
                     canDeleteProject={canDeleteProject}
+                    canRestoreProject={canRestoreProject}
                 />
             </Modal>
 

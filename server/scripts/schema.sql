@@ -15,6 +15,10 @@ USE DHAtlas;
 GO
 
 -- Goals table (goal cascade hierarchy only; ownership is stored separately in Goals.orgId later in this script)
+-- lifecycleState controls whether a goal is active in default operational views:
+--   active   -> normal goal tree visibility
+--   retired  -> hidden from default views but retained as historical strategy context
+--   archived -> historical only / restoreable
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'Goals')
 CREATE TABLE Goals (
     id INT IDENTITY(1,1) PRIMARY KEY,
@@ -26,6 +30,50 @@ CREATE TABLE Goals (
     CONSTRAINT FK_Goals_Parent FOREIGN KEY (parentId) REFERENCES Goals(id),
     CONSTRAINT CK_Goals_Type CHECK (type IN ('enterprise', 'portfolio', 'service', 'team'))
 );
+GO
+
+IF COL_LENGTH('Goals', 'lifecycleState') IS NULL
+BEGIN
+    ALTER TABLE Goals ADD lifecycleState NVARCHAR(20) NOT NULL
+        CONSTRAINT DF_Goals_LifecycleState DEFAULT 'active' WITH VALUES;
+END
+GO
+
+IF COL_LENGTH('Goals', 'retiredAt') IS NULL
+BEGIN
+    ALTER TABLE Goals ADD retiredAt DATETIME2 NULL;
+END
+GO
+
+IF COL_LENGTH('Goals', 'archivedAt') IS NULL
+BEGIN
+    ALTER TABLE Goals ADD archivedAt DATETIME2 NULL;
+END
+GO
+
+IF COL_LENGTH('Goals', 'archivedByOid') IS NULL
+BEGIN
+    ALTER TABLE Goals ADD archivedByOid NVARCHAR(100) NULL;
+END
+GO
+
+IF COL_LENGTH('Goals', 'archiveReason') IS NULL
+BEGIN
+    ALTER TABLE Goals ADD archiveReason NVARCHAR(500) NULL;
+END
+GO
+
+IF COL_LENGTH('Goals', 'lastActivityAt') IS NULL
+BEGIN
+    ALTER TABLE Goals ADD lastActivityAt DATETIME2 NULL;
+END
+GO
+
+IF COL_LENGTH('Goals', 'retentionClass') IS NULL
+BEGIN
+    ALTER TABLE Goals ADD retentionClass NVARCHAR(40) NOT NULL
+        CONSTRAINT DF_Goals_RetentionClass DEFAULT 'confidential' WITH VALUES;
+END
 GO
 
 IF COL_LENGTH('Goals', 'description') IS NULL
@@ -76,7 +124,11 @@ CREATE TABLE KPIs (
 GO
 
 -- Projects (legacy single-goal column kept for compatibility; canonical multi-goal links live in ProjectGoals.
--- Ownership is stored separately in Projects.orgId later in this script.)
+-- Ownership is stored separately in Projects.orgId later in this script.
+-- lifecycleState controls whether a project remains in active work views:
+--   active    -> current delivery work
+--   completed -> recently completed / still visible in active views
+--   archived  -> historical only / restoreable)
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'Projects')
 CREATE TABLE Projects (
     id INT IDENTITY(1,1) PRIMARY KEY,
@@ -87,6 +139,50 @@ CREATE TABLE Projects (
     createdAt DATETIME2 DEFAULT GETDATE(),
     CONSTRAINT FK_Projects_Goal FOREIGN KEY (goalId) REFERENCES Goals(id) ON DELETE SET NULL
 );
+GO
+
+IF COL_LENGTH('Projects', 'lifecycleState') IS NULL
+BEGIN
+    ALTER TABLE Projects ADD lifecycleState NVARCHAR(20) NOT NULL
+        CONSTRAINT DF_Projects_LifecycleState DEFAULT 'active' WITH VALUES;
+END
+GO
+
+IF COL_LENGTH('Projects', 'completedAt') IS NULL
+BEGIN
+    ALTER TABLE Projects ADD completedAt DATETIME2 NULL;
+END
+GO
+
+IF COL_LENGTH('Projects', 'archivedAt') IS NULL
+BEGIN
+    ALTER TABLE Projects ADD archivedAt DATETIME2 NULL;
+END
+GO
+
+IF COL_LENGTH('Projects', 'archivedByOid') IS NULL
+BEGIN
+    ALTER TABLE Projects ADD archivedByOid NVARCHAR(100) NULL;
+END
+GO
+
+IF COL_LENGTH('Projects', 'archiveReason') IS NULL
+BEGIN
+    ALTER TABLE Projects ADD archiveReason NVARCHAR(500) NULL;
+END
+GO
+
+IF COL_LENGTH('Projects', 'lastActivityAt') IS NULL
+BEGIN
+    ALTER TABLE Projects ADD lastActivityAt DATETIME2 NULL;
+END
+GO
+
+IF COL_LENGTH('Projects', 'retentionClass') IS NULL
+BEGIN
+    ALTER TABLE Projects ADD retentionClass NVARCHAR(40) NOT NULL
+        CONSTRAINT DF_Projects_RetentionClass DEFAULT 'confidential' WITH VALUES;
+END
 GO
 
 -- Project Watchers (personal watchlists per user/project)
@@ -123,6 +219,7 @@ CREATE TABLE Tasks (
     assigneeOid NVARCHAR(100) NULL,
     blockerNote NVARCHAR(1000) NULL,
     createdAt DATETIME2 DEFAULT GETDATE(),
+    updatedAt DATETIME2 DEFAULT GETDATE(),
     CONSTRAINT FK_Tasks_Project FOREIGN KEY (projectId) REFERENCES Projects(id) ON DELETE CASCADE,
     CONSTRAINT CK_Tasks_Status CHECK (status IN ('todo', 'in-progress', 'blocked', 'review', 'done')),
     CONSTRAINT CK_Tasks_Priority CHECK (priority IN ('low', 'medium', 'high')),
@@ -139,6 +236,13 @@ GO
 IF COL_LENGTH('Tasks', 'blockerNote') IS NULL
 BEGIN
     ALTER TABLE Tasks ADD blockerNote NVARCHAR(1000) NULL;
+END
+GO
+
+IF COL_LENGTH('Tasks', 'updatedAt') IS NULL
+BEGIN
+    ALTER TABLE Tasks ADD updatedAt DATETIME2 NOT NULL
+        CONSTRAINT DF_Tasks_UpdatedAt DEFAULT GETDATE() WITH VALUES;
 END
 GO
 
@@ -241,6 +345,11 @@ GO
 --   3. Description      -> { systemKey: 'project_description', type: 'textarea', required: true }
 -- Additional custom fields may follow after these locked system fields.
 -- Intake forms are org-owned via IntakeForms.orgId later in this script.
+-- lifecycleState controls whether a form is available for new submissions:
+--   draft    -> builder only
+--   active   -> visible for submission
+--   retired  -> hidden from default submission UX but retained for history
+--   archived -> historical only / restoreable
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'IntakeForms')
 CREATE TABLE IntakeForms (
     id INT IDENTITY(1,1) PRIMARY KEY,
@@ -253,10 +362,36 @@ CREATE TABLE IntakeForms (
 );
 GO
 
+IF COL_LENGTH('IntakeForms', 'lifecycleState') IS NULL
+BEGIN
+    ALTER TABLE IntakeForms ADD lifecycleState NVARCHAR(20) NOT NULL
+        CONSTRAINT DF_IntakeForms_LifecycleState DEFAULT 'active' WITH VALUES;
+END
+GO
+
+IF COL_LENGTH('IntakeForms', 'retiredAt') IS NULL
+BEGIN
+    ALTER TABLE IntakeForms ADD retiredAt DATETIME2 NULL;
+END
+GO
+
+IF COL_LENGTH('IntakeForms', 'archivedAt') IS NULL
+BEGIN
+    ALTER TABLE IntakeForms ADD archivedAt DATETIME2 NULL;
+END
+GO
+
+IF COL_LENGTH('IntakeForms', 'archivedByOid') IS NULL
+BEGIN
+    ALTER TABLE IntakeForms ADD archivedByOid NVARCHAR(100) NULL;
+END
+GO
+
 -- Intake Submissions
 -- orgId stores the submission home organization (normally the submitter's org).
 -- submitterId / submitterName / submitterEmail preserve requester identity for audit and conversion.
 -- Server-side conversion writes convertedProjectId and keeps the converted project's owner aligned to submission org.
+-- resolvedAt tracks when a submission exits active workflow for retention and archive eligibility.
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'IntakeSubmissions')
 CREATE TABLE IntakeSubmissions (
     id INT IDENTITY(1,1) PRIMARY KEY,
@@ -269,6 +404,7 @@ CREATE TABLE IntakeSubmissions (
     submitterId NVARCHAR(100) NULL,
     submitterName NVARCHAR(255) NULL,
     submitterEmail NVARCHAR(255) NULL,
+    resolvedAt DATETIME2 NULL,
     CONSTRAINT FK_IntakeSubmissions_Form FOREIGN KEY (formId) REFERENCES IntakeForms(id) ON DELETE CASCADE,
     CONSTRAINT FK_IntakeSubmissions_Project FOREIGN KEY (convertedProjectId) REFERENCES Projects(id) ON DELETE SET NULL
 );
@@ -311,6 +447,13 @@ IF COL_LENGTH('IntakeSubmissions', 'submitterEmail') IS NULL
 BEGIN
     ALTER TABLE IntakeSubmissions
     ADD submitterEmail NVARCHAR(255) NULL;
+END
+GO
+
+IF COL_LENGTH('IntakeSubmissions', 'resolvedAt') IS NULL
+BEGIN
+    ALTER TABLE IntakeSubmissions
+    ADD resolvedAt DATETIME2 NULL;
 END
 GO
 
@@ -926,6 +1069,14 @@ IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_KPIs_GoalId')
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Projects_GoalId')
     CREATE INDEX IX_Projects_GoalId ON Projects(goalId);
 
+IF COL_LENGTH('Projects', 'orgId') IS NOT NULL
+   AND NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Projects_LifecycleState')
+    CREATE INDEX IX_Projects_LifecycleState ON Projects(lifecycleState, orgId, archivedAt, completedAt, lastActivityAt);
+
+IF COL_LENGTH('Projects', 'orgId') IS NOT NULL
+   AND NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Projects_ActiveOrg')
+    CREATE INDEX IX_Projects_ActiveOrg ON Projects(orgId, id) WHERE lifecycleState IN ('active', 'completed');
+
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Tasks_ProjectId')
     CREATE INDEX IX_Tasks_ProjectId ON Tasks(projectId);
 
@@ -934,6 +1085,9 @@ IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Tasks_Status')
 
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Tasks_AssigneeOid')
     CREATE INDEX IX_Tasks_AssigneeOid ON Tasks(assigneeOid);
+
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Tasks_UpdatedAt')
+    CREATE INDEX IX_Tasks_UpdatedAt ON Tasks(projectId, updatedAt DESC);
 
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_TaskChecklistItems_TaskId')
     CREATE INDEX IX_TaskChecklistItems_TaskId ON TaskChecklistItems(taskId);
@@ -955,6 +1109,9 @@ IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_IntakeSubmissions_Form
 
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_IntakeSubmissions_Status')
     CREATE INDEX IX_IntakeSubmissions_Status ON IntakeSubmissions(status);
+
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_IntakeSubmissions_ResolvedAt')
+    CREATE INDEX IX_IntakeSubmissions_ResolvedAt ON IntakeSubmissions(resolvedAt, status);
 
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_IntakeSubmissions_EstimatedEffort')
     CREATE INDEX IX_IntakeSubmissions_EstimatedEffort ON IntakeSubmissions(estimatedEffortHours);
@@ -1193,6 +1350,97 @@ BEGIN
 END
 GO
 
+IF NOT EXISTS (
+    SELECT 1
+    FROM sys.check_constraints
+    WHERE name = 'CK_Projects_LifecycleState'
+)
+BEGIN
+    ALTER TABLE Projects
+    ADD CONSTRAINT CK_Projects_LifecycleState
+    CHECK (lifecycleState IN ('active', 'completed', 'archived'));
+END
+GO
+
+IF NOT EXISTS (
+    SELECT 1
+    FROM sys.check_constraints
+    WHERE name = 'CK_Goals_LifecycleState'
+)
+BEGIN
+    ALTER TABLE Goals
+    ADD CONSTRAINT CK_Goals_LifecycleState
+    CHECK (lifecycleState IN ('active', 'retired', 'archived'));
+END
+GO
+
+IF NOT EXISTS (
+    SELECT 1
+    FROM sys.check_constraints
+    WHERE name = 'CK_IntakeForms_LifecycleState'
+)
+BEGIN
+    ALTER TABLE IntakeForms
+    ADD CONSTRAINT CK_IntakeForms_LifecycleState
+    CHECK (lifecycleState IN ('draft', 'active', 'retired', 'archived'));
+END
+GO
+
+UPDATE Projects
+SET lifecycleState = CASE
+    WHEN lifecycleState = 'archived' THEN 'archived'
+    WHEN LOWER(ISNULL(status, '')) = 'completed' THEN 'completed'
+    ELSE 'active'
+END
+WHERE lifecycleState IS NULL
+   OR lifecycleState NOT IN ('active', 'completed', 'archived');
+GO
+
+UPDATE Projects
+SET completedAt = ISNULL(completedAt, createdAt)
+WHERE lifecycleState = 'completed'
+  AND completedAt IS NULL;
+GO
+
+UPDATE Projects
+SET lastActivityAt = ISNULL(lastActivityAt, completedAt)
+WHERE lastActivityAt IS NULL
+  AND completedAt IS NOT NULL;
+GO
+
+UPDATE Projects
+SET lastActivityAt = ISNULL(lastActivityAt, createdAt)
+WHERE lastActivityAt IS NULL;
+GO
+
+UPDATE Goals
+SET lifecycleState = 'active'
+WHERE lifecycleState IS NULL
+   OR lifecycleState NOT IN ('active', 'retired', 'archived');
+GO
+
+UPDATE Goals
+SET lastActivityAt = ISNULL(lastActivityAt, retiredAt)
+WHERE lastActivityAt IS NULL
+  AND retiredAt IS NOT NULL;
+GO
+
+UPDATE Goals
+SET lastActivityAt = ISNULL(lastActivityAt, createdAt)
+WHERE lastActivityAt IS NULL;
+GO
+
+UPDATE IntakeForms
+SET lifecycleState = CASE
+    WHEN lifecycleState = 'draft' THEN 'draft'
+    WHEN lifecycleState = 'retired' THEN 'retired'
+    WHEN lifecycleState = 'archived' THEN 'archived'
+    ELSE 'active'
+END
+WHERE lifecycleState IS NULL
+   OR lifecycleState NOT IN ('draft', 'active', 'retired', 'archived');
+GO
+
 IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_TagGroups_Organization')
 BEGIN
     ALTER TABLE TagGroups
@@ -1364,11 +1612,26 @@ IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Users_OrgId')
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Goals_OrgId')
     CREATE INDEX IX_Goals_OrgId ON Goals(orgId);
 
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Goals_LifecycleState')
+    CREATE INDEX IX_Goals_LifecycleState ON Goals(lifecycleState, orgId, archivedAt, retiredAt, lastActivityAt);
+
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Goals_ActiveOrg')
+    CREATE INDEX IX_Goals_ActiveOrg ON Goals(orgId, id) WHERE lifecycleState = 'active';
+
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Projects_OrgId')
     CREATE INDEX IX_Projects_OrgId ON Projects(orgId);
 
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Projects_LifecycleState')
+    CREATE INDEX IX_Projects_LifecycleState ON Projects(lifecycleState, orgId, archivedAt, completedAt, lastActivityAt);
+
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Projects_ActiveOrg')
+    CREATE INDEX IX_Projects_ActiveOrg ON Projects(orgId, id) WHERE lifecycleState IN ('active', 'completed');
+
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_IntakeForms_OrgId')
     CREATE INDEX IX_IntakeForms_OrgId ON IntakeForms(orgId);
+
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_IntakeForms_LifecycleState')
+    CREATE INDEX IX_IntakeForms_LifecycleState ON IntakeForms(lifecycleState, orgId, archivedAt, retiredAt);
 
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_IntakeSubmissions_OrgId')
     CREATE INDEX IX_IntakeSubmissions_OrgId ON IntakeSubmissions(orgId);

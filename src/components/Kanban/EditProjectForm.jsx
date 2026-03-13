@@ -11,9 +11,10 @@ export function EditProjectForm({
     project,
     onClose,
     canEditProject = true,
-    canDeleteProject = false
+    canDeleteProject = false,
+    canRestoreProject = false
 }) {
-    const { updateProject, updateProjectTags, deleteProject, goals, currentUser, fetchOrganizations, hasRole } = useData();
+    const { updateProject, updateProjectTags, deleteProject, restoreProject, goals, currentUser, fetchOrganizations, hasRole } = useData();
     const { success, error: showError } = useToast();
     const isAdmin = hasRole('Admin');
     const [title, setTitle] = useState(project.title || '');
@@ -170,10 +171,24 @@ export function EditProjectForm({
         }
         if (confirmDelete) {
             deleteProject(project.id);
-            success('Project deleted');
+            success('Project archived');
             onClose(true);
         } else {
             setConfirmDelete(true);
+        }
+    };
+
+    const handleRestore = async () => {
+        if (!canRestoreProject) {
+            showError('You do not have permission to restore this project.');
+            return;
+        }
+        try {
+            await restoreProject(project.id);
+            success('Project restored');
+            onClose();
+        } catch (err) {
+            showError(err.message || 'Failed to restore project');
         }
     };
 
@@ -346,7 +361,15 @@ export function EditProjectForm({
 
             <div className="form-actions" style={{ justifyContent: 'space-between' }}>
                 <div>
-                    {canDeleteProject && (
+                    {canRestoreProject ? (
+                        <button
+                            type="button"
+                            onClick={handleRestore}
+                            className="btn-secondary"
+                        >
+                            Restore Project
+                        </button>
+                    ) : canDeleteProject && (
                         <button
                             type="button"
                             onClick={handleDelete}
@@ -357,7 +380,7 @@ export function EditProjectForm({
                                 border: '1px solid #ef4444'
                             }}
                         >
-                            {confirmDelete ? 'Click Again to Confirm' : 'Delete Project'}
+                            {confirmDelete ? 'Click Again to Confirm' : 'Archive Project'}
                         </button>
                     )}
                 </div>

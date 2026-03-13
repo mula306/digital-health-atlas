@@ -5,6 +5,7 @@ import { withSharedScope, checkTaskWriteAccess, requireProjectWriteAccess } from
 import { handleError } from '../utils/errorHandler.js';
 import { logAudit } from '../utils/auditLogger.js';
 import { invalidateProjectCache } from '../utils/cache.js';
+import { touchProjectActivity } from '../utils/lifecycle.js';
 
 const router = express.Router();
 
@@ -193,8 +194,12 @@ router.put('/:id', checkPermission('can_edit_project'), withSharedScope, checkTa
             return res.json({ success: true, message: 'No changes detected' });
         }
 
+        request.input('updatedAt', sql.DateTime2, new Date());
+        updateParts.push('updatedAt = @updatedAt');
+
         await request.query(`UPDATE Tasks SET ${updateParts.join(', ')} WHERE id = @id`);
 
+        await touchProjectActivity(pool, beforeState.projectId);
         invalidateProjectCache();
         logAudit({
             action: 'task.update',
@@ -294,6 +299,10 @@ router.post('/:id/checklist', checkPermission('can_edit_project'), withSharedSco
                 VALUES (@taskId, @title, 0, @sortOrder)
             `);
 
+        const taskProjectResult = await pool.request()
+            .input('taskId', sql.Int, taskId)
+            .query('SELECT projectId FROM Tasks WHERE id = @taskId');
+        await touchProjectActivity(pool, taskProjectResult.recordset[0]?.projectId);
         const item = insertResult.recordset[0];
         invalidateProjectCache();
         logAudit({
@@ -386,6 +395,10 @@ router.put('/:id/checklist/:itemId', checkPermission('can_edit_project'), withSh
             `);
         const item = currentResult.recordset[0];
 
+        const taskProjectResult = await pool.request()
+            .input('taskId', sql.Int, taskId)
+            .query('SELECT projectId FROM Tasks WHERE id = @taskId');
+        await touchProjectActivity(pool, taskProjectResult.recordset[0]?.projectId);
         invalidateProjectCache();
         logAudit({
             action: 'task.checklist.update',
@@ -438,6 +451,10 @@ router.delete('/:id/checklist/:itemId', checkPermission('can_edit_project'), wit
             .input('itemId', sql.Int, itemId)
             .query('DELETE FROM TaskChecklistItems WHERE id = @itemId AND taskId = @taskId');
 
+        const taskProjectResult = await pool.request()
+            .input('taskId', sql.Int, taskId)
+            .query('SELECT projectId FROM Tasks WHERE id = @taskId');
+        await touchProjectActivity(pool, taskProjectResult.recordset[0]?.projectId);
         invalidateProjectCache();
         logAudit({
             action: 'task.checklist.delete',
@@ -470,6 +487,7 @@ router.delete('/:id', checkPermission('can_edit_project'), withSharedScope, chec
             .input('id', sql.Int, id)
             .query('DELETE FROM Tasks WHERE id = @id');
 
+        await touchProjectActivity(pool, prev.recordset[0]?.projectId);
         invalidateProjectCache();
         logAudit({
             action: 'task.delete',

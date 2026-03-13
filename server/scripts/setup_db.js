@@ -6,6 +6,8 @@
 // Existing upgraded environments may also need:
 //   npm run backfill:org-ownership
 //   npm run backfill:org-ownership:apply
+//   npm run backfill:lifecycle
+//   npm run backfill:lifecycle:apply
 //
 // Environment resolution:
 // - reads DB_* values from the current process environment
@@ -15,6 +17,8 @@
 //   (`org/div/dept/branch` -> `enterprise/portfolio/service/team`)
 // - org ownership backfill intentionally remains a separate step so existing environments can
 //   review an exception report before any legacy null ownership is changed
+// - lifecycle backfill is also separate so existing environments can review inferred timestamps
+//   and inactive-goal retirement candidates before applying them
 
 import path from 'path';
 import { fileURLToPath } from 'url';

@@ -22,6 +22,10 @@
     "test:phase-c": "npm run test:phase-b && npm run test:ui:coverage && npm run test:e2e:critical",
     "test:all": "npm run test:server && npm run test:ui",
     "verify:v1": "npm run lint && npm --prefix server run lint:rbac && npm run build && npm run test:phase-c",
+    "backfill:lifecycle": "npm --prefix server run backfill:lifecycle",
+    "backfill:lifecycle:apply": "npm --prefix server run backfill:lifecycle:apply",
+    "retention:dry-run": "npm --prefix server run retention:dry-run",
+    "retention:apply": "npm --prefix server run retention:apply",
     "db:up": "docker compose -f docker-compose.sqlserver.yml up -d",
     "db:down": "docker compose -f docker-compose.sqlserver.yml down"
   },

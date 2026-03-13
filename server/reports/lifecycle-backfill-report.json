@@ -1,0 +1,90 @@
+{
+  "generatedAt": "2026-03-13T20:23:58.609Z",
+  "applyChanges": false,
+  "thresholds": {
+    "goalRetireMonths": 24
+  },
+  "summary": {
+    "projects": {
+      "updated": 1,
+      "warnings": 1
+    },
+    "goals": {
+      "updated": 2,
+      "retired": 0,
+      "warnings": 1
+    },
+    "intakeSubmissions": {
+      "updated": 0,
+      "warnings": 0
+    }
+  },
+  "updated": {
+    "projects": [
+      {
+        "id": 9302,
+        "title": "Test Project Org2",
+        "status": "active",
+        "completedAt": null,
+        "lastActivityAt": "2026-03-13T20:21:57.880Z",
+        "sources": {
+          "report": null,
+          "task": null,
+          "benefit": null,
+          "audit": null,
+          "createdAt": "2026-03-13T20:21:57.880Z"
+        }
+      }
+    ],
+    "goals": [
+      {
+        "id": 9101,
+        "title": "Test Goal Org1",
+        "lifecycleState": "active",
+        "lastActivityAt": "2026-03-13T20:21:57.982Z",
+        "sources": {
+          "linkedProjectActivity": "2026-03-13T20:21:57.982Z",
+          "goalAudit": null,
+          "createdAt": "2026-03-13T20:21:57.880Z"
+        }
+      },
+      {
+        "id": 9201,
+        "title": "Test Goal Org2",
+        "lifecycleState": "active",
+        "lastActivityAt": "2026-03-13T20:21:57.880Z",
+        "sources": {
+          "linkedProjectActivity": null,
+          "goalAudit": null,
+          "createdAt": "2026-03-13T20:21:57.880Z"
+        }
+      }
+    ],
+    "intakeSubmissions": []
+  },
+  "lifecycleChanges": {
+    "goalsRetired": []
+  },
+  "warnings": {
+    "projects": [
+      {
+        "id": 9302,
+        "title": "Test Project Org2",
+        "reason": "fell_back_to_created_or_existing_timestamps_only"
+      }
+    ],
+    "goals": [
+      {
+        "id": 9201,
+        "title": "Test Goal Org2",
+        "reason": "limited_goal_activity_history_available"
+      }
+    ],
+    "intakeSubmissions": []
+  },
+  "notes": [
+    "Backfill uses the best available timestamps already present in the database.",
+    "Historical KPI activity is inferred indirectly through goal/project activity because legacy KPI rows do not have their own timestamps.",
+    "Goal retirement backfill only applies when a goal has no active linked projects and its best-known activity is older than the configured threshold."
+  ]
+}

@@ -4,6 +4,7 @@ import { checkPermission } from '../middleware/authMiddleware.js';
 import { withSharedScope } from '../middleware/orgScope.js';
 import { handleError } from '../utils/errorHandler.js';
 import { buildInClause, addParams } from '../utils/sqlHelpers.js';
+import { LIFECYCLE_VIEW_MODES, buildLifecycleInClause, getProjectLifecycleViewStates, normalizeLifecycleView } from '../utils/lifecycle.js';
 
 const router = express.Router();
 
@@ -11,6 +12,11 @@ const parseTruthyQueryFlag = (value) => {
     if (value === undefined || value === null) return false;
     const normalized = String(value).trim().toLowerCase();
     return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
+};
+
+const parseProjectLifecycleView = (value, includeArchived) => {
+    if (parseTruthyQueryFlag(includeArchived)) return LIFECYCLE_VIEW_MODES.ALL;
+    return normalizeLifecycleView(value || LIFECYCLE_VIEW_MODES.ACTIVE);
 };
 
 // Get dashboard statistics (server-side aggregation)
@@ -26,12 +32,19 @@ router.get('/stats', checkPermission(['can_view_projects']), withSharedScope, as
             ? statusesParam.split(',').map(s => String(s).trim().toLowerCase()).filter(Boolean)
             : [];
         const watchedOnly = parseTruthyQueryFlag(req.query.watchedOnly);
+        const lifecycleView = parseProjectLifecycleView(req.query.lifecycle, req.query.includeArchived);
+        const { text: lifecycleText, params: lifecycleParams } = buildLifecycleInClause(
+            'projectLifecycle',
+            getProjectLifecycleViewStates(lifecycleView)
+        );
         const viewerOid = String(req.user?.oid || '').trim() || '__none__';
 
         let whereConditions = [];
         let queryParams = {
             viewerOid
         };
+        Object.assign(queryParams, lifecycleParams);
+        whereConditions.push(`p.lifecycleState IN (${lifecycleText})`);
 
         // Org scoping
         if (req.orgId) {

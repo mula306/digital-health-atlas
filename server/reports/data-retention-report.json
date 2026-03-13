@@ -1,0 +1,72 @@
+{
+  "generatedAt": "2026-03-13T20:23:58.609Z",
+  "applyChanges": false,
+  "policy": {
+    "retentionWindows": {
+      "projectArchiveCompletedMonths": 12,
+      "projectArchiveOnHoldMonths": 18,
+      "goalRetireMonths": 24,
+      "goalArchiveMonths": 24,
+      "intakeHistoryYears": 7,
+      "statusReportFullRetentionMonths": 24,
+      "executiveRunSuccessMonths": 18,
+      "executiveRunFailureMonths": 24,
+      "auditHotRetentionMonths": 36,
+      "sharingHistoryMonths": 24
+    }
+  },
+  "summary": {
+    "projects": {
+      "candidates": 0,
+      "archived": 0
+    },
+    "goals": {
+      "retireCandidates": 0,
+      "retired": 0,
+      "archiveCandidates": 0,
+      "archived": 0
+    },
+    "intakeForms": {
+      "reviewCandidates": 0,
+      "retired": 0
+    },
+    "intakeHistory": {
+      "candidates": 0
+    },
+    "governanceHistory": {
+      "candidates": 0
+    },
+    "operationalArtifacts": {
+      "statusReportCompactionCandidates": 0,
+      "executivePackRunPurgeCandidates": 0,
+      "auditExportCandidates": 0,
+      "expiredProjectShares": 0,
+      "expiredGoalShares": 0,
+      "expiredSharingRequests": 0
+    }
+  },
+  "candidates": {
+    "projectsToArchive": [],
+    "goalsToRetire": [],
+    "goalsToArchive": [],
+    "intakeFormsForReview": [],
+    "intakeHistory": [],
+    "governanceHistory": [],
+    "statusReportCompaction": [],
+    "executivePackRuns": [],
+    "auditExport": [],
+    "expiredProjectShares": [],
+    "expiredGoalShares": [],
+    "expiredSharingRequests": []
+  },
+  "applied": {
+    "projectsArchived": [],
+    "goalsRetired": [],
+    "goalsArchived": []
+  },
+  "notes": [
+    "Apply mode only changes core lifecycle states for projects and goals.",
+    "Operational-artifact purge categories remain report-only until cold-export verification is introduced.",
+    "Dormant intake forms are surfaced for review but are not auto-retired until a business age threshold is formally approved."
+  ]
+}

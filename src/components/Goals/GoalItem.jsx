@@ -1,4 +1,4 @@
-import { ChevronRight, ChevronDown, Plus, MoreHorizontal, Folder, Edit, Trash2, Activity } from 'lucide-react';
+import { ChevronRight, ChevronDown, Plus, MoreHorizontal, Folder, Edit, Trash2, Activity, RotateCcw } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 import { useData } from '../../context/DataContext';
 import { useToast } from '../../context/ToastContext';
@@ -24,14 +24,16 @@ export function GoalItem({
     selectedTags = [],
     selectedStatuses = [],
     watchedOnly = false,
-    projectsSource = []
+    projectsSource = [],
+    allGoals = []
 }) {
-    const { goals, deleteGoal, projects, hasPermission } = useData();
+    const { goals, deleteGoal, restoreGoal, projects, hasPermission } = useData();
     const canCreateGoal = hasPermission('can_create_goal');
     const canEditGoal = hasPermission('can_edit_goal');
     const canDeleteGoal = hasPermission('can_delete_goal');
     const canManageKpis = hasPermission('can_manage_kpis');
     const toast = useToast();
+    const goalData = allGoals.length > 0 ? allGoals : goals;
     const [isExpanded, setIsExpanded] = useState(level === 0);
     const [childrenCollapsed, setChildrenCollapsed] = useState(null);
     const [showAddModal, setShowAddModal] = useState(false);
@@ -51,13 +53,14 @@ export function GoalItem({
         }
     }
 
-    const childGoals = goals.filter(g => g.parentId === goal.id);
+    const childGoals = goalData.filter(g => g.parentId === goal.id);
     const hasChildren = childGoals.length > 0;
+    const isLifecycleReadOnly = goal.lifecycleState === 'retired' || goal.lifecycleState === 'archived';
 
     const hasScopedFilters = watchedOnly || selectedTags.length > 0 || selectedStatuses.length > 0;
     const sourceProjects = projectsSource.length > 0 ? projectsSource : projects;
     // Get all goal IDs in this subtree (this goal + descendants)
-    const allGoalIds = new Set([String(goal.id), ...getDescendantGoalIds(goals, goal.id).map(String)]);
+    const allGoalIds = new Set([String(goal.id), ...getDescendantGoalIds(goalData, goal.id).map(String)]);
     const scopedProjects = sourceProjects.filter((project) => {
         const projectGoalIds = (project.goalIds || (project.goalId ? [project.goalId] : [])).map(String);
         const inGoalTree = projectGoalIds.some((goalId) => allGoalIds.has(goalId));
@@ -105,15 +108,15 @@ export function GoalItem({
         // Include ancestor goals inside this subtree so parent-level KPIs still count
         const includedGoalIds = new Set();
         scopedProjectGoalIds.forEach((projectGoalId) => {
-            let current = goals.find((g) => String(g.id) === String(projectGoalId));
+            let current = goalData.find((g) => String(g.id) === String(projectGoalId));
             while (current && subtreeGoalIds.has(String(current.id))) {
                 includedGoalIds.add(String(current.id));
                 if (!current.parentId) break;
-                current = goals.find((g) => String(g.id) === String(current.parentId));
+                current = goalData.find((g) => String(g.id) === String(current.parentId));
             }
         });
 
-        return goals.reduce((sum, currentGoal) => {
+        return goalData.reduce((sum, currentGoal) => {
             if (!includedGoalIds.has(String(currentGoal.id))) return sum;
             return sum + (Array.isArray(currentGoal.kpis) ? currentGoal.kpis.length : 0);
         }, 0);
@@ -204,13 +207,27 @@ export function GoalItem({
         setShowEditModal(true);
     };
 
-    const handleDelete = () => {
+    const handleDelete = async () => {
         if (confirmDelete) {
-            deleteGoal(goal.id);
-            toast.success('Goal deleted');
-            setShowMenu(false);
+            try {
+                await deleteGoal(goal.id);
+                toast.success('Goal archived');
+                setShowMenu(false);
+            } catch (error) {
+                toast.error(error.message || 'Failed to archive goal');
+            }
         } else {
             setConfirmDelete(true);
+        }
+    };
+
+    const handleRestore = async () => {
+        try {
+            await restoreGoal(goal.id);
+            toast.success('Goal restored');
+            setShowMenu(false);
+        } catch (error) {
+            toast.error(error.message || 'Failed to restore goal');
         }
     };
 
@@ -267,7 +284,7 @@ export function GoalItem({
                                     <Folder size={14} />
                                     <span>{projectCount}</span>
                                 </button>
-                                {canCreateGoal && goal.type !== GOAL_LEAF_TYPE && (
+                                {canCreateGoal && goal.type !== GOAL_LEAF_TYPE && !isLifecycleReadOnly && (
                                     <button className="icon-btn" onClick={() => setShowAddModal(true)} title={`Add ${nextGoalLabel}`}>
                                         <Plus size={16} />
                                     </button>
@@ -282,19 +299,25 @@ export function GoalItem({
 
                                         {showMenu && (
                                             <div className="goal-dropdown-menu">
-                                                {canEditGoal && (
+                                                {canEditGoal && !isLifecycleReadOnly && (
                                                     <button className="menu-item" onClick={handleEdit}>
                                                         <Edit size={14} />
                                                         Edit Goal
                                                     </button>
                                                 )}
-                                                {canDeleteGoal && (
+                                                {canEditGoal && isLifecycleReadOnly && (
+                                                    <button className="menu-item" onClick={handleRestore}>
+                                                        <RotateCcw size={14} />
+                                                        Restore Goal
+                                                    </button>
+                                                )}
+                                                {canDeleteGoal && !isLifecycleReadOnly && (
                                                     <button
                                                         className={`menu-item danger ${confirmDelete ? 'confirm' : ''}`}
                                                         onClick={handleDelete}
                                                     >
                                                         <Trash2 size={14} />
-                                                        {confirmDelete ? 'Click to Confirm' : 'Delete Goal'}
+                                                        {confirmDelete ? 'Click to Confirm' : 'Archive Goal'}
                                                     </button>
                                                 )}
                                             </div>
@@ -304,6 +327,17 @@ export function GoalItem({
                             </div>
                         </div>
                         <h3 className="goal-title">{goal.title}</h3>
+                        {isLifecycleReadOnly && (
+                            <div style={{ marginBottom: '0.35rem' }}>
+                                <span className="goal-type-badge" style={{
+                                    background: 'linear-gradient(135deg, #475569 0%, #64748b 100%)',
+                                    color: '#f8fafc',
+                                    borderColor: 'rgba(100, 116, 139, 0.35)'
+                                }}>
+                                    {goal.lifecycleState === 'retired' ? 'Retired' : 'Archived'}
+                                </span>
+                            </div>
+                        )}
                         {goal.description && <p className="goal-desc">{goal.description}</p>}
 
 
@@ -333,6 +367,7 @@ export function GoalItem({
                             selectedStatuses={selectedStatuses}
                             watchedOnly={watchedOnly}
                             projectsSource={projectsSource}
+                            allGoals={goalData}
                         />
                     ))}
 
@@ -355,7 +390,7 @@ export function GoalItem({
                 closeOnOverlayClick={false}
             >
                 <EditGoalForm goal={goal} onClose={() => setShowEditModal(false)} />
-                {canManageKpis ? (
+                {canManageKpis && !isLifecycleReadOnly ? (
                     <KPIManager goalId={goal.id} kpis={goal.kpis || []} />
                 ) : (
                     <p style={{ marginTop: '0.75rem', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>

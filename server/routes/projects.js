@@ -9,6 +9,20 @@ import { buildInClause, addParams } from '../utils/sqlHelpers.js';
 import { validateGoalAssignment, loadGoalsForValidation } from '../utils/goalValidation.js';
 import { ensureReadGoalAccessForOrg, findGoalAccessGapsForOrg } from '../utils/goalAccess.js';
 import { ensureOrganizationExists, isAdminUser, resolveOwnedOrgId } from '../utils/orgOwnership.js';
+import {
+    ACTIVE_PROJECT_LIFECYCLE_STATES,
+    LIFECYCLE_VIEW_MODES,
+    PROJECT_LIFECYCLE_STATES,
+    addLifecycleParams,
+    buildLifecycleInClause,
+    deriveProjectLifecycleFromStatus,
+    getProjectLifecycleViewStates,
+    getProjectRestoreLifecycleState,
+    normalizeLifecycleView,
+    normalizeProjectLifecycleState,
+    touchGoalActivity,
+    touchProjectActivity
+} from '../utils/lifecycle.js';
 
 const router = express.Router();
 
@@ -73,6 +87,18 @@ const normalizeTaskString = (value, maxLength = 0) => {
 };
 
 const BENEFIT_STATUSES = new Set(['planned', 'in-progress', 'realized', 'at-risk', 'not-realized']);
+
+const parseProjectLifecycleView = (value) => normalizeLifecycleView(value || LIFECYCLE_VIEW_MODES.ACTIVE);
+
+const mapProjectLifecycleMetadata = (row) => ({
+    lifecycleState: normalizeProjectLifecycleState(row.lifecycleState),
+    completedAt: row.completedAt || null,
+    archivedAt: row.archivedAt || null,
+    archivedByOid: row.archivedByOid || null,
+    archiveReason: row.archiveReason || null,
+    lastActivityAt: row.lastActivityAt || null,
+    retentionClass: row.retentionClass || 'confidential'
+});
 
 const toNullableDateOnly = (value) => {
     if (value === undefined) return undefined;
@@ -280,15 +306,26 @@ const buildProjectRiskSignal = async ({ pool, projectId }) => {
         `);
     const latestReport = reportResult.recordset[0] || null;
 
-    const activityResult = await pool.request()
-        .input('projectId', sql.NVarChar(20), String(projectId))
+    const projectActivityResult = await pool.request()
+        .input('projectId', sql.Int, projectId)
+        .query(`
+            SELECT lastActivityAt
+            FROM Projects
+            WHERE id = @projectId
+        `);
+    let lastTaskActivityAt = projectActivityResult.recordset[0]?.lastActivityAt || null;
+
+    if (!lastTaskActivityAt) {
+        const activityResult = await pool.request()
+            .input('projectId', sql.NVarChar(20), String(projectId))
         .query(`
             SELECT MAX(createdAt) AS lastTaskActivityAt
             FROM AuditLog
             WHERE entityType = 'task'
               AND JSON_VALUE(metadata, '$.projectId') = @projectId
         `);
-    const lastTaskActivityAt = activityResult.recordset[0]?.lastTaskActivityAt || null;
+        lastTaskActivityAt = activityResult.recordset[0]?.lastTaskActivityAt || null;
+    }
 
     return buildRiskSignalFromInputs({
         taskStats,
@@ -400,11 +437,13 @@ router.get('/exec-summary', checkPermission(['can_view_exec_dashboard', 'can_vie
     try {
         const pool = await getPool();
         const viewerOid = getUserOidFromReq(req) || '__none__';
+        const lifecycleView = parseProjectLifecycleView(req.query.lifecycle);
+        const { text: lifecycleText, params: lifecycleParams } = buildLifecycleInClause('projectLifecycle', getProjectLifecycleViewStates(lifecycleView));
 
         // 1. Fetch Projects with Latest Report (Updated for JSON blob)
         const projectsQuery = `
             SELECT 
-                p.id, p.title,
+                p.id, p.title, p.lifecycleState, p.completedAt, p.archivedAt, p.archivedByOid, p.archiveReason, p.lastActivityAt, p.retentionClass,
                 r.id as reportId, r.reportData, r.createdAt as reportDate,
                 (CASE WHEN EXISTS (SELECT 1 FROM StatusReports WHERE projectId = p.id) THEN 1 ELSE 0 END) as reportCount,
                 CAST(CASE WHEN pw.projectId IS NULL THEN 0 ELSE 1 END AS BIT) as isWatched
@@ -426,12 +465,14 @@ router.get('/exec-summary', checkPermission(['can_view_exec_dashboard', 'can_vie
                 )
                 OR @orgId IS NULL
             )
+              AND p.lifecycleState IN (${lifecycleText})
             ORDER BY p.title ASC
         `;
-        const projectsResult = await pool.request()
+        const projectsRequest = pool.request()
             .input('orgId', sql.Int, req.orgId)
-            .input('viewerOid', sql.NVarChar(100), viewerOid)
-            .query(projectsQuery);
+            .input('viewerOid', sql.NVarChar(100), viewerOid);
+        addLifecycleParams(projectsRequest, lifecycleParams);
+        const projectsResult = await projectsRequest.query(projectsQuery);
 
         // 2. Fetch Project Tags
         const tagsResult = await pool.request().query('SELECT projectId, tagId, isPrimary FROM ProjectTags');
@@ -485,25 +526,33 @@ router.get('/exec-summary', checkPermission(['can_view_exec_dashboard', 'can_vie
                 });
             });
 
-            // 2d. Fetch latest task activity timestamp by project for risk staleness signal
-            const { text: taskActivityProjectIdText, params: taskActivityProjectIdParams } = buildInClause('execProjectIdStr', projectIdsAsStrings);
-            const taskActivityRequest = pool.request();
-            addParams(taskActivityRequest, taskActivityProjectIdParams);
-            const taskActivityResult = await taskActivityRequest.query(`
-                SELECT
-                    JSON_VALUE(metadata, '$.projectId') AS projectId,
-                    MAX(createdAt) AS lastTaskActivityAt
-                FROM AuditLog
-                WHERE entityType = 'task'
-                  AND JSON_VALUE(metadata, '$.projectId') IN (${taskActivityProjectIdText})
-                GROUP BY JSON_VALUE(metadata, '$.projectId')
-            `);
-
-            taskActivityResult.recordset.forEach((row) => {
-                const normalizedProjectId = String(row.projectId || '').trim();
-                if (!normalizedProjectId) return;
-                taskActivityByProject.set(normalizedProjectId, row.lastTaskActivityAt || null);
+            projectsResult.recordset.forEach((row) => {
+                if (row.lastActivityAt) {
+                    taskActivityByProject.set(String(row.id), row.lastActivityAt);
+                }
             });
+
+            const missingActivityProjectIds = projectIdsAsStrings.filter((projectId) => !taskActivityByProject.has(projectId));
+            if (missingActivityProjectIds.length > 0) {
+                const { text: taskActivityProjectIdText, params: taskActivityProjectIdParams } = buildInClause('execProjectIdStr', missingActivityProjectIds);
+                const taskActivityRequest = pool.request();
+                addParams(taskActivityRequest, taskActivityProjectIdParams);
+                const taskActivityResult = await taskActivityRequest.query(`
+                    SELECT
+                        JSON_VALUE(metadata, '$.projectId') AS projectId,
+                        MAX(createdAt) AS lastTaskActivityAt
+                    FROM AuditLog
+                    WHERE entityType = 'task'
+                      AND JSON_VALUE(metadata, '$.projectId') IN (${taskActivityProjectIdText})
+                    GROUP BY JSON_VALUE(metadata, '$.projectId')
+                `);
+
+                taskActivityResult.recordset.forEach((row) => {
+                    const normalizedProjectId = String(row.projectId || '').trim();
+                    if (!normalizedProjectId) return;
+                    taskActivityByProject.set(normalizedProjectId, row.lastTaskActivityAt || null);
+                });
+            }
         }
 
         // 3. Map Data and Parse JSON
@@ -552,6 +601,7 @@ router.get('/exec-summary', checkPermission(['can_view_exec_dashboard', 'can_vie
             return {
                 id: p.id.toString(),
                 title: p.title,
+                ...mapProjectLifecycleMetadata(p),
                 goalIds: goalsByProject[p.id] || [],
                 goalId: (goalsByProject[p.id] || [])[0] || null, // backwards compat
                 tags: tagsByProject[p.id] || [],
@@ -600,11 +650,13 @@ router.get('/', checkPermission(['can_view_projects', 'can_view_exec_dashboard']
         const ownershipFilters = ownershipParam
             ? ownershipParam.split(',').map(s => String(s).trim().toLowerCase()).filter(Boolean)
             : [];
+        const lifecycleView = parseProjectLifecycleView(req.query.lifecycle);
+        const { text: lifecycleText, params: lifecycleParams } = buildLifecycleInClause('lifecycle', getProjectLifecycleViewStates(lifecycleView));
         const watchedOnly = parseTruthyQueryFlag(req.query.watchedOnly);
         const viewerOid = getUserOidFromReq(req) || '__none__';
 
         // Check cache first
-        const cacheKey = `${CACHE_KEYS.PROJECT_PREFIX}${req.orgId ?? 'all'}_${viewerOid}_${watchedOnly ? 'watched' : 'all'}_${page}_${limit}_${search}_${projectId || ''}_${statuses.join('-')}_${goalIds.join('-')}_${tagIds.join('-')}_${ownershipFilters.join('-')}`;
+        const cacheKey = `${CACHE_KEYS.PROJECT_PREFIX}${req.orgId ?? 'all'}_${viewerOid}_${watchedOnly ? 'watched' : 'all'}_${page}_${limit}_${search}_${projectId || ''}_${statuses.join('-')}_${goalIds.join('-')}_${tagIds.join('-')}_${ownershipFilters.join('-')}_${lifecycleView}`;
         const cached = cache.get(cacheKey);
         if (cached) {
             return res.json(cached);
@@ -665,6 +717,7 @@ router.get('/', checkPermission(['can_view_projects', 'can_view_exec_dashboard']
         if (watchedOnly) {
             conditions.push(`EXISTS (SELECT 1 FROM ProjectWatchers pwf WHERE pwf.projectId = p.id AND pwf.userOid = @viewerOid)`);
         }
+        conditions.push(`p.lifecycleState IN (${lifecycleText})`);
 
         let tagJoin = '';
         let statusJoin = '';
@@ -710,6 +763,7 @@ router.get('/', checkPermission(['can_view_projects', 'can_view_exec_dashboard']
         const runQuery = async (queryStr, params) => {
             const req = pool.request();
             addParams(req, params);
+            addLifecycleParams(req, lifecycleParams);
             return await req.query(queryStr);
         };
 
@@ -727,6 +781,13 @@ router.get('/', checkPermission(['can_view_projects', 'can_view_exec_dashboard']
                 p.description,
                 p.status,
                 p.orgId,
+                p.lifecycleState,
+                p.completedAt,
+                p.archivedAt,
+                p.archivedByOid,
+                p.archiveReason,
+                p.lastActivityAt,
+                p.retentionClass,
                 p.createdAt,
                 CASE
                     WHEN @orgId IS NULL OR p.orgId = @orgId THEN 'owner'
@@ -909,6 +970,7 @@ router.get('/', checkPermission(['can_view_projects', 'can_view_exec_dashboard']
                 title: project.title,
                 description: project.description,
                 status: project.status || 'active',
+                ...mapProjectLifecycleMetadata(project),
                 orgId: project.orgId === null || project.orgId === undefined ? null : String(project.orgId),
                 goalIds: gIds,
                 goalId: gIds[0] || null, // backwards compat
@@ -958,14 +1020,18 @@ router.get('/watchlist', checkPermission(['can_view_projects', 'can_view_exec_da
         }
 
         const pool = await getPool();
-        const result = await pool.request()
+        const { text: lifecycleText, params: lifecycleParams } = buildLifecycleInClause('watchLifecycle', ACTIVE_PROJECT_LIFECYCLE_STATES);
+        const request = pool.request()
             .input('viewerOid', sql.NVarChar(100), viewerOid)
-            .input('orgId', sql.Int, req.orgId)
+            .input('orgId', sql.Int, req.orgId);
+        addLifecycleParams(request, lifecycleParams);
+        const result = await request
             .query(`
-                SELECT p.id, p.title, p.description, p.status, p.createdAt
+                SELECT p.id, p.title, p.description, p.status, p.createdAt, p.lifecycleState, p.completedAt, p.archivedAt, p.archivedByOid, p.archiveReason, p.lastActivityAt, p.retentionClass
                 FROM ProjectWatchers pw
                 INNER JOIN Projects p ON p.id = pw.projectId
                 WHERE pw.userOid = @viewerOid
+                  AND p.lifecycleState IN (${lifecycleText})
                   AND (
                     p.orgId = @orgId
                     OR p.id IN (
@@ -984,6 +1050,7 @@ router.get('/watchlist', checkPermission(['can_view_projects', 'can_view_exec_da
             title: project.title,
             description: project.description,
             status: project.status || 'active',
+            ...mapProjectLifecycleMetadata(project),
             createdAt: project.createdAt,
             isWatched: true
         }));
@@ -1023,6 +1090,7 @@ router.post('/:id/watch', checkPermission(['can_view_projects', 'can_view_exec_d
                 END
             `);
 
+        await touchProjectActivity(pool, projectId);
         invalidateProjectCache();
         logAudit({
             action: 'project.watch_add',
@@ -1060,6 +1128,7 @@ router.delete('/:id/watch', checkPermission(['can_view_projects', 'can_view_exec
                 WHERE projectId = @projectId AND userOid = @viewerOid
             `);
 
+        await touchProjectActivity(pool, projectId);
         invalidateProjectCache();
         logAudit({
             action: 'project.watch_remove',
@@ -1188,6 +1257,7 @@ router.get('/:id', checkPermission('can_view_projects'), withSharedScope, checkP
             title: project.title,
             description: project.description,
             status: project.status,
+            ...mapProjectLifecycleMetadata(project),
             orgId: project.orgId === null || project.orgId === undefined ? null : String(project.orgId),
             goalIds,
             goalId: goalIds[0] || null, // backwards compat
@@ -1615,6 +1685,7 @@ router.delete('/:id/benefits/:benefitId', checkPermission('can_edit_project'), w
             .input('projectId', sql.Int, projectId)
             .query('DELETE FROM ProjectBenefitRealization WHERE id = @benefitId AND projectId = @projectId');
 
+        await touchProjectActivity(pool, projectId);
         invalidateProjectCache();
         logAudit({
             action: 'project_benefit.delete',
@@ -1637,6 +1708,7 @@ router.post('/', checkPermission('can_create_project'), async (req, res) => {
     try {
         const { title, description, status } = req.body;
         const normalizedTitle = typeof title === 'string' ? title.trim() : '';
+        const normalizedStatus = String(status || 'active').trim().toLowerCase() || 'active';
         if (!normalizedTitle) {
             return res.status(400).json({ error: 'title is required' });
         }
@@ -1692,12 +1764,27 @@ router.post('/', checkPermission('can_create_project'), async (req, res) => {
             });
         }
 
+        const lifecycleSeed = deriveProjectLifecycleFromStatus({
+            currentLifecycleState: PROJECT_LIFECYCLE_STATES.ACTIVE,
+            status: normalizedStatus,
+            completedAt: null
+        });
+        const now = new Date();
+
         const result = await pool.request()
             .input('title', sql.NVarChar, normalizedTitle)
             .input('description', sql.NVarChar(sql.MAX), description)
-            .input('status', sql.NVarChar, status || 'active')
+            .input('status', sql.NVarChar, normalizedStatus)
             .input('orgId', sql.Int, ownerOrgId)
-            .query('INSERT INTO Projects (title, description, status, orgId) OUTPUT INSERTED.id VALUES (@title, @description, @status, @orgId)');
+            .input('lifecycleState', sql.NVarChar(20), lifecycleSeed.lifecycleState)
+            .input('completedAt', sql.DateTime2, lifecycleSeed.completedAt)
+            .input('lastActivityAt', sql.DateTime2, now)
+            .input('retentionClass', sql.NVarChar(40), 'confidential')
+            .query(`
+                INSERT INTO Projects (title, description, status, orgId, lifecycleState, completedAt, lastActivityAt, retentionClass)
+                OUTPUT INSERTED.id
+                VALUES (@title, @description, @status, @orgId, @lifecycleState, @completedAt, @lastActivityAt, @retentionClass)
+            `);
 
         const newId = result.recordset[0].id;
 
@@ -1708,14 +1795,22 @@ router.post('/', checkPermission('can_create_project'), async (req, res) => {
                 .input('goalId', sql.Int, gId)
                 .query('INSERT INTO ProjectGoals (projectId, goalId) VALUES (@projectId, @goalId)');
         }
+        await touchGoalActivity(pool, parsedGoalIds, now);
 
         invalidateProjectCache();
-        logAudit({ action: 'project.create', entityType: 'project', entityId: newId.toString(), entityTitle: normalizedTitle, user: getAuthUser(req), after: { title: normalizedTitle, description, status: status || 'active', orgId: ownerOrgId, goalIds: parsedGoalIds }, req });
+        logAudit({ action: 'project.create', entityType: 'project', entityId: newId.toString(), entityTitle: normalizedTitle, user: getAuthUser(req), after: { title: normalizedTitle, description, status: normalizedStatus, lifecycleState: lifecycleSeed.lifecycleState, orgId: ownerOrgId, goalIds: parsedGoalIds }, req });
         res.json({
             id: newId.toString(),
             title: normalizedTitle,
             description,
-            status: status || 'active',
+            status: normalizedStatus,
+            lifecycleState: lifecycleSeed.lifecycleState,
+            completedAt: lifecycleSeed.completedAt,
+            archivedAt: null,
+            archivedByOid: null,
+            archiveReason: null,
+            lastActivityAt: now,
+            retentionClass: 'confidential',
             orgId: String(ownerOrgId),
             goalIds: parsedGoalIds.map(String),
             goalId: parsedGoalIds[0]?.toString() || null,
@@ -1769,7 +1864,7 @@ router.put('/:id', checkPermission('can_edit_project'), withSharedScope, checkPr
             }
         }
 
-        const prev = await pool.request().input('id', sql.Int, id).query('SELECT title, description, status, orgId FROM Projects WHERE id = @id');
+        const prev = await pool.request().input('id', sql.Int, id).query('SELECT title, description, status, orgId, lifecycleState, completedAt, archivedAt, archivedByOid, archiveReason, lastActivityAt, retentionClass FROM Projects WHERE id = @id');
         if (prev.recordset.length === 0) {
             return res.status(404).json({ error: 'Project not found' });
         }
@@ -1831,12 +1926,22 @@ router.put('/:id', checkPermission('can_edit_project'), withSharedScope, checkPr
             });
         }
 
+        const lifecycleUpdate = deriveProjectLifecycleFromStatus({
+            currentLifecycleState: beforeState.lifecycleState,
+            status,
+            completedAt: beforeState.completedAt
+        });
+        const lastActivityAt = new Date();
+
         // Update project fields
         const projectUpdateRequest = pool.request()
             .input('id', sql.Int, id)
             .input('title', sql.NVarChar, title)
             .input('description', sql.NVarChar(sql.MAX), description)
-            .input('status', sql.NVarChar, status);
+            .input('status', sql.NVarChar, status)
+            .input('lifecycleState', sql.NVarChar(20), lifecycleUpdate.lifecycleState)
+            .input('completedAt', sql.DateTime2, lifecycleUpdate.completedAt)
+            .input('lastActivityAt', sql.DateTime2, lastActivityAt);
 
         if (hasOrgIdInput) {
             projectUpdateRequest.input('orgId', sql.Int, projectOrgId);
@@ -1846,7 +1951,10 @@ router.put('/:id', checkPermission('can_edit_project'), withSharedScope, checkPr
             UPDATE Projects
             SET title = @title,
                 description = @description,
-                status = @status
+                status = @status,
+                lifecycleState = @lifecycleState,
+                completedAt = @completedAt,
+                lastActivityAt = @lastActivityAt
                 ${hasOrgIdInput ? ', orgId = @orgId' : ''}
             WHERE id = @id
         `);
@@ -1915,6 +2023,9 @@ router.put('/:id', checkPermission('can_edit_project'), withSharedScope, checkPr
             }
         }
 
+        await touchProjectActivity(pool, id, lastActivityAt);
+        await touchGoalActivity(pool, parsedGoalIds, lastActivityAt);
+
         invalidateProjectCache();
         logAudit({
             action: ownershipChanged ? 'project.transfer_ownership' : 'project.update',
@@ -1927,6 +2038,9 @@ router.put('/:id', checkPermission('can_edit_project'), withSharedScope, checkPr
                 title,
                 description,
                 status,
+                lifecycleState: lifecycleUpdate.lifecycleState,
+                completedAt: lifecycleUpdate.completedAt,
+                lastActivityAt,
                 orgId: projectOrgId,
                 goalIds: parsedGoalIds,
                 ensuredGoalContext
@@ -1939,21 +2053,112 @@ router.put('/:id', checkPermission('can_edit_project'), withSharedScope, checkPr
     }
 });
 
-// Delete project
+// Archive project (legacy delete behavior maps to archive)
 router.delete('/:id', checkPermission('can_delete_project'), withSharedScope, checkProjectWriteAccess(), requireProjectWriteAccess, async (req, res) => {
     try {
         const id = parseInt(req.params.id);
         const pool = await getPool();
-        const prev = await pool.request().input('id', sql.Int, id).query('SELECT title, status FROM Projects WHERE id = @id');
+        const archivedAt = new Date();
+        const prev = await pool.request().input('id', sql.Int, id).query('SELECT title, status, lifecycleState FROM Projects WHERE id = @id');
+        if (!prev.recordset.length) {
+            return res.status(404).json({ error: 'Project not found' });
+        }
         await pool.request()
             .input('id', sql.Int, id)
-            .query('DELETE FROM Projects WHERE id = @id');
+            .input('archivedAt', sql.DateTime2, archivedAt)
+            .input('archivedByOid', sql.NVarChar(100), req.user?.oid || null)
+            .input('archiveReason', sql.NVarChar(500), 'Archived via delete action')
+            .query(`
+                UPDATE Projects
+                SET lifecycleState = 'archived',
+                    archivedAt = @archivedAt,
+                    archivedByOid = @archivedByOid,
+                    archiveReason = @archiveReason,
+                    lastActivityAt = @archivedAt
+                WHERE id = @id
+            `);
 
         invalidateProjectCache();
-        logAudit({ action: 'project.delete', entityType: 'project', entityId: id, entityTitle: prev.recordset[0]?.title, user: getAuthUser(req), before: prev.recordset[0], req });
-        res.json({ success: true });
+        logAudit({ action: 'project.archive', entityType: 'project', entityId: id, entityTitle: prev.recordset[0]?.title, user: getAuthUser(req), before: prev.recordset[0], after: { lifecycleState: 'archived', archivedAt }, req });
+        res.json({ success: true, lifecycleState: 'archived', archivedAt });
     } catch (err) {
         handleError(res, 'deleting project', err);
+    }
+});
+
+router.post('/:id/archive', checkPermission('can_delete_project'), withSharedScope, checkProjectWriteAccess(), requireProjectWriteAccess, async (req, res) => {
+    try {
+        const id = Number.parseInt(req.params.id, 10);
+        if (Number.isNaN(id)) {
+            return res.status(400).json({ error: 'Invalid project id' });
+        }
+        const pool = await getPool();
+        const archivedAt = new Date();
+        const archiveReason = String(req.body?.reason || '').trim() || 'Archived manually';
+        const previous = await pool.request()
+            .input('id', sql.Int, id)
+            .query('SELECT title, status, lifecycleState FROM Projects WHERE id = @id');
+        if (!previous.recordset.length) {
+            return res.status(404).json({ error: 'Project not found' });
+        }
+
+        await pool.request()
+            .input('id', sql.Int, id)
+            .input('archivedAt', sql.DateTime2, archivedAt)
+            .input('archivedByOid', sql.NVarChar(100), req.user?.oid || null)
+            .input('archiveReason', sql.NVarChar(500), archiveReason)
+            .query(`
+                UPDATE Projects
+                SET lifecycleState = 'archived',
+                    archivedAt = @archivedAt,
+                    archivedByOid = @archivedByOid,
+                    archiveReason = @archiveReason,
+                    lastActivityAt = @archivedAt
+                WHERE id = @id
+            `);
+        invalidateProjectCache();
+        logAudit({ action: 'project.archive', entityType: 'project', entityId: String(id), entityTitle: previous.recordset[0]?.title, user: getAuthUser(req), before: previous.recordset[0], after: { lifecycleState: 'archived', archivedAt, archiveReason }, req });
+        res.json({ success: true, lifecycleState: 'archived', archivedAt, archiveReason });
+    } catch (err) {
+        handleError(res, 'archiving project', err);
+    }
+});
+
+router.post('/:id/restore', checkPermission('can_edit_project'), withSharedScope, checkProjectWriteAccess(), async (req, res) => {
+    try {
+        const id = Number.parseInt(req.params.id, 10);
+        if (Number.isNaN(id)) {
+            return res.status(400).json({ error: 'Invalid project id' });
+        }
+        const pool = await getPool();
+        const previous = await pool.request()
+            .input('id', sql.Int, id)
+            .query('SELECT title, status, lifecycleState FROM Projects WHERE id = @id');
+        if (!previous.recordset.length) {
+            return res.status(404).json({ error: 'Project not found' });
+        }
+
+        const lifecycleState = getProjectRestoreLifecycleState(previous.recordset[0]?.status);
+        const restoredAt = new Date();
+        await pool.request()
+            .input('id', sql.Int, id)
+            .input('lifecycleState', sql.NVarChar(20), lifecycleState)
+            .input('restoredAt', sql.DateTime2, restoredAt)
+            .query(`
+                UPDATE Projects
+                SET lifecycleState = @lifecycleState,
+                    archivedAt = NULL,
+                    archivedByOid = NULL,
+                    archiveReason = NULL,
+                    lastActivityAt = @restoredAt
+                WHERE id = @id
+            `);
+
+        invalidateProjectCache();
+        logAudit({ action: 'project.restore', entityType: 'project', entityId: String(id), entityTitle: previous.recordset[0]?.title, user: getAuthUser(req), before: previous.recordset[0], after: { lifecycleState, restoredAt }, req });
+        res.json({ success: true, lifecycleState, lastActivityAt: restoredAt });
+    } catch (err) {
+        handleError(res, 'restoring project', err);
     }
 });
 
@@ -2020,6 +2225,7 @@ router.put('/:id/tags', checkPermission('can_edit_project'), withSharedScope, ch
             throw txErr;
         }
 
+        await touchProjectActivity(pool, projectId);
         invalidateProjectCache();
         logAudit({ action: 'project.tags_update', entityType: 'project', entityId: projectId, entityTitle: `${tags.length} tags`, user: getAuthUser(req), after: { tags }, req });
         res.json({ success: true });
@@ -2091,12 +2297,14 @@ router.post('/:projectId/tasks', checkPermission('can_edit_project'), withShared
             .input('endDate', sql.Date, normalizedEndDate)
             .input('assigneeOid', sql.NVarChar(100), normalizedAssigneeOid)
             .input('blockerNote', sql.NVarChar(1000), persistedBlockerNote)
+            .input('updatedAt', sql.DateTime2, new Date())
             .query(`
-                INSERT INTO Tasks (projectId, title, status, priority, description, startDate, endDate, assigneeOid, blockerNote)
+                INSERT INTO Tasks (projectId, title, status, priority, description, startDate, endDate, assigneeOid, blockerNote, updatedAt)
                 OUTPUT INSERTED.id
-                VALUES (@projectId, @title, @status, @priority, @description, @startDate, @endDate, @assigneeOid, @blockerNote)
+                VALUES (@projectId, @title, @status, @priority, @description, @startDate, @endDate, @assigneeOid, @blockerNote, @updatedAt)
             `);
 
+        await touchProjectActivity(pool, req.params.projectId);
         invalidateProjectCache();
         const newId = result.recordset[0].id.toString();
         logAudit({
@@ -2188,6 +2396,7 @@ router.post('/:projectId/reports', checkPermission('can_create_status_reports'),
             .input('restoredFrom', sql.Int, restoredFrom || null)
             .query('INSERT INTO StatusReports (projectId, version, reportData, createdBy, restoredFrom) OUTPUT INSERTED.id, INSERTED.createdAt VALUES (@projectId, @version, @reportData, @createdBy, @restoredFrom)');
 
+        await touchProjectActivity(pool, req.params.projectId, result.recordset[0]?.createdAt || new Date());
         invalidateProjectCache();
         const newReportId = result.recordset[0].id.toString();
         logAudit({ action: 'report.create', entityType: 'report', entityId: newReportId, entityTitle: `v${nextVersion}`, user: getAuthUser(req), after: { version: nextVersion, createdBy, restoredFrom }, metadata: { projectId: req.params.projectId }, req });

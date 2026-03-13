@@ -4,6 +4,7 @@ import { checkPermission, getAuthUser } from '../middleware/authMiddleware.js';
 import { withSharedScope, checkKpiWriteAccess, requireGoalWriteAccess } from '../middleware/orgScope.js';
 import { handleError } from '../utils/errorHandler.js';
 import { logAudit } from '../utils/auditLogger.js';
+import { touchGoalActivity } from '../utils/lifecycle.js';
 
 const router = express.Router();
 
@@ -13,7 +14,7 @@ router.put('/:id', checkPermission('can_manage_kpis'), withSharedScope, checkKpi
         const { name, target, current, unit } = req.body;
         const id = parseInt(req.params.id);
         const pool = await getPool();
-        const prev = await pool.request().input('id', sql.Int, id).query('SELECT name, target, currentValue, unit FROM KPIs WHERE id = @id');
+        const prev = await pool.request().input('id', sql.Int, id).query('SELECT name, target, currentValue, unit, goalId FROM KPIs WHERE id = @id');
         const beforeState = prev.recordset[0];
         const request = pool.request()
             .input('id', sql.Int, id);
@@ -44,6 +45,7 @@ router.put('/:id', checkPermission('can_manage_kpis'), withSharedScope, checkKpi
 
         await request.query(`UPDATE KPIs SET ${updateParts.join(', ')} WHERE id = @id`);
 
+        await touchGoalActivity(pool, [beforeState?.goalId]);
         logAudit({ action: 'kpi.update', entityType: 'kpi', entityId: id, entityTitle: name || beforeState?.name, user: getAuthUser(req), before: beforeState, after: { name, target, current, unit }, req });
         res.json({ success: true });
     } catch (err) {
@@ -61,6 +63,7 @@ router.delete('/:id', checkPermission('can_manage_kpis'), withSharedScope, check
             .input('id', sql.Int, id)
             .query('DELETE FROM KPIs WHERE id = @id');
 
+        await touchGoalActivity(pool, [prev.recordset[0]?.goalId]);
         logAudit({ action: 'kpi.delete', entityType: 'kpi', entityId: id, entityTitle: prev.recordset[0]?.name, user: getAuthUser(req), before: prev.recordset[0], req });
         res.json({ success: true });
     } catch (err) {

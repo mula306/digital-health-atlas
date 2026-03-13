@@ -85,6 +85,37 @@ export function DataProvider({ children }) {
         return fallback;
     }, []);
 
+    const refreshActiveGoals = useCallback(async () => {
+        const res = await authFetch(`${API_BASE}/goals?lifecycle=active`);
+        if (!res.ok) {
+            throw new Error(await getApiErrorMessage(res, 'Failed to refresh goals'));
+        }
+        const rows = await res.json();
+        setGoals(Array.isArray(rows) ? rows : []);
+        return Array.isArray(rows) ? rows : [];
+    }, [authFetch, getApiErrorMessage]);
+
+    const refreshActiveProjects = useCallback(async () => {
+        const res = await authFetch(`${API_BASE}/projects?page=1&limit=50&lifecycle=active`);
+        if (!res.ok) {
+            throw new Error(await getApiErrorMessage(res, 'Failed to refresh projects'));
+        }
+        const payload = await res.json();
+        setProjects(payload.projects || payload || []);
+        if (payload.pagination) setProjectsPagination(payload.pagination);
+        return payload;
+    }, [authFetch, getApiErrorMessage]);
+
+    const refreshIntakeForms = useCallback(async (lifecycle = 'all') => {
+        const res = await authFetch(`${API_BASE}/intake/forms?lifecycle=${encodeURIComponent(lifecycle)}`);
+        if (!res.ok) {
+            throw new Error(await getApiErrorMessage(res, 'Failed to refresh intake forms'));
+        }
+        const rows = await res.json();
+        setIntakeForms(Array.isArray(rows) ? rows : []);
+        return Array.isArray(rows) ? rows : [];
+    }, [authFetch, getApiErrorMessage]);
+
     // Load more projects (pagination)
     const loadMoreProjects = useCallback(async () => {
         if (!projectsPagination.hasMore || loadingMore) return;
@@ -92,7 +123,7 @@ export function DataProvider({ children }) {
         setLoadingMore(true);
         try {
             const nextPage = projectsPagination.page + 1;
-            const res = await authFetch(`${API_BASE}/projects?page=${nextPage}&limit=${projectsPagination.limit}`);
+            const res = await authFetch(`${API_BASE}/projects?page=${nextPage}&limit=${projectsPagination.limit}&lifecycle=active`);
             // fetchWithAuth throws on error, so res is OK here
             const data = await res.json();
             setProjects(prev => [...prev, ...data.projects]);
@@ -105,8 +136,15 @@ export function DataProvider({ children }) {
     }, [projectsPagination, loadingMore, authFetch]);
 
     // Fetch Exec Summary (All Projects)
-    const fetchExecSummaryProjects = useCallback(async () => {
-        const res = await authFetch(`${API_BASE}/projects/exec-summary`);
+    const fetchExecSummaryProjects = useCallback(async (options = {}) => {
+        const params = new URLSearchParams();
+        if (options?.lifecycle) {
+            params.set('lifecycle', String(options.lifecycle));
+        } else if (options?.includeArchived) {
+            params.set('lifecycle', 'all');
+        }
+        const suffix = params.toString() ? `?${params.toString()}` : '';
+        const res = await authFetch(`${API_BASE}/projects/exec-summary${suffix}`);
         return await res.json();
     }, [authFetch]);
 
@@ -166,8 +204,8 @@ export function DataProvider({ children }) {
 
                 // 2. Fetch core data
                 const [goalsResult, projectsResult] = await Promise.allSettled([
-                    authFetch(`${API_BASE}/goals`),
-                    authFetch(`${API_BASE}/projects?page=1&limit=50`)
+                    authFetch(`${API_BASE}/goals?lifecycle=active`),
+                    authFetch(`${API_BASE}/projects?page=1&limit=50&lifecycle=active`)
                 ]);
 
                 if (goalsResult.status === 'fulfilled') {
@@ -213,7 +251,7 @@ export function DataProvider({ children }) {
                     checkPerm('can_view_incoming_requests') ||
                     checkPerm('can_view_governance_queue')
                 ) {
-                    secondaryPromises.push(authFetch(`${API_BASE}/intake/forms`).then(r => r.json()).then(setIntakeForms).catch(e => console.warn('Intake forms failed', e)));
+                    secondaryPromises.push(refreshIntakeForms('all').catch(e => console.warn('Intake forms failed', e)));
                 }
 
                 // Submissions - ONLY if allowed
@@ -243,7 +281,7 @@ export function DataProvider({ children }) {
         } else {
             setLoading(false);
         }
-    }, [instance, authFetch, isTestAuthMock]);
+    }, [instance, authFetch, isTestAuthMock, refreshIntakeForms]);
 
 
     const updatePermissionsBulk = useCallback(async (updates) => {
@@ -422,12 +460,39 @@ export function DataProvider({ children }) {
 
     const deleteGoal = useCallback(async (id) => {
         try {
-            await authFetch(`${API_BASE}/goals/${id}`, { method: 'DELETE' });
+            const res = await authFetch(`${API_BASE}/goals/${id}`, { method: 'DELETE' });
+            if (!res.ok) {
+                throw new Error(await getApiErrorMessage(res, 'Failed to archive goal'));
+            }
             setGoals(prev => prev.filter(g => g.id !== id));
         } catch (err) {
             console.error('Error deleting goal:', err);
+            throw err;
         }
-    }, [authFetch]);
+    }, [authFetch, getApiErrorMessage]);
+
+    const retireGoal = useCallback(async (id, reason = '') => {
+        const res = await authFetch(`${API_BASE}/goals/${id}/retire`, {
+            method: 'POST',
+            body: JSON.stringify({ reason })
+        });
+        if (!res.ok) {
+            throw new Error(await getApiErrorMessage(res, 'Failed to retire goal'));
+        }
+        setGoals(prev => prev.filter((goal) => String(goal.id) !== String(id)));
+        return await res.json();
+    }, [authFetch, getApiErrorMessage]);
+
+    const restoreGoal = useCallback(async (id) => {
+        const res = await authFetch(`${API_BASE}/goals/${id}/restore`, {
+            method: 'POST'
+        });
+        if (!res.ok) {
+            throw new Error(await getApiErrorMessage(res, 'Failed to restore goal'));
+        }
+        await refreshActiveGoals();
+        return await res.json();
+    }, [authFetch, getApiErrorMessage, refreshActiveGoals]);
 
     // ==================== KPIs ====================
 
@@ -548,12 +613,27 @@ export function DataProvider({ children }) {
 
     const deleteProject = useCallback(async (id) => {
         try {
-            await authFetch(`${API_BASE}/projects/${id}`, { method: 'DELETE' });
+            const res = await authFetch(`${API_BASE}/projects/${id}`, { method: 'DELETE' });
+            if (!res.ok) {
+                throw new Error(await getApiErrorMessage(res, 'Failed to archive project'));
+            }
             setProjects(prev => prev.filter(p => p.id !== id));
         } catch (err) {
             console.error('Error deleting project:', err);
+            throw err;
         }
-    }, [authFetch]);
+    }, [authFetch, getApiErrorMessage]);
+
+    const restoreProject = useCallback(async (id) => {
+        const res = await authFetch(`${API_BASE}/projects/${id}/restore`, {
+            method: 'POST'
+        });
+        if (!res.ok) {
+            throw new Error(await getApiErrorMessage(res, 'Failed to restore project'));
+        }
+        await refreshActiveProjects();
+        return await res.json();
+    }, [authFetch, getApiErrorMessage, refreshActiveProjects]);
 
     const setProjectWatchState = useCallback((projectId, isWatched) => {
         const normalizedId = String(projectId);
@@ -850,12 +930,43 @@ export function DataProvider({ children }) {
 
     const deleteIntakeForm = useCallback(async (id) => {
         try {
-            await authFetch(`${API_BASE}/intake/forms/${id}`, { method: 'DELETE' });
-            setIntakeForms(prev => prev.filter(f => f.id !== id));
+            const res = await authFetch(`${API_BASE}/intake/forms/${id}`, { method: 'DELETE' });
+            if (!res.ok) {
+                throw new Error(await getApiErrorMessage(res, 'Failed to retire or archive intake form'));
+            }
+            const payload = await res.json().catch(() => ({}));
+            if (payload?.lifecycleState === 'deleted') {
+                setIntakeForms(prev => prev.filter(f => f.id !== id));
+            } else {
+                await refreshIntakeForms('all');
+            }
         } catch (err) {
             console.error('Error deleting intake form:', err);
+            throw err;
         }
-    }, [authFetch]);
+    }, [authFetch, getApiErrorMessage, refreshIntakeForms]);
+
+    const retireIntakeForm = useCallback(async (id) => {
+        const res = await authFetch(`${API_BASE}/intake/forms/${id}/retire`, {
+            method: 'POST'
+        });
+        if (!res.ok) {
+            throw new Error(await getApiErrorMessage(res, 'Failed to retire intake form'));
+        }
+        await refreshIntakeForms('all');
+        return await res.json();
+    }, [authFetch, getApiErrorMessage, refreshIntakeForms]);
+
+    const restoreIntakeForm = useCallback(async (id) => {
+        const res = await authFetch(`${API_BASE}/intake/forms/${id}/restore`, {
+            method: 'POST'
+        });
+        if (!res.ok) {
+            throw new Error(await getApiErrorMessage(res, 'Failed to restore intake form'));
+        }
+        await refreshIntakeForms('all');
+        return await res.json();
+    }, [authFetch, getApiErrorMessage, refreshIntakeForms]);
 
 
     // ==================== ORGANIZATIONS ====================
@@ -1775,7 +1886,7 @@ export function DataProvider({ children }) {
         <DataContext.Provider value={{
             goals: goalsWithProgress,
             currentUser,
-            addGoal, updateGoal, deleteGoal,
+            addGoal, updateGoal, deleteGoal, retireGoal, restoreGoal,
             addKpi, updateKpi, deleteKpi,
             projects: projectsWithCompletion,
             projectsPagination,
@@ -1783,11 +1894,11 @@ export function DataProvider({ children }) {
             loadMoreProjects,
             loading,
             loadingMore,
-            moveTask, addTask, addProject, updateProject, deleteProject, loadProjectDetails,
+            moveTask, addTask, addProject, updateProject, deleteProject, restoreProject, loadProjectDetails,
             watchProject, unwatchProject,
             updateTask, deleteTask,
             fetchAssignableUsers, fetchTaskChecklist, addTaskChecklistItem, updateTaskChecklistItem, deleteTaskChecklistItem,
-            intakeForms, addIntakeForm, updateIntakeForm, deleteIntakeForm,
+            intakeForms, addIntakeForm, updateIntakeForm, deleteIntakeForm, retireIntakeForm, restoreIntakeForm,
             intakeSubmissions, mySubmissions, addIntakeSubmission, updateIntakeSubmission,
             getGovernanceSettings, updateGovernanceSettings,
             fetchGovernanceUsers,

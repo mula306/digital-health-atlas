@@ -47,10 +47,38 @@ test('canonical schema migrates and constrains goal taxonomy to enterprise casca
     assert.match(schema, /WHEN 'org' THEN 'enterprise'/);
 });
 
+test('canonical schema includes archive-first lifecycle columns, constraints, and indexes', () => {
+    const schema = readScript('schema.sql');
+    assert.match(schema, /CK_Projects_LifecycleState/);
+    assert.match(schema, /CK_Goals_LifecycleState/);
+    assert.match(schema, /CK_IntakeForms_LifecycleState/);
+    assert.match(schema, /resolvedAt DATETIME2 NULL/);
+    assert.match(schema, /lastActivityAt DATETIME2 NULL/);
+    assert.match(schema, /retentionClass NVARCHAR\(40\)/);
+    assert.match(schema, /IX_Projects_LifecycleState/);
+    assert.match(schema, /IX_Goals_LifecycleState/);
+    assert.match(schema, /IX_IntakeForms_LifecycleState/);
+    assert.match(schema, /IX_IntakeSubmissions_ResolvedAt/);
+    assert.match(schema, /IX_Tasks_UpdatedAt/);
+});
+
 test('setup script uses schema-only initialization path', () => {
     const setupScript = readScript('setup_db.js');
     assert.match(setupScript, /SQL_FILES_IN_ORDER/);
     assert.match(setupScript, /'schema\.sql'/);
     assert.doesNotMatch(setupScript, /migrate_/);
     assert.doesNotMatch(setupScript, /upgrade_db/);
+});
+
+test('lifecycle maintenance scripts expose dry-run and apply modes', () => {
+    const backfillScript = readScript('backfill_lifecycle.js');
+    const retentionScript = readScript('run_retention.js');
+
+    assert.match(backfillScript, /applyChanges = args\.includes\('--apply'\)/);
+    assert.match(backfillScript, /lifecycle-backfill-report\.json/);
+    assert.match(backfillScript, /goalRetireMonths/);
+
+    assert.match(retentionScript, /applyChanges = args\.includes\('--apply'\)/);
+    assert.match(retentionScript, /data-retention-report\.json/);
+    assert.match(retentionScript, /Operational-artifact purge categories remain report-only/);
 });

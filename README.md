@@ -85,15 +85,20 @@ Digital Health Atlas is an intake, governance, and portfolio execution platform 
 
 ### Frontend
 
-- React 19 + Vite
+- React 19.2 + Vite 8
 - MSAL (`@azure/msal-browser`, `@azure/msal-react`) for Entra authentication
 - Route/state persistence via URL query params and local storage
 - Shared UI patterns (`FilterBar`, modal workflows, responsive layouts)
 - Saskatchewan-aligned theme tokens with light/dark mode support
+- Test/tooling stack:
+  - Vitest 4.0.18 + `jsdom` 28.1
+  - Playwright 1.57
+  - MSW 2.12 for frontend API mocking
+  - `lucide-react` 0.577 icon set
 
 ### Backend
 
-- Node.js + Express (`server/`)
+- Node.js + Express 5 (`server/`)
 - SQL Server via `mssql`
 - JWT auth via `passport-jwt` + `jwks-rsa` against Entra tenant keys
 - Security middleware: `helmet`, `cors`, `express-rate-limit`, `compression`
@@ -107,6 +112,29 @@ Digital Health Atlas is an intake, governance, and portfolio execution platform 
 - `IntakeForms.fields` is a JSON contract, not a separate relational table. It now carries optional `systemKey` and `locked` metadata for required system fields.
 - `Projects.goalId` remains for backwards compatibility, while `ProjectGoals` is the canonical multi-goal association table used by modern project and conversion flows.
 
+### Data lifecycle and retention
+
+- The platform now uses an archive-first lifecycle model for projects, goals, and intake forms.
+- Lifecycle states are explicit in the schema and API:
+  - Projects: `active | completed | archived`
+  - Goals: `active | retired | archived`
+  - Intake forms: `draft | active | retired | archived`
+- Default operational views hide archived and retired records unless a user explicitly opts into historical visibility.
+- Archived and retired records remain accessible for history and reporting, but are read-only by default until restored.
+- Routine product operations no longer hard-delete core records:
+  - projects archive instead of delete
+  - goals retire/archive instead of delete
+  - intake forms with submissions retire instead of deleting history
+  - only unused draft intake forms with zero submissions are eligible for physical deletion
+- Core lifecycle state is persisted in the database rather than inferred only from status fields.
+- `lastActivityAt`, archive metadata, and resolved timestamps are maintained/backfilled so lifecycle and stale-state logic no longer depend only on audit rows.
+- Historical record retention is conservative by default; operational artifact purge remains report-only in this phase.
+- Retention automation is available as a script-driven workflow:
+  - `cd server && npm run retention:dry-run`
+  - `cd server && npm run retention:apply`
+- In the current release phase, no physical purge is performed for core business records. Operational artifact purge stays gated behind export/verification safeguards.
+- Detailed policy and operating guidance: [docs/data-lifecycle-policy.md](C:\Users\mula\OneDrive\Documents\AntiGravity\Digital%20Health%20Atlas\docs\data-lifecycle-policy.md)
+
 ### Ownership and sharing model
 
 - Each goal, project, intake form, intake submission, and governance board has one home organization.
@@ -119,6 +147,9 @@ Digital Health Atlas is an intake, governance, and portfolio execution platform 
 - Existing upgraded databases with legacy null ownership can be audited and backfilled with:
   - `cd server && npm run backfill:org-ownership`
   - `cd server && npm run backfill:org-ownership:apply`
+- Existing upgraded databases can also backfill lifecycle metadata with:
+  - `cd server && npm run backfill:lifecycle`
+  - `cd server && npm run backfill:lifecycle:apply`
 
 ### Quality baseline
 
@@ -160,6 +191,13 @@ Digital Health Atlas is an intake, governance, and portfolio execution platform 
 - DB snapshot to `server/backups/`: `cd server && npm run snapshot:db`
   - Uses `DB_PASSWORD` by default
   - Optional overrides: `SNAPSHOT_DB_PASSWORD`, `SNAPSHOT_DB_NAME`, `SNAPSHOT_CONTAINER_NAME`, `SNAPSHOT_FILENAME`
+- Lifecycle metadata backfill:
+  - `cd server && npm run backfill:lifecycle`
+  - `cd server && npm run backfill:lifecycle:apply`
+- Retention candidate runner:
+  - `cd server && npm run retention:dry-run`
+  - `cd server && npm run retention:apply`
+  - Use `dry-run` first to review archive/retire candidates and operational-artifact retention candidates before any apply step
 - Legacy report permission migration for older upgraded databases only:
   - `cd server && npm run migrate:report-permissions:legacy`
 
@@ -208,6 +246,10 @@ Notes:
 - `npm run setup-db` and `npm run setup-db:full` read `DB_*` values on every invocation.
 - Locally, the expected source is `server/.env` unless you deliberately override with shell environment variables.
 - If Docker SQL is recreated with a different `MSSQL_SA_PASSWORD`, update `server/.env` `DB_PASSWORD` to match before rerunning setup.
+- After upgrading an existing environment to the lifecycle-enabled schema, run lifecycle backfill before relying on archive/retention automation:
+  - `cd server && npm run backfill:lifecycle`
+- Before turning on scheduled retention apply runs in an existing environment, review a dry-run report first:
+  - `cd server && npm run retention:dry-run`
 
 Test-only values (optional):
 
@@ -256,6 +298,14 @@ Operational note:
   - `cd server && npm run backfill:org-ownership`
   - review the generated report
   - `cd server && npm run backfill:org-ownership:apply` when you are comfortable applying the unambiguous fixes
+- If this is an upgraded environment with older records created before lifecycle fields were actively maintained, run the lifecycle backfill after setup:
+  - `cd server && npm run backfill:lifecycle`
+  - review `server/reports/lifecycle-backfill-report.json`
+  - `cd server && npm run backfill:lifecycle:apply` when you are comfortable applying inferred timestamps and inactive-goal retirement
+- After lifecycle backfill on an upgraded environment, review retention candidates before any apply run:
+  - `cd server && npm run retention:dry-run`
+  - review `server/reports/data-retention-report.json`
+  - keep core-record purge disabled; use this report to validate archive/retire candidates and operational-artifact cleanup scope
 
 This command is idempotent and safe to re-run.
 
@@ -328,6 +378,8 @@ npm run test:e2e:quarantine
 npm run test:phase-a
 npm run test:phase-b
 npm run test:phase-c
+npm run backfill:lifecycle
+npm run retention:dry-run
 npm run db:up
 npm run db:down
 ```
@@ -340,6 +392,10 @@ npm run setup-db
 npm run setup-db:full
 npm run backfill:org-ownership
 npm run backfill:org-ownership:apply
+npm run backfill:lifecycle
+npm run backfill:lifecycle:apply
+npm run retention:dry-run
+npm run retention:apply
 npm run seed:permissions
 npm run seed:test-fixtures
 npm run seed:faker

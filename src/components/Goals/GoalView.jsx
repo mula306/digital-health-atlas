@@ -6,6 +6,7 @@ import { Modal } from '../UI/Modal';
 import { AddGoalForm } from './AddGoalForm';
 import { FilterBar } from '../UI/FilterBar';
 import { EmptyState } from '../UI/EmptyState';
+import { API_BASE } from '../../apiClient';
 import './Goals.css';
 import { getGoalTypeGoalLabel } from '../../../shared/goalLevels.js';
 
@@ -17,7 +18,7 @@ const STATUS_OPTIONS = [
 ];
 
 export function GoalView({ onNavigateToProjects, onNavigateToMetrics }) {
-    const { goals, projects, fetchExecSummaryProjects, hasPermission } = useData();
+    const { goals, projects, fetchExecSummaryProjects, authFetch, hasPermission } = useData();
     const canCreateGoal = hasPermission('can_create_goal');
     const [showAddModal, setShowAddModal] = useState(false);
     const [goalFilter, setGoalFilter] = useState('');
@@ -25,11 +26,13 @@ export function GoalView({ onNavigateToProjects, onNavigateToMetrics }) {
     const [selectedStatuses, setSelectedStatuses] = useState([]);
     const [watchedOnly, setWatchedOnly] = useState(false);
     const [allProjects, setAllProjects] = useState([]);
+    const [goalRows, setGoalRows] = useState(goals);
+    const [goalLifecycleFilter, setGoalLifecycleFilter] = useState('active');
     const [expandAll, setExpandAll] = useState(null); // null = individual control, true = all expanded, false = all collapsed
 
     useEffect(() => {
         let isMounted = true;
-        fetchExecSummaryProjects()
+        fetchExecSummaryProjects({ lifecycle: goalLifecycleFilter })
             .then(data => {
                 if (isMounted && Array.isArray(data)) {
                     setAllProjects(data);
@@ -40,7 +43,31 @@ export function GoalView({ onNavigateToProjects, onNavigateToMetrics }) {
             });
 
         return () => { isMounted = false; };
-    }, [fetchExecSummaryProjects]);
+    }, [fetchExecSummaryProjects, goalLifecycleFilter]);
+
+    useEffect(() => {
+        let cancelled = false;
+
+        async function loadGoalsForLifecycle() {
+            if (goalLifecycleFilter === 'active') {
+                if (!cancelled) setGoalRows(goals);
+                return;
+            }
+            try {
+                const res = await authFetch(`${API_BASE}/goals?lifecycle=${encodeURIComponent(goalLifecycleFilter)}`);
+                if (!res.ok) return;
+                const rows = await res.json();
+                if (!cancelled) {
+                    setGoalRows(Array.isArray(rows) ? rows : []);
+                }
+            } catch (error) {
+                console.error('Failed to load lifecycle-filtered goals', error);
+            }
+        }
+
+        loadGoalsForLifecycle();
+        return () => { cancelled = true; };
+    }, [authFetch, goals, goalLifecycleFilter]);
 
     const projectsForFilters = (allProjects.length > 0 ? allProjects : projects)
         .filter(project => !watchedOnly || !!project.isWatched);
@@ -49,12 +76,12 @@ export function GoalView({ onNavigateToProjects, onNavigateToMetrics }) {
     const getFilteredRootGoals = () => {
         if (!goalFilter) {
             // No filter - show all root goals
-            return goals.filter(g => !g.parentId);
+            return goalRows.filter(g => !g.parentId);
         }
 
         // Get the selected goal
-        const selectedGoal = goals.find(g => g.id === goalFilter);
-        if (!selectedGoal) return goals.filter(g => !g.parentId);
+        const selectedGoal = goalRows.find(g => g.id === goalFilter);
+        if (!selectedGoal) return goalRows.filter(g => !g.parentId);
 
         // Return the selected goal as root (it becomes the tree root when filtered)
         return [selectedGoal];
@@ -115,19 +142,40 @@ export function GoalView({ onNavigateToProjects, onNavigateToMetrics }) {
                 statusOptions={STATUS_OPTIONS}
                 watchedOnly={watchedOnly}
                 onWatchedOnlyChange={setWatchedOnly}
-            />
+                countLabel={`${filteredRootGoals.length} root goal(s)`}
+            >
+                <div style={{ display: 'inline-flex', gap: '0.35rem' }}>
+                    {[
+                        { id: 'active', label: 'Active' },
+                        { id: 'archived', label: 'Archived' },
+                        { id: 'all', label: 'All' }
+                    ].map((option) => (
+                        <button
+                            key={option.id}
+                            type="button"
+                            className={`btn-secondary btn-sm ${goalLifecycleFilter === option.id ? 'active' : ''}`}
+                            onClick={() => setGoalLifecycleFilter(option.id)}
+                        >
+                            {option.label}
+                        </button>
+                    ))}
+                </div>
+            </FilterBar>
 
             <div className="goals-tree-container">
                 {filteredRootGoals.length === 0 ? (
                     <EmptyState
-                        title="No goals found"
-                        message={`No goals defined. Start by adding an ${getGoalTypeGoalLabel('enterprise')}.`}
+                        title={goalLifecycleFilter === 'archived' ? 'No archived goals found' : 'No goals found'}
+                        message={goalLifecycleFilter === 'archived'
+                            ? 'There are no retired or archived goals available for the current filters.'
+                            : `No goals defined. Start by adding an ${getGoalTypeGoalLabel('enterprise')}.`}
                     />
                 ) : (
                     filteredRootGoals.map(goal => (
                         <GoalItem
                             key={goal.id}
                             goal={goal}
+                            allGoals={goalRows}
                             level={0}
                             onNavigateToProjects={onNavigateToProjects}
                             onNavigateToMetrics={onNavigateToMetrics}

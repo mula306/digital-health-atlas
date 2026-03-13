@@ -19,6 +19,19 @@ import {
 import { findGoalAccessGapsForOrg, ensureReadGoalAccessForOrg } from '../utils/goalAccess.js';
 import { ensureOrganizationExists, isAdminUser, parseOptionalOrgId, resolveOwnedOrgId } from '../utils/orgOwnership.js';
 import { validateGoalAssignment, loadGoalsForValidation } from '../utils/goalValidation.js';
+import {
+    INTAKE_FORM_LIFECYCLE_STATES,
+    LIFECYCLE_VIEW_MODES,
+    PROJECT_LIFECYCLE_STATES,
+    addLifecycleParams,
+    buildLifecycleInClause,
+    deriveProjectLifecycleFromStatus,
+    getIntakeFormLifecycleViewStates,
+    normalizeIntakeFormLifecycleState,
+    normalizeLifecycleView,
+    touchGoalActivity,
+    touchProjectActivity
+} from '../utils/lifecycle.js';
 
 const router = express.Router();
 
@@ -43,6 +56,10 @@ const mapIntakeFormRow = (form) => ({
     governanceMode: normalizeGovernanceMode(form.governanceMode, 'off'),
     governanceBoardId: form.governanceBoardId ? form.governanceBoardId.toString() : null,
     orgId: form.orgId === null || form.orgId === undefined ? null : String(form.orgId),
+    lifecycleState: normalizeIntakeFormLifecycleState(form.lifecycleState),
+    retiredAt: form.retiredAt || null,
+    archivedAt: form.archivedAt || null,
+    archivedByOid: form.archivedByOid || null,
     createdAt: form.createdAt
 });
 
@@ -63,12 +80,15 @@ const mapSubmissionRow = (sub) => {
         conversation: isConversationFormat ? storedData : [],
         convertedProjectId: sub.convertedProjectId ? sub.convertedProjectId.toString() : null,
         submittedAt: sub.submittedAt,
+        resolvedAt: sub.resolvedAt || null,
         submitterName: sub.submitterName || null,
         submitterEmail: sub.submitterEmail || null,
         submitterId: sub.submitterId || null,
         orgId: sub.orgId === null || sub.orgId === undefined ? null : String(sub.orgId)
     };
 };
+
+const parseIntakeFormLifecycleView = (value) => normalizeLifecycleView(value || LIFECYCLE_VIEW_MODES.ACTIVE);
 
 const requireScopedOrgId = (user, message = 'No organization assigned. Contact your administrator.') => {
     if (isAdminUser(user)) return null;
@@ -698,14 +718,33 @@ router.get('/forms', requireAuth, async (req, res) => {
         if (!canViewForms) return res.status(403).json({ error: 'Forbidden' });
 
         const pool = await getPool();
+        const lifecycleView = parseIntakeFormLifecycleView(req.query.lifecycle);
+        const { text: lifecycleText, params: lifecycleParams } = buildLifecycleInClause(
+            'intakeLifecycle',
+            getIntakeFormLifecycleViewStates(lifecycleView)
+        );
         let result;
         if (isAdminUser(user)) {
-            result = await pool.request().query('SELECT * FROM IntakeForms ORDER BY id');
+            const request = pool.request();
+            addLifecycleParams(request, lifecycleParams);
+            result = await request.query(`
+                SELECT *
+                FROM IntakeForms
+                WHERE lifecycleState IN (${lifecycleText})
+                ORDER BY id
+            `);
         } else {
             const viewerOrgId = requireScopedOrgId(user, 'No organization assigned. Contact your administrator to view intake forms.');
-            result = await pool.request()
-                .input('orgId', sql.Int, viewerOrgId)
-                .query('SELECT * FROM IntakeForms WHERE orgId = @orgId ORDER BY id');
+            const request = pool.request()
+                .input('orgId', sql.Int, viewerOrgId);
+            addLifecycleParams(request, lifecycleParams);
+            result = await request.query(`
+                SELECT *
+                FROM IntakeForms
+                WHERE orgId = @orgId
+                  AND lifecycleState IN (${lifecycleText})
+                ORDER BY id
+            `);
         }
 
         res.json(result.recordset.map(mapIntakeFormRow));
@@ -787,17 +826,19 @@ router.post('/forms', checkPermission('can_manage_intake_forms'), async (req, re
         if (schemaReady) {
             request
                 .input('governanceMode', sql.NVarChar(20), normalizedMode)
-                .input('governanceBoardId', sql.Int, parsedBoardId);
+                .input('governanceBoardId', sql.Int, parsedBoardId)
+                .input('lifecycleState', sql.NVarChar(20), INTAKE_FORM_LIFECYCLE_STATES.ACTIVE);
             result = await request.query(`
-                INSERT INTO IntakeForms (name, description, fields, defaultGoalId, governanceMode, governanceBoardId, orgId)
+                INSERT INTO IntakeForms (name, description, fields, defaultGoalId, governanceMode, governanceBoardId, orgId, lifecycleState)
                 OUTPUT INSERTED.id, INSERTED.createdAt
-                VALUES (@name, @description, @fields, @defaultGoalId, @governanceMode, @governanceBoardId, @orgId)
+                VALUES (@name, @description, @fields, @defaultGoalId, @governanceMode, @governanceBoardId, @orgId, @lifecycleState)
             `);
         } else {
+            request.input('lifecycleState', sql.NVarChar(20), INTAKE_FORM_LIFECYCLE_STATES.ACTIVE);
             result = await request.query(`
-                INSERT INTO IntakeForms (name, description, fields, defaultGoalId, orgId)
+                INSERT INTO IntakeForms (name, description, fields, defaultGoalId, orgId, lifecycleState)
                 OUTPUT INSERTED.id, INSERTED.createdAt
-                VALUES (@name, @description, @fields, @defaultGoalId, @orgId)
+                VALUES (@name, @description, @fields, @defaultGoalId, @orgId, @lifecycleState)
             `);
         }
 
@@ -827,6 +868,10 @@ router.post('/forms', checkPermission('can_manage_intake_forms'), async (req, re
             governanceMode: schemaReady ? normalizedMode : 'off',
             governanceBoardId: parsedBoardId,
             orgId: ownerOrgId,
+            lifecycleState: INTAKE_FORM_LIFECYCLE_STATES.ACTIVE,
+            retiredAt: null,
+            archivedAt: null,
+            archivedByOid: null,
             createdAt: result.recordset[0].createdAt
         }));
     } catch (err) {
@@ -844,10 +889,28 @@ router.put('/forms/:id', checkPermission('can_manage_intake_forms'), async (req,
         const schemaReady = await hasGovernanceSchema(pool);
         const prev = await pool.request()
             .input('id', sql.Int, id)
-            .query('SELECT id, name, description, defaultGoalId, governanceMode, governanceBoardId, orgId FROM IntakeForms WHERE id = @id');
+            .query(`
+                SELECT
+                    id,
+                    name,
+                    description,
+                    defaultGoalId,
+                    governanceMode,
+                    governanceBoardId,
+                    orgId,
+                    lifecycleState,
+                    retiredAt,
+                    archivedAt,
+                    archivedByOid
+                FROM IntakeForms
+                WHERE id = @id
+            `);
         if (prev.recordset.length === 0) return res.status(404).json({ error: 'Form not found' });
 
         const current = prev.recordset[0];
+        if ([INTAKE_FORM_LIFECYCLE_STATES.RETIRED, INTAKE_FORM_LIFECYCLE_STATES.ARCHIVED].includes(normalizeIntakeFormLifecycleState(current.lifecycleState))) {
+            return res.status(409).json({ error: 'Retired or archived intake forms are read-only until restored.' });
+        }
         const hasOrgIdInput = Object.prototype.hasOwnProperty.call(req.body || {}, 'orgId');
         let ownerOrgId = current.orgId === null || current.orgId === undefined ? null : Number(current.orgId);
         if (!isAdminUser(req.user)) {
@@ -974,15 +1037,162 @@ router.delete('/forms/:id', checkPermission('can_manage_intake_forms'), async (r
     try {
         const id = parseInt(req.params.id);
         const pool = await getPool();
-        const prev = await pool.request().input('id', sql.Int, id).query('SELECT name FROM IntakeForms WHERE id = @id');
-        await pool.request()
+        const formResult = await pool.request()
             .input('id', sql.Int, id)
-            .query('DELETE FROM IntakeForms WHERE id = @id');
+            .query(`
+                SELECT
+                    f.id,
+                    f.name,
+                    f.lifecycleState,
+                    (
+                        SELECT COUNT(*)
+                        FROM IntakeSubmissions s
+                        WHERE s.formId = f.id
+                    ) AS submissionCount
+                FROM IntakeForms f
+                WHERE f.id = @id
+            `);
+        if (formResult.recordset.length === 0) {
+            return res.status(404).json({ error: 'Form not found' });
+        }
 
-        logAudit({ action: 'intake_form.delete', entityType: 'intake_form', entityId: id, entityTitle: prev.recordset[0]?.name, user: getAuthUser(req), before: prev.recordset[0], req });
-        res.json({ success: true });
+        const previous = formResult.recordset[0];
+        const now = new Date();
+        let action = 'intake_form.archive';
+        let lifecycleState = INTAKE_FORM_LIFECYCLE_STATES.ARCHIVED;
+
+        if (Number(previous.submissionCount || 0) > 0) {
+            action = 'intake_form.retire';
+            lifecycleState = INTAKE_FORM_LIFECYCLE_STATES.RETIRED;
+            await pool.request()
+                .input('id', sql.Int, id)
+                .input('retiredAt', sql.DateTime2, now)
+                .query(`
+                    UPDATE IntakeForms
+                    SET lifecycleState = 'retired',
+                        retiredAt = @retiredAt,
+                        archivedAt = NULL,
+                        archivedByOid = NULL
+                    WHERE id = @id
+                `);
+        } else if (normalizeIntakeFormLifecycleState(previous.lifecycleState) === INTAKE_FORM_LIFECYCLE_STATES.DRAFT) {
+            await pool.request()
+                .input('id', sql.Int, id)
+                .query('DELETE FROM IntakeForms WHERE id = @id');
+            action = 'intake_form.delete';
+            lifecycleState = 'deleted';
+        } else {
+            await pool.request()
+                .input('id', sql.Int, id)
+                .input('archivedAt', sql.DateTime2, now)
+                .input('archivedByOid', sql.NVarChar(100), req.user?.oid || null)
+                .query(`
+                    UPDATE IntakeForms
+                    SET lifecycleState = 'archived',
+                        archivedAt = @archivedAt,
+                        archivedByOid = @archivedByOid
+                    WHERE id = @id
+                `);
+        }
+
+        logAudit({
+            action,
+            entityType: 'intake_form',
+            entityId: id,
+            entityTitle: previous?.name,
+            user: getAuthUser(req),
+            before: previous,
+            after: { lifecycleState },
+            req
+        });
+        res.json({ success: true, lifecycleState });
     } catch (err) {
         handleError(res, 'deleting intake form', err);
+    }
+});
+
+router.post('/forms/:id/retire', checkPermission('can_manage_intake_forms'), async (req, res) => {
+    try {
+        const id = Number.parseInt(req.params.id, 10);
+        if (Number.isNaN(id)) {
+            return res.status(400).json({ error: 'Invalid form id' });
+        }
+        const pool = await getPool();
+        const previous = await pool.request()
+            .input('id', sql.Int, id)
+            .query('SELECT id, name, lifecycleState FROM IntakeForms WHERE id = @id');
+        if (!previous.recordset.length) {
+            return res.status(404).json({ error: 'Form not found' });
+        }
+
+        const retiredAt = new Date();
+        await pool.request()
+            .input('id', sql.Int, id)
+            .input('retiredAt', sql.DateTime2, retiredAt)
+            .query(`
+                UPDATE IntakeForms
+                SET lifecycleState = 'retired',
+                    retiredAt = @retiredAt,
+                    archivedAt = NULL,
+                    archivedByOid = NULL
+                WHERE id = @id
+            `);
+
+        logAudit({
+            action: 'intake_form.retire',
+            entityType: 'intake_form',
+            entityId: String(id),
+            entityTitle: previous.recordset[0]?.name,
+            user: getAuthUser(req),
+            before: previous.recordset[0],
+            after: { lifecycleState: 'retired', retiredAt },
+            req
+        });
+        res.json({ success: true, lifecycleState: 'retired', retiredAt });
+    } catch (err) {
+        handleError(res, 'retiring intake form', err);
+    }
+});
+
+router.post('/forms/:id/restore', checkPermission('can_manage_intake_forms'), async (req, res) => {
+    try {
+        const id = Number.parseInt(req.params.id, 10);
+        if (Number.isNaN(id)) {
+            return res.status(400).json({ error: 'Invalid form id' });
+        }
+        const pool = await getPool();
+        const previous = await pool.request()
+            .input('id', sql.Int, id)
+            .query('SELECT id, name, lifecycleState FROM IntakeForms WHERE id = @id');
+        if (!previous.recordset.length) {
+            return res.status(404).json({ error: 'Form not found' });
+        }
+
+        const restoredAt = new Date();
+        await pool.request()
+            .input('id', sql.Int, id)
+            .query(`
+                UPDATE IntakeForms
+                SET lifecycleState = 'active',
+                    retiredAt = NULL,
+                    archivedAt = NULL,
+                    archivedByOid = NULL
+                WHERE id = @id
+            `);
+
+        logAudit({
+            action: 'intake_form.restore',
+            entityType: 'intake_form',
+            entityId: String(id),
+            entityTitle: previous.recordset[0]?.name,
+            user: getAuthUser(req),
+            before: previous.recordset[0],
+            after: { lifecycleState: 'active', restoredAt },
+            req
+        });
+        res.json({ success: true, lifecycleState: 'active', restoredAt });
+    } catch (err) {
+        handleError(res, 'restoring intake form', err);
     }
 });
 
@@ -1774,12 +1984,18 @@ router.post('/submissions', requireAuth, intakeSubmissionCreateLimiter, async (r
         // Server-side validation of dynamic fields
         const formResult = await pool.request()
             .input('formId', sql.Int, parsedFormId)
-            .query('SELECT id, fields, orgId FROM IntakeForms WHERE id = @formId');
+            .query('SELECT id, fields, orgId, lifecycleState FROM IntakeForms WHERE id = @formId');
 
         if (formResult.recordset.length === 0) {
             return res.status(404).json({ error: 'Form not found' });
         }
         const formRecord = formResult.recordset[0];
+        const normalizedFormLifecycle = normalizeIntakeFormLifecycleState(formRecord.lifecycleState);
+        if (normalizedFormLifecycle !== INTAKE_FORM_LIFECYCLE_STATES.ACTIVE) {
+            return res.status(409).json({
+                error: 'This intake form is retired or archived and cannot accept new submissions.'
+            });
+        }
         if (!isAdminUser(user)) {
             const formOrgId = parseOptionalOrgId(formRecord.orgId);
             if (Number.isFinite(formOrgId) && formOrgId !== submitterOrgId) {
@@ -1894,6 +2110,7 @@ router.post('/submissions', requireAuth, intakeSubmissionCreateLimiter, async (r
             infoRequests: '[]',
             convertedProjectId: null,
             submittedAt: result.recordset[0].submittedAt,
+            resolvedAt: null,
             submitterId: user?.oid || null,
             submitterName: user?.name || null,
             submitterEmail: user?.email || null,
@@ -1926,6 +2143,7 @@ router.put('/submissions/:id', requireAuth, async (req, res) => {
                     orgId,
                     status,
                     convertedProjectId,
+                    resolvedAt,
                     governanceRequired,
                     governanceStatus,
                     governanceDecision
@@ -1963,6 +2181,13 @@ router.put('/submissions/:id', requireAuth, async (req, res) => {
             ? (convertedProjectId ? parseInt(convertedProjectId, 10) : null)
             : null;
         const wantsProjectConversion = hasConvertedProjectIdInput && parsedConvertedProjectId !== null;
+        const shouldResolveSubmission = normalizedStatus === 'approved'
+            || normalizedStatus === 'rejected'
+            || wantsProjectConversion;
+        const shouldClearResolvedAt = !shouldResolveSubmission && (
+            (normalizedStatus !== null && !['approved', 'rejected'].includes(normalizedStatus))
+            || (hasConvertedProjectIdInput && parsedConvertedProjectId === null)
+        );
 
         if (hasConvertedProjectIdInput && convertedProjectId && Number.isNaN(parsedConvertedProjectId)) {
             return res.status(400).json({ error: 'Invalid convertedProjectId' });
@@ -1991,6 +2216,12 @@ router.put('/submissions/:id', requireAuth, async (req, res) => {
             if (hasConvertedProjectIdInput) {
                 request.input('convertedProjectId', sql.Int, parsedConvertedProjectId);
                 updateParts.push('convertedProjectId = @convertedProjectId');
+            }
+            if (shouldResolveSubmission) {
+                request.input('resolvedAt', sql.DateTime2, new Date());
+                updateParts.push('resolvedAt = @resolvedAt');
+            } else if (shouldClearResolvedAt && prev.resolvedAt) {
+                updateParts.push('resolvedAt = NULL');
             }
         }
 
@@ -2144,6 +2375,11 @@ router.post('/submissions/:id/convert', requireAuth, async (req, res) => {
             conversionContext
         );
         const projectStatus = String(projectData?.status || 'active').trim().toLowerCase() || 'active';
+        const projectLifecycle = deriveProjectLifecycleFromStatus({
+            currentLifecycleState: PROJECT_LIFECYCLE_STATES.ACTIVE,
+            status: projectStatus,
+            completedAt: null
+        });
         const sharedWithOrgIds = normalizeConversionSharedOrgIds(projectData)
             .filter((orgId) => orgId !== resolvedSubmissionOrgId);
         const requestedGoalIds = normalizeConversionGoalIds(projectData);
@@ -2235,10 +2471,14 @@ router.post('/submissions/:id/convert', requireAuth, async (req, res) => {
                 .input('description', sql.NVarChar(sql.MAX), projectDescription || null)
                 .input('status', sql.NVarChar(20), projectStatus)
                 .input('orgId', sql.Int, resolvedSubmissionOrgId)
+                .input('lifecycleState', sql.NVarChar(20), projectLifecycle.lifecycleState)
+                .input('completedAt', sql.DateTime2, projectLifecycle.completedAt || null)
+                .input('lastActivityAt', sql.DateTime2, new Date())
+                .input('retentionClass', sql.NVarChar(40), 'confidential')
                 .query(`
-                    INSERT INTO Projects (title, description, status, orgId)
+                    INSERT INTO Projects (title, description, status, orgId, lifecycleState, completedAt, lastActivityAt, retentionClass)
                     OUTPUT INSERTED.id, INSERTED.createdAt
-                    VALUES (@title, @description, @status, @orgId)
+                    VALUES (@title, @description, @status, @orgId, @lifecycleState, @completedAt, @lastActivityAt, @retentionClass)
                 `);
             const projectId = Number(projectInsert.recordset[0].id);
 
@@ -2278,9 +2518,10 @@ router.post('/submissions/:id/convert', requireAuth, async (req, res) => {
                     .input('description', sql.NVarChar(sql.MAX), task.description || '')
                     .input('startDate', sql.Date, task.startDate)
                     .input('endDate', sql.Date, task.endDate)
+                    .input('updatedAt', sql.DateTime2, new Date())
                     .query(`
-                        INSERT INTO Tasks (projectId, title, status, priority, description, startDate, endDate)
-                        VALUES (@projectId, @title, @status, @priority, @description, @startDate, @endDate)
+                        INSERT INTO Tasks (projectId, title, status, priority, description, startDate, endDate, updatedAt)
+                        VALUES (@projectId, @title, @status, @priority, @description, @startDate, @endDate, @updatedAt)
                     `);
             }
 
@@ -2288,14 +2529,19 @@ router.post('/submissions/:id/convert', requireAuth, async (req, res) => {
                 .input('submissionId', sql.Int, submissionId)
                 .input('projectId', sql.Int, projectId)
                 .input('orgId', sql.Int, resolvedSubmissionOrgId)
+                .input('resolvedAt', sql.DateTime2, new Date())
                 .query(`
                     UPDATE IntakeSubmissions
                     SET
                         status = 'approved',
                         convertedProjectId = @projectId,
-                        orgId = @orgId
+                        orgId = @orgId,
+                        resolvedAt = @resolvedAt
                     WHERE id = @submissionId
                 `);
+
+            await touchProjectActivity(tx, projectId);
+            await touchGoalActivity(tx, goalIds);
 
             await tx.commit();
 
@@ -2326,6 +2572,13 @@ router.post('/submissions/:id/convert', requireAuth, async (req, res) => {
                     title: projectTitle,
                     description: projectDescription || '',
                     status: projectStatus,
+                    lifecycleState: projectLifecycle.lifecycleState,
+                    completedAt: projectLifecycle.completedAt || null,
+                    archivedAt: null,
+                    archivedByOid: null,
+                    archiveReason: null,
+                    lastActivityAt: new Date().toISOString(),
+                    retentionClass: 'confidential',
                     orgId: String(resolvedSubmissionOrgId),
                     goalIds: goalIds.map(String),
                     goalId: goalIds[0] ? String(goalIds[0]) : null,
@@ -3321,12 +3574,17 @@ router.post('/submissions/:id/governance/decide', requireAuth, governanceDecisio
                 .input('decision', sql.NVarChar(30), decision)
                 .input('decisionReason', sql.NVarChar(sql.MAX), decisionReason)
                 .input('priorityScore', sql.Decimal(9, 2), scoreSummary.priorityScore)
+                .input('resolvedAt', sql.DateTime2, ['approved-backlog', 'rejected'].includes(decision) ? new Date() : null)
                 .query(`
                     UPDATE IntakeSubmissions
                     SET governanceStatus = 'decided',
                         governanceDecision = @decision,
                         governanceReason = @decisionReason,
-                        priorityScore = COALESCE(@priorityScore, priorityScore)
+                        priorityScore = COALESCE(@priorityScore, priorityScore),
+                        resolvedAt = CASE
+                            WHEN @decision IN ('approved-backlog', 'rejected') THEN @resolvedAt
+                            ELSE NULL
+                        END
                     WHERE id = @submissionId
                 `);
 

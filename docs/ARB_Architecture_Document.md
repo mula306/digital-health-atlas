@@ -1,6 +1,6 @@
 # Digital Health Atlas - Architecture Review Board Document
 
-**Document Version:** 2.1
+**Document Version:** 2.3
 **Review Date:** March 13, 2026
 **Author:** Digital Health IT Portfolio Management  
 **Classification:** Internal - Architecture Review Board
@@ -42,7 +42,7 @@ Digital Health Atlas has evolved from a portfolio tracking tool into an end-to-e
 - **Business fit:** Strong. Core operational workflows are now integrated across intake, governance, projects, and reporting.
 - **Security posture:** Good for current scale. Entra-based authentication and DB-driven RBAC are implemented with route-level enforcement.
 - **Data and workflow traceability:** Good. Governance decisions, votes, sharing requests, and audit trails are persisted.
-- **Operational maturity:** Moderate to strong. Phase-gated CI, deterministic mock-auth test paths, and backend/frontend/E2E coverage are now in place. Key gaps remain in production-grade observability, scheduler high availability controls, and API contract governance.
+- **Operational maturity:** Moderate to strong. Phase-gated CI, deterministic mock-auth test paths, backend/frontend/E2E coverage, a refreshed Vite/ESLint toolchain, and an archive-first lifecycle foundation are now in place. Key gaps remain in production-grade observability, scheduler high availability controls, and API contract governance.
 
 ### ARB conclusion
 
@@ -152,6 +152,8 @@ Primary navigation/workspaces:
 
 Key architecture characteristics:
 
+- React 19.2 SPA built with Vite 8.
+- Frontend test baseline uses Vitest 4.0.18 with `jsdom` 28.1 and Playwright 1.57 for browser coverage.
 - URL/query driven view and stage persistence (`view`, `stage`, admin sub-tabs).
 - Shared filtering patterns through reusable UI (`FilterBar` and related controls).
 - Context-based global state (`DataContext`, `ThemeContext`, `ToastContext`).
@@ -176,6 +178,7 @@ Backend route domains:
 
 Architecture patterns in use:
 
+- Express 5 API runtime with SQL Server-backed persistence.
 - Route-level auth + permission middleware enforcement.
 - Parameterized SQL access through `mssql` request bindings.
 - Domain-specific utilities for auth, SQL helpers, cache, audit logging.
@@ -218,6 +221,10 @@ The canonical schema (`server/scripts/schema.sql`) contains the current feature 
 - **Intake form contract:** `IntakeForms.fields` is JSON-backed and now reserves three required system fields (`requester_name`, `project_name`, `project_description`) to stabilize requester prefill and intake-to-project conversion semantics.
 - **Ownership model:** new goal, project, intake form, intake submission, and governance board rows are application-scoped to a single home org; older null-org records can be audited/backfilled with `server/scripts/backfill_org_ownership.js`.
 - **Conversion model:** intake-to-project conversion is server-side and preserves submission-org ownership while adding read-only cross-org goal context shares where needed.
+- **Lifecycle model:** projects, goals, and intake forms now persist lifecycle states plus activity/archive metadata; default UX hides archived history unless explicitly requested.
+- **Lifecycle transition model:** routine delete flows now transition business records through lifecycle states instead of physically removing them in normal product operations. Intake forms with submissions retire, projects archive, and goals retire/archive; only unused draft intake forms remain eligible for true deletion.
+- **Activity durability:** `lastActivityAt`, archive metadata, and resolved timestamps are maintained or backfilled so stale-state and retention logic do not depend solely on `AuditLog`.
+- **Retention tooling:** lifecycle metadata can be backfilled with `server/scripts/backfill_lifecycle.js`, and retention candidates can be reviewed or applied with `server/scripts/run_retention.js`.
 - **Setup behavior:** `setup-db` scripts re-read `DB_*` configuration from `server/.env` or the shell environment on every invocation; they are intentionally stateless.
 
 ### 6.4 Data governance observations
@@ -229,12 +236,14 @@ Strengths:
 - Expiry-aware org-sharing controls.
 - Stable intake form semantics through explicit system-field metadata rather than positional fallback rules.
 - Clear separation between home-org ownership and explicit sharing exceptions for goals/projects.
+- Archive-first lifecycle state keeps stale records from cluttering operational UX without losing history.
+- Default read paths now suppress archived/retired records, which reduces long-term operational clutter while preserving historical access on demand.
 
 Gaps to address:
 
-- Formal data retention policy by table (especially `AuditLog`, `StatusReports`, `ExecutiveReportPackRun`).
-- Data classification matrix for PII sensitivity boundaries.
-- Archival strategy for high-churn operational tables.
+- Cold-export verification and purge execution for operational artifacts (`AuditLog`, `StatusReports`, `ExecutiveReportPackRun`) still need to be operationalized before purge should be enabled broadly.
+- Legal-hold workflow and exception handling are not yet surfaced in product UX.
+- Retention apply should remain controlled operationally until dry-run review and export verification are part of the standard runbook.
 
 ---
 
@@ -360,13 +369,20 @@ Primary operational architecture risk is scheduler duplication in multi-instance
 - Playwright smoke and critical suites (`npm run test:e2e:smoke`, `npm run test:e2e:critical`)
 - RBAC catalog checks (`npm run lint:rbac`)
 - GitHub Actions phase gates for blocking/advisory enforcement
+- Root release verification command (`npm run verify:v1`)
 
 ### Tooling note
 
+- The frontend/runtime toolchain now runs on:
+  - `vite 8`
+  - `@vitejs/plugin-react 6`
+  - `jsdom 28.1`
+  - `lucide-react 0.577`
 - The frontend lint stack now runs on `eslint 10` and `@eslint/js 10`.
 - As of `March 13, 2026`, the stable React hooks lint plugin line does not yet advertise `eslint 10` support, so the repo temporarily uses `eslint-plugin-react-hooks@7.1.0-canary-c80a0750-20260312`.
 - This is an intentional tooling-only exception, not an application runtime dependency.
 - The repository no longer depends on `eslint-plugin-react`; the active lint policy is enforced through `react-hooks`, `react-refresh`, and `unused-imports`.
+- `vitest` remains pinned to `4.0.18` with a `tinyexec 1.0.2` override after the newer line exposed an upstream package issue during maintenance testing.
 - Exit criterion: move back to a stable `eslint-plugin-react-hooks` release once it publishes an `eslint 10` peer range and rerun `npm run lint` plus `npm run test:phase-c`.
 
 ### Gaps
@@ -394,6 +410,7 @@ Primary operational architecture risk is scheduler duplication in multi-instance
 |---|---|
 | Workflow architecture | Intake, governance, and execution are now connected end-to-end |
 | Data model | Canonical schema reflects goal-cascade rename, org-centric ownership, sharing semantics, and traceability needs |
+| Lifecycle governance | Archive-first lifecycle and retention scripts reduce long-term clutter without sacrificing historical record |
 | Access model | Entra + DB RBAC with role normalization and seeded defaults is mature |
 | UX architecture | Staged workflow patterns and filter consistency improved usability |
 | Multi-org control | Home-org ownership plus explicit sharing exceptions keeps visibility controllable without forcing blanket sharing |
@@ -407,7 +424,8 @@ Primary operational architecture risk is scheduler duplication in multi-instance
 | P1 | Publish OpenAPI contracts + schema validation middleware | Reduce drift, improve integration confidence, support contract governance |
 | P1 | Add centralized observability (structured logs, trace IDs, metrics dashboards) | Required for production troubleshooting and ARB auditability |
 | P2 | Publish a concise ownership/sharing reference model for admins and product owners | Reduces confusion between org ownership, goal cascade levels, and explicit sharing behavior |
-| P2 | Define data retention/classification policies by table | Required for compliance, storage management, and legal defensibility |
+| P2 | Operationalize lifecycle exports and purge controls for operational artifacts | Required to turn the archive-first foundation into a full governed retention program |
+| P2 | Add operational dashboards or runbooks for lifecycle dry-run/apply results | Makes retention execution explainable and safe for administrators |
 | P2 | Formalize effective-permission API contract | Further reduce UI/API authorization drift risk |
 | P3 | Evaluate event-driven integration for notifications and downstream consumers | Improves extensibility as ecosystem integration needs grow |
 
@@ -427,7 +445,7 @@ Primary operational architecture risk is scheduler duplication in multi-instance
 1. Production observability platform and SLOs.
 2. Scheduler and background processing architecture hardening.
 3. API governance modernization (OpenAPI + validation + versioning policy).
-4. Data lifecycle governance (retention, archival, data classification).
+4. Lifecycle operations hardening (export verification, purge automation, legal-hold handling).
 
 ---
 
@@ -442,6 +460,10 @@ npm run setup-db:full
 
 # Existing upgraded data ownership audit
 npm run backfill:org-ownership
+
+# Lifecycle metadata backfill and retention review
+npm run backfill:lifecycle
+npm run retention:dry-run
 
 # Phase-gated validation
 npm run test:phase-b

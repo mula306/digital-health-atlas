@@ -83,13 +83,6 @@ export const withSharedScope = (req, res, next) => {
  */
 export const checkProjectWriteAccess = (getProjectId) => {
     return async (req, res, next) => {
-        // Admin bypass
-        if (isAdmin(req)) {
-            req.projectAccess = 'owner';
-            req.hasWriteAccess = true;
-            return next();
-        }
-
         try {
             const { getPool, sql } = await import('../db.js');
             const pool = await getPool();
@@ -97,9 +90,29 @@ export const checkProjectWriteAccess = (getProjectId) => {
                 ? getProjectId(req)
                 : req.params.id || req.params.projectId;
             const projectId = resolveEntityId(projectIdRaw);
+            const adminRequest = isAdmin(req);
 
             if (projectId === null) {
                 return res.status(400).json({ error: 'Invalid project id' });
+            }
+
+            if (adminRequest) {
+                const lifecycleResult = await pool.request()
+                    .input('projectId', sql.Int, projectId)
+                    .query(`
+                        SELECT lifecycleState
+                        FROM Projects
+                        WHERE id = @projectId
+                    `);
+
+                if (!lifecycleResult.recordset.length) {
+                    return res.status(404).json({ error: 'Project not found' });
+                }
+
+                req.projectLifecycleState = String(lifecycleResult.recordset[0].lifecycleState || 'active').toLowerCase();
+                req.projectAccess = 'owner';
+                req.hasWriteAccess = true;
+                return next();
             }
 
             const result = await pool.request()
@@ -107,6 +120,7 @@ export const checkProjectWriteAccess = (getProjectId) => {
                 .input('orgId', sql.Int, req.orgId)
                 .query(`
                     SELECT 
+                        p.lifecycleState,
                         CASE 
                             WHEN p.orgId = @orgId THEN 'owner'
                             WHEN poa.accessLevel = 'write' THEN 'write'
@@ -130,6 +144,7 @@ export const checkProjectWriteAccess = (getProjectId) => {
                 return res.status(403).json({ error: 'Your organization does not have access to this project' });
             }
 
+            req.projectLifecycleState = String(result.recordset[0].lifecycleState || 'active').toLowerCase();
             req.projectAccess = access; // 'owner' | 'write' | 'read'
             req.hasWriteAccess = access === 'owner' || access === 'write';
             next();
@@ -144,6 +159,9 @@ export const checkProjectWriteAccess = (getProjectId) => {
  * Require previously-computed project write access.
  */
 export const requireProjectWriteAccess = (req, res, next) => {
+    if (req.projectLifecycleState === 'archived') {
+        return res.status(409).json({ error: 'Archived projects are read-only until restored.' });
+    }
     if (req.hasWriteAccess) return next();
     return res.status(403).json({ error: 'Your organization has read-only access to this project' });
 };
@@ -154,12 +172,6 @@ export const requireProjectWriteAccess = (req, res, next) => {
  */
 export const checkGoalAccess = (getGoalId) => {
     return async (req, res, next) => {
-        if (isAdmin(req)) {
-            req.goalAccess = 'owner';
-            req.hasGoalWriteAccess = true;
-            return next();
-        }
-
         try {
             const { getPool, sql } = await import('../db.js');
             const pool = await getPool();
@@ -167,9 +179,29 @@ export const checkGoalAccess = (getGoalId) => {
                 ? getGoalId(req)
                 : req.params.id || req.params.goalId;
             const goalId = resolveEntityId(goalIdRaw);
+            const adminRequest = isAdmin(req);
 
             if (goalId === null) {
                 return res.status(400).json({ error: 'Invalid goal id' });
+            }
+
+            if (adminRequest) {
+                const lifecycleResult = await pool.request()
+                    .input('goalId', sql.Int, goalId)
+                    .query(`
+                        SELECT lifecycleState
+                        FROM Goals
+                        WHERE id = @goalId
+                    `);
+
+                if (!lifecycleResult.recordset.length) {
+                    return res.status(404).json({ error: 'Goal not found' });
+                }
+
+                req.goalLifecycleState = String(lifecycleResult.recordset[0].lifecycleState || 'active').toLowerCase();
+                req.goalAccess = 'owner';
+                req.hasGoalWriteAccess = true;
+                return next();
             }
 
             const result = await pool.request()
@@ -177,6 +209,7 @@ export const checkGoalAccess = (getGoalId) => {
                 .input('orgId', sql.Int, req.orgId)
                 .query(`
                     SELECT
+                        g.lifecycleState,
                         CASE
                             WHEN g.orgId = @orgId THEN 'owner'
                             WHEN goa.accessLevel = 'write' THEN 'write'
@@ -200,6 +233,7 @@ export const checkGoalAccess = (getGoalId) => {
                 return res.status(403).json({ error: 'Your organization does not have access to this goal' });
             }
 
+            req.goalLifecycleState = String(result.recordset[0].lifecycleState || 'active').toLowerCase();
             req.goalAccess = access;
             req.hasGoalWriteAccess = access === 'owner' || access === 'write';
             return next();
@@ -214,6 +248,9 @@ export const checkGoalAccess = (getGoalId) => {
  * Require previously-computed goal write access.
  */
 export const requireGoalWriteAccess = (req, res, next) => {
+    if (req.goalLifecycleState === 'retired' || req.goalLifecycleState === 'archived') {
+        return res.status(409).json({ error: 'Retired or archived goals are read-only until restored.' });
+    }
     if (req.hasGoalWriteAccess) return next();
     return res.status(403).json({ error: 'Your organization has read-only access to this goal' });
 };
@@ -224,12 +261,6 @@ export const requireGoalWriteAccess = (req, res, next) => {
  */
 export const checkTaskWriteAccess = (getTaskId) => {
     return async (req, res, next) => {
-        if (isAdmin(req)) {
-            req.projectAccess = 'owner';
-            req.hasWriteAccess = true;
-            return next();
-        }
-
         try {
             const { getPool, sql } = await import('../db.js');
             const pool = await getPool();
@@ -237,9 +268,30 @@ export const checkTaskWriteAccess = (getTaskId) => {
                 ? getTaskId(req)
                 : req.params.id || req.params.taskId;
             const taskId = resolveEntityId(taskIdRaw);
+            const adminRequest = isAdmin(req);
 
             if (taskId === null) {
                 return res.status(400).json({ error: 'Invalid task id' });
+            }
+
+            if (adminRequest) {
+                const lifecycleResult = await pool.request()
+                    .input('taskId', sql.Int, taskId)
+                    .query(`
+                        SELECT p.lifecycleState
+                        FROM Tasks t
+                        INNER JOIN Projects p ON p.id = t.projectId
+                        WHERE t.id = @taskId
+                    `);
+
+                if (!lifecycleResult.recordset.length) {
+                    return res.status(404).json({ error: 'Task not found' });
+                }
+
+                req.projectLifecycleState = String(lifecycleResult.recordset[0].lifecycleState || 'active').toLowerCase();
+                req.projectAccess = 'owner';
+                req.hasWriteAccess = true;
+                return next();
             }
 
             const result = await pool.request()
@@ -247,6 +299,7 @@ export const checkTaskWriteAccess = (getTaskId) => {
                 .input('orgId', sql.Int, req.orgId)
                 .query(`
                     SELECT
+                        p.lifecycleState,
                         CASE
                             WHEN p.orgId = @orgId THEN 'owner'
                             WHEN poa.accessLevel = 'write' THEN 'write'
@@ -271,6 +324,7 @@ export const checkTaskWriteAccess = (getTaskId) => {
                 return res.status(403).json({ error: 'Your organization does not have access to this task project' });
             }
 
+            req.projectLifecycleState = String(result.recordset[0].lifecycleState || 'active').toLowerCase();
             req.projectAccess = access;
             req.hasWriteAccess = access === 'owner' || access === 'write';
             return next();
@@ -287,12 +341,6 @@ export const checkTaskWriteAccess = (getTaskId) => {
  */
 export const checkKpiWriteAccess = (getKpiId) => {
     return async (req, res, next) => {
-        if (isAdmin(req)) {
-            req.goalAccess = 'owner';
-            req.hasGoalWriteAccess = true;
-            return next();
-        }
-
         try {
             const { getPool, sql } = await import('../db.js');
             const pool = await getPool();
@@ -300,9 +348,30 @@ export const checkKpiWriteAccess = (getKpiId) => {
                 ? getKpiId(req)
                 : req.params.id || req.params.kpiId;
             const kpiId = resolveEntityId(kpiIdRaw);
+            const adminRequest = isAdmin(req);
 
             if (kpiId === null) {
                 return res.status(400).json({ error: 'Invalid KPI id' });
+            }
+
+            if (adminRequest) {
+                const lifecycleResult = await pool.request()
+                    .input('kpiId', sql.Int, kpiId)
+                    .query(`
+                        SELECT g.lifecycleState
+                        FROM KPIs k
+                        INNER JOIN Goals g ON g.id = k.goalId
+                        WHERE k.id = @kpiId
+                    `);
+
+                if (!lifecycleResult.recordset.length) {
+                    return res.status(404).json({ error: 'KPI not found' });
+                }
+
+                req.goalLifecycleState = String(lifecycleResult.recordset[0].lifecycleState || 'active').toLowerCase();
+                req.goalAccess = 'owner';
+                req.hasGoalWriteAccess = true;
+                return next();
             }
 
             const result = await pool.request()
@@ -310,6 +379,7 @@ export const checkKpiWriteAccess = (getKpiId) => {
                 .input('orgId', sql.Int, req.orgId)
                 .query(`
                     SELECT
+                        g.lifecycleState,
                         CASE
                             WHEN g.orgId = @orgId THEN 'owner'
                             WHEN goa.accessLevel = 'write' THEN 'write'
@@ -334,6 +404,7 @@ export const checkKpiWriteAccess = (getKpiId) => {
                 return res.status(403).json({ error: 'Your organization does not have access to this KPI goal' });
             }
 
+            req.goalLifecycleState = String(result.recordset[0].lifecycleState || 'active').toLowerCase();
             req.goalAccess = access;
             req.hasGoalWriteAccess = access === 'owner' || access === 'write';
             return next();

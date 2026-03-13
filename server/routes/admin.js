@@ -6,6 +6,16 @@ import { logAudit } from '../utils/auditLogger.js';
 import { invalidateTagCache, invalidateProjectCache } from '../utils/cache.js';
 import { getRbacCatalogResponse, isKnownPermission, isKnownRole } from '../utils/rbacCatalog.js';
 import { buildInClause, addParams } from '../utils/sqlHelpers.js';
+import {
+    LIFECYCLE_VIEW_MODES,
+    addLifecycleParams,
+    buildLifecycleInClause,
+    getGoalLifecycleViewStates,
+    getProjectLifecycleViewStates,
+    normalizeLifecycleView,
+    touchGoalActivity,
+    touchProjectActivity
+} from '../utils/lifecycle.js';
 
 const router = express.Router();
 
@@ -27,6 +37,14 @@ const createRequest = (dbOrTx) => (
         ? new sql.Request(dbOrTx)
         : dbOrTx.request()
 );
+
+const parseLifecycleView = (value, includeArchived = false) => {
+    const normalizedIncludeArchived = String(includeArchived || '').trim().toLowerCase();
+    if (normalizedIncludeArchived === '1' || normalizedIncludeArchived === 'true' || includeArchived === true) {
+        return LIFECYCLE_VIEW_MODES.ALL;
+    }
+    return normalizeLifecycleView(value || LIFECYCLE_VIEW_MODES.ACTIVE);
+};
 
 const normalizeProjectIds = (projectIds) => (
     [...new Set((Array.isArray(projectIds) ? projectIds : [])
@@ -721,6 +739,8 @@ router.post('/projects/:projectId/sharing', checkPermission('can_manage_sharing_
             throw err;
         }
 
+        await touchProjectActivity(pool, projectId);
+
         logAudit({
             action: 'project.share',
             entityType: 'project',
@@ -763,6 +783,8 @@ router.delete('/projects/:projectId/sharing/:orgId', checkPermission('can_manage
             .input('orgId', sql.Int, orgId)
             .query('DELETE FROM ProjectOrgAccess WHERE projectId = @projectId AND orgId = @orgId');
 
+        await touchProjectActivity(pool, projectId);
+
         logAudit({ action: 'project.unshare', entityType: 'project', entityId: projectId, entityTitle: 'Unshare', user: getAuthUser(req), after: { orgId }, req });
         res.json({ success: true });
     } catch (err) {
@@ -776,9 +798,21 @@ router.delete('/projects/:projectId/sharing/:orgId', checkPermission('can_manage
 router.get('/sharing-picker-data', checkPermission('can_manage_sharing_requests'), async (req, res) => {
     try {
         const pool = await getPool();
+        const lifecycleView = parseLifecycleView(req.query.lifecycle, req.query.includeArchived);
+        const { text: projectLifecycleText, params: projectLifecycleParams } = buildLifecycleInClause(
+            'sharingProjectLifecycle',
+            getProjectLifecycleViewStates(lifecycleView)
+        );
+        const { text: goalLifecycleText, params: goalLifecycleParams } = buildLifecycleInClause(
+            'sharingGoalLifecycle',
+            getGoalLifecycleViewStates(lifecycleView)
+        );
 
         const [projectsResult, tagsResult, goalsResult] = await Promise.all([
-            pool.request().query(`
+            (() => {
+                const request = pool.request();
+                addLifecycleParams(request, projectLifecycleParams);
+                return request.query(`
                 WITH ProjectGoalLinks AS (
                     SELECT pg.projectId, pg.goalId
                     FROM ProjectGoals pg
@@ -786,6 +820,7 @@ router.get('/sharing-picker-data', checkPermission('can_manage_sharing_requests'
                     SELECT p.id AS projectId, p.goalId
                     FROM Projects p
                     WHERE p.goalId IS NOT NULL
+                      AND p.lifecycleState IN (${projectLifecycleText})
                 )
                 SELECT
                     p.id,
@@ -803,20 +838,27 @@ router.get('/sharing-picker-data', checkPermission('can_manage_sharing_requests'
                 LEFT JOIN ProjectGoalLinks pgl ON pgl.projectId = p.id
                 LEFT JOIN Goals g ON g.id = pgl.goalId
                 LEFT JOIN Organizations ownerOrg ON ownerOrg.id = p.orgId
+                WHERE p.lifecycleState IN (${projectLifecycleText})
                 GROUP BY p.id, p.title, p.orgId, ownerOrg.name
                 ORDER BY p.title ASC
-            `),
+                `);
+            })(),
             pool.request().query(`
                 SELECT pt.projectId, t.id AS tagId, t.name AS tagName
                 FROM ProjectTags pt
                 INNER JOIN Tags t ON pt.tagId = t.id
             `),
-            pool.request().query(`
+            (() => {
+                const request = pool.request();
+                addLifecycleParams(request, goalLifecycleParams);
+                return request.query(`
                 SELECT g.id, g.title, g.type, g.parentId, g.orgId AS ownerOrgId, ownerOrg.name AS ownerOrgName
                 FROM Goals g
                 LEFT JOIN Organizations ownerOrg ON ownerOrg.id = g.orgId
+                WHERE g.lifecycleState IN (${goalLifecycleText})
                 ORDER BY g.title ASC
-            `)
+                `);
+            })()
         ]);
 
         // Build tag map
@@ -857,9 +899,20 @@ router.get('/organizations/:orgId/sharing-summary', checkPermission('can_manage_
     try {
         const orgId = parseInt(req.params.orgId);
         const pool = await getPool();
+        const lifecycleView = parseLifecycleView(req.query.lifecycle, req.query.includeArchived);
+        const { text: projectLifecycleText, params: projectLifecycleParams } = buildLifecycleInClause(
+            'summaryProjectLifecycle',
+            getProjectLifecycleViewStates(lifecycleView)
+        );
+        const { text: goalLifecycleText, params: goalLifecycleParams } = buildLifecycleInClause(
+            'summaryGoalLifecycle',
+            getGoalLifecycleViewStates(lifecycleView)
+        );
 
-        const projectsResult = await pool.request()
-            .input('orgId', sql.Int, orgId)
+        const projectsRequest = pool.request()
+            .input('orgId', sql.Int, orgId);
+        addLifecycleParams(projectsRequest, projectLifecycleParams);
+        const projectsResult = await projectsRequest
             .query(`
                 SELECT
                     poa.projectId,
@@ -874,11 +927,14 @@ router.get('/organizations/:orgId/sharing-summary', checkPermission('can_manage_
                 LEFT JOIN Organizations ownerOrg ON ownerOrg.id = p.orgId
                 WHERE poa.orgId = @orgId
                   AND ${getScopedEntityAccessPredicate()}
+                  AND p.lifecycleState IN (${projectLifecycleText})
                 ORDER BY p.title ASC
             `);
 
-        const goalsResult = await pool.request()
-            .input('orgId', sql.Int, orgId)
+        const goalsRequest = pool.request()
+            .input('orgId', sql.Int, orgId);
+        addLifecycleParams(goalsRequest, goalLifecycleParams);
+        const goalsResult = await goalsRequest
             .query(`
                 SELECT
                     goa.goalId,
@@ -895,6 +951,7 @@ router.get('/organizations/:orgId/sharing-summary', checkPermission('can_manage_
                 LEFT JOIN Organizations ownerOrg ON ownerOrg.id = g.orgId
                 WHERE goa.orgId = @orgId
                   AND ${getScopedEntityAccessPredicate()}
+                  AND g.lifecycleState IN (${goalLifecycleText})
                 ORDER BY g.title ASC
             `);
         const goalsRecords = goalsResult.recordset;
@@ -1508,6 +1565,7 @@ router.post('/projects/bulk-share', checkPermission('can_manage_sharing_requests
             }
 
             await transaction.commit();
+            await Promise.all(normalizedProjectIds.map((projectId) => touchProjectActivity(pool, projectId)));
             logAudit({
                 action: 'project.bulk_share',
                 entityType: 'project',
@@ -1565,6 +1623,7 @@ router.post('/projects/bulk-unshare', checkPermission('can_manage_sharing_reques
                     .query('DELETE FROM ProjectOrgAccess WHERE projectId = @projectId AND orgId = @orgId');
             }
             await transaction.commit();
+            await Promise.all(projectIds.map((projectId) => touchProjectActivity(pool, projectId)));
             logAudit({ action: 'project.bulk_unshare', entityType: 'project', entityId: null, entityTitle: `${projectIds.length} projects unshared`, user: getAuthUser(req), after: { orgId, count: projectIds.length }, req });
             res.json({ success: true, count: projectIds.length });
         } catch (err) {
@@ -1657,6 +1716,7 @@ router.post('/goals/:goalId/sharing', checkPermission('can_manage_sharing_reques
                     `);
             }
             await transaction.commit();
+            await touchGoalActivity(pool, goalIds);
             logAudit({ action: 'goal.share', entityType: 'goal', entityId: goalId, entityTitle: 'Goal Share', user, after: { orgId, accessLevel: level, expiresAt: parsedExpiresAt, goalCount: goalIds.length }, req });
             res.json({ success: true, sharedGoalCount: goalIds.length });
         } catch (err) {
@@ -1682,6 +1742,8 @@ router.delete('/goals/:goalId/sharing/:orgId', checkPermission('can_manage_shari
             .input('goalId', sql.Int, goalId)
             .input('orgId', sql.Int, orgId)
             .query('DELETE FROM GoalOrgAccess WHERE goalId = @goalId AND orgId = @orgId');
+
+        await touchGoalActivity(pool, [goalId]);
 
         logAudit({ action: 'goal.unshare', entityType: 'goal', entityId: goalId, entityTitle: 'Goal Unshare', user: getAuthUser(req), after: { orgId }, req });
         res.json({ success: true });
@@ -1742,6 +1804,7 @@ router.post('/goals/bulk-share', checkPermission('can_manage_sharing_requests'),
                     `);
             }
             await transaction.commit();
+            await touchGoalActivity(pool, allGoalIds);
             logAudit({ action: 'goal.bulk_share', entityType: 'goal', entityId: null, entityTitle: `${allGoalIds.length} goals shared`, user, after: { orgId, accessLevel: level, expiresAt: parsedExpiresAt, count: allGoalIds.length }, req });
             res.json({ success: true, count: allGoalIds.length });
         } catch (err) {
@@ -1777,6 +1840,7 @@ router.post('/goals/bulk-unshare', checkPermission('can_manage_sharing_requests'
                     .query('DELETE FROM GoalOrgAccess WHERE goalId = @goalId AND orgId = @orgId');
             }
             await transaction.commit();
+            await touchGoalActivity(pool, goalIds);
             logAudit({ action: 'goal.bulk_unshare', entityType: 'goal', entityId: null, entityTitle: `${goalIds.length} goals unshared`, user: getAuthUser(req), after: { orgId, count: goalIds.length }, req });
             res.json({ success: true, count: goalIds.length });
         } catch (err) {

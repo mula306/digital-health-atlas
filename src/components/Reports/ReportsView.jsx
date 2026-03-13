@@ -11,7 +11,8 @@ const DEFAULT_PACK_FILTERS = {
     goalIds: [],
     tagIds: [],
     statuses: [],
-    watchedOnly: false
+    watchedOnly: false,
+    includeArchived: false
 };
 
 const STATUS_FILTER_OPTIONS = [
@@ -253,7 +254,8 @@ export function ReportsView() {
                 statuses: Array.isArray(filters.statuses)
                     ? filters.statuses.map((status) => String(status).toLowerCase().trim()).filter(Boolean)
                     : [],
-                watchedOnly: !!filters.watchedOnly
+                watchedOnly: !!filters.watchedOnly,
+                includeArchived: !!filters.includeArchived
             }
         });
         setShowPackEditor(true);
@@ -327,7 +329,8 @@ export function ReportsView() {
                 statuses: Array.from(new Set((packForm.filters?.statuses || [])
                     .map((status) => String(status).toLowerCase().trim())
                     .filter((status) => normalizedStatuses.has(status)))),
-                watchedOnly: !!packForm.filters?.watchedOnly
+                watchedOnly: !!packForm.filters?.watchedOnly,
+                includeArchived: !!packForm.filters?.includeArchived
             }
         };
 
@@ -418,6 +421,7 @@ export function ReportsView() {
         if (tagCount > 0) parts.push(`${tagCount} tag${tagCount === 1 ? '' : 's'}`);
         if (statusCount > 0) parts.push(`${statusCount} status${statusCount === 1 ? '' : 'es'}`);
         if (watchedOnly) parts.push('watched only');
+        if (filters.includeArchived) parts.push('include archived');
 
         return parts.length > 0 ? `Filters: ${parts.join(' | ')}` : 'Filters: none';
     };
@@ -522,6 +526,19 @@ export function ReportsView() {
                             <button type="button" className="btn-secondary btn-sm" onClick={clearPackFilters}>
                                 Clear Filters
                             </button>
+                        </div>
+                        <div className="form-group" style={{ marginBottom: '0.75rem' }}>
+                            <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
+                                <input
+                                    type="checkbox"
+                                    checked={!!packForm.filters?.includeArchived}
+                                    onChange={(e) => updatePackFilters((filters) => ({
+                                        ...filters,
+                                        includeArchived: e.target.checked
+                                    }))}
+                                />
+                                Include archived projects in this pack
+                            </label>
                         </div>
                         <div className="reports-pack-filter-grid">
                             <div className="form-group">

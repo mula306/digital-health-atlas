@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useData } from '../../context/DataContext';
 import { KanbanBoard } from './KanbanBoard';
-import { Plus, Folder, Target, Search, X, LayoutGrid, Table, Star } from 'lucide-react';
+import { Plus, Folder, Target, Search, X, LayoutGrid, Table, Star, Archive } from 'lucide-react';
 import { Modal } from '../UI/Modal';
 import { AddProjectForm } from './AddProjectForm';
 import { getDescendantGoalIds } from '../../utils/goalHelpers';
@@ -66,6 +66,7 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
     const [exactProjectFilterId, setExactProjectFilterId] = useState('');
     const [isLoadingDetails, setIsLoadingDetails] = useState(false);
     const [ownershipFilter, setOwnershipFilter] = useState([]);
+    const [projectLifecycleFilter, setProjectLifecycleFilter] = useState('active');
 
     // Server-side filtered projects state
     const [filteredServerProjects, setFilteredServerProjects] = useState(null);
@@ -74,7 +75,16 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
     const [filteredLoadingMore, setFilteredLoadingMore] = useState(false);
     const [filterError, setFilterError] = useState('');
 
-    const hasActiveFilters = !!(goalFilter || selectedTags.length > 0 || selectedStatuses.length > 0 || searchTerm.trim() || exactProjectFilterId || watchedOnly || ownershipFilter.length > 0);
+    const hasActiveFilters = !!(
+        goalFilter ||
+        selectedTags.length > 0 ||
+        selectedStatuses.length > 0 ||
+        searchTerm.trim() ||
+        exactProjectFilterId ||
+        watchedOnly ||
+        ownershipFilter.length > 0 ||
+        projectLifecycleFilter !== 'active'
+    );
 
     // Sync with external filter changes
     useEffect(() => {
@@ -116,6 +126,7 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
             setSearchTerm('');
             setWatchedOnly(false);
             setOwnershipFilter([]);
+            setProjectLifecycleFilter('active');
             setExactProjectFilterId(projectId);
             localStorage.removeItem('dha_project_filter_payload');
         };
@@ -150,8 +161,9 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
         if (ownershipFilter.length > 0) {
             params.set('ownership', ownershipFilter.join(','));
         }
+        params.set('lifecycle', projectLifecycleFilter);
         return params;
-    }, [exactProjectFilterId, goalFilter, selectedTags, selectedStatuses, searchTerm, watchedOnly, ownershipFilter, goals]);
+    }, [exactProjectFilterId, goalFilter, selectedTags, selectedStatuses, searchTerm, watchedOnly, ownershipFilter, projectLifecycleFilter, goals]);
 
     // Fetch filtered projects from server when filters change
     useEffect(() => {
@@ -191,7 +203,7 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
 
         fetchFiltered();
         return () => { cancelled = true; };
-    }, [exactProjectFilterId, goalFilter, selectedTags, selectedStatuses, searchTerm, watchedOnly, ownershipFilter, goals, authFetch, buildFilterParams, hasActiveFilters]);
+    }, [exactProjectFilterId, goalFilter, selectedTags, selectedStatuses, searchTerm, watchedOnly, ownershipFilter, projectLifecycleFilter, goals, authFetch, buildFilterParams, hasActiveFilters]);
 
     // Load more filtered projects
     const loadMoreFilteredProjects = useCallback(async () => {
@@ -265,6 +277,12 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
             return {
                 title: 'No projects found',
                 message: 'No shared projects found for your organization.'
+            };
+        }
+        if (projectLifecycleFilter === 'archived') {
+            return {
+                title: 'No archived projects found',
+                message: 'There are no archived projects available for the current filters.'
             };
         }
         if (hasActiveFilters) {
@@ -481,6 +499,24 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
                     : `${displayProjects.length} project(s)`
                 }
             >
+                <div className="project-lifecycle-toggle" style={{ display: 'inline-flex', gap: '0.35rem' }}>
+                    {[
+                        { id: 'active', label: 'Active' },
+                        { id: 'archived', label: 'Archived' },
+                        { id: 'all', label: 'All' }
+                    ].map((option) => (
+                        <button
+                            key={option.id}
+                            type="button"
+                            className={`btn-secondary btn-sm ${projectLifecycleFilter === option.id ? 'active' : ''}`}
+                            onClick={() => setProjectLifecycleFilter(option.id)}
+                            title={`Show ${option.label.toLowerCase()} projects`}
+                        >
+                            <Archive size={14} />
+                            {option.label}
+                        </button>
+                    ))}
+                </div>
                 {exactProjectFilterId && (
                     <button
                         className="btn-secondary btn-sm shared-clear-btn"
@@ -554,6 +590,9 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
                                                     <Star size={15} fill={project.isWatched ? 'currentColor' : 'none'} />
                                                 </button>
                                                 <span className="project-cell-title">{project.title}</span>
+                                                {project.lifecycleState === 'archived' && (
+                                                    <span className="project-goal-chip project-goal-chip-more">Archived</span>
+                                                )}
                                             </div>
                                             <span className="project-cell-desc">{project.description || 'No description'}</span>
                                         </div>
@@ -648,6 +687,11 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
                             </div>
 
                             <h3 className="project-title">{project.title}</h3>
+                            {project.lifecycleState === 'archived' && (
+                                <div style={{ marginBottom: '0.5rem' }}>
+                                    <span className="project-goal-chip project-goal-chip-more">Archived</span>
+                                </div>
+                            )}
                             <p className="project-description">{project.description || 'No description'}</p>
 
                             {project.tags && project.tags.length > 0 && (
