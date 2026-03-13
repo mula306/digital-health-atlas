@@ -4,6 +4,9 @@ import basicSsl from '@vitejs/plugin-basic-ssl';
 
 export default defineConfig({
     plugins: [react(), basicSsl()],
+    esbuild: {
+        jsx: 'automatic'
+    },
     test: {
         environment: 'jsdom',
         setupFiles: ['./src/tests/setup/vitest.setup.js'],
