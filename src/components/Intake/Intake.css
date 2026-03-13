@@ -749,6 +749,100 @@
     width: auto;
 }
 
+.intake-convert-share-panel {
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--bg-secondary);
+    padding: 0.8rem;
+}
+
+.intake-convert-share-owner {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.65rem;
+    color: var(--text-primary);
+}
+
+.intake-convert-share-owner-label {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-tertiary);
+}
+
+.intake-convert-share-summary {
+    margin-bottom: 0.55rem;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+.intake-convert-share-list {
+    display: grid;
+    gap: 0.45rem;
+}
+
+.intake-convert-share-option {
+    display: grid;
+    gap: 0.65rem;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    background: var(--bg-card);
+    padding: 0.65rem 0.75rem;
+    color: var(--text-primary);
+    transition: border-color 0.2s ease, background-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.intake-convert-share-option:hover {
+    border-color: var(--accent-primary);
+}
+
+.intake-convert-share-option.selected {
+    border-color: var(--accent-primary);
+    background: color-mix(in srgb, var(--accent-primary) 8%, var(--bg-card));
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-primary) 20%, transparent);
+}
+
+.intake-convert-share-option input {
+    margin: 0;
+    accent-color: var(--accent-primary);
+}
+
+.intake-convert-share-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    cursor: pointer;
+    font-weight: 500;
+}
+
+.intake-convert-share-goal-picker {
+    border-top: 1px solid var(--border-color);
+    padding-top: 0.65rem;
+}
+
+.intake-goal-hierarchy-picker {
+    display: grid;
+    gap: 0.65rem;
+}
+
+.intake-goal-level-field {
+    display: grid;
+    gap: 0.35rem;
+}
+
+.intake-goal-level-field span {
+    font-size: 0.76rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.intake-goal-level-field select {
+    width: 100%;
+}
+
 .field-options {
     padding-left: 2rem;
 }

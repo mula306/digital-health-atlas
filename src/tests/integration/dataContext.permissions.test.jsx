@@ -16,12 +16,14 @@ vi.mock('@azure/msal-react', () => ({
 }));
 
 function PermissionProbe() {
-    const { hasPermission, currentUser } = useData();
+    const { hasPermission, currentUser, projects, projectsError } = useData();
     return (
         <div>
             <span data-testid="projects">{hasPermission('can_view_projects') ? 'yes' : 'no'}</span>
             <span data-testid="tags">{hasPermission('can_manage_tags') ? 'yes' : 'no'}</span>
             <span data-testid="user">{currentUser?.oid || ''}</span>
+            <span data-testid="project-count">{projects.length}</span>
+            <span data-testid="projects-error">{projectsError || ''}</span>
         </div>
     );
 }
@@ -86,5 +88,49 @@ describe('DataContext permission integration', () => {
         expect(screen.getByTestId('projects')).toHaveTextContent('yes');
         expect(screen.getByTestId('tags')).toHaveTextContent('no');
     });
-});
 
+    it('still loads projects even if the permissions bootstrap request fails', async () => {
+        vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+            const normalized = String(url);
+            if (normalized.includes('/api/admin/permissions')) {
+                return new Response('permissions unavailable', { status: 500 });
+            }
+            if (normalized.includes('/api/users/me')) {
+                return jsonResponse({ oid: 'user-123', roles: ['Viewer'], orgId: '1' });
+            }
+            if (normalized.includes('/api/admin/permission-catalog')) {
+                return jsonResponse({ permissions: [] });
+            }
+            if (normalized.includes('/api/projects?page=1&limit=50')) {
+                return jsonResponse({
+                    projects: [
+                        {
+                            id: 'project-1',
+                            title: 'Project One',
+                            completion: 25,
+                            tasks: []
+                        }
+                    ],
+                    pagination: { page: 1, limit: 50, total: 1, totalPages: 1, hasMore: false }
+                });
+            }
+            if (normalized.includes('/api/goals')) {
+                return jsonResponse([]);
+            }
+            if (normalized.includes('/api/tags')) return jsonResponse([]);
+            if (normalized.includes('/api/intake/my-submissions')) return jsonResponse([]);
+            return jsonResponse([]);
+        });
+
+        render(
+            <DataProvider>
+                <PermissionProbe />
+            </DataProvider>
+        );
+
+        await waitFor(() => {
+            expect(screen.getByTestId('project-count')).toHaveTextContent('1');
+        });
+        expect(screen.getByTestId('projects-error')).toHaveTextContent('');
+    });
+});

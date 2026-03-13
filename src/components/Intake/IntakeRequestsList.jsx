@@ -1,10 +1,12 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Eye, Copy, Check, MessageSquare, CheckCircle, XCircle, ArrowRight, Clock, Send, Scale, RefreshCw, Vote, ChevronDown, AlertTriangle } from 'lucide-react';
 import { useData } from '../../context/DataContext';
 import { useToast } from '../../context/ToastContext';
 import { Modal } from '../UI/Modal';
 import { canRouteGovernanceSubmission, getGovernanceReviewPermissions } from '../../utils/governanceAccess';
 import { getIntakeSystemField, INTAKE_SYSTEM_FIELD_KEYS } from '../../../shared/intakeSystemFields.js';
+import { GOAL_LEVELS } from '../../../shared/goalLevels.js';
+import { buildGoalMap, buildGoalPath } from '../../utils/goalHierarchy.js';
 import './Intake.css';
 
 const STATUS_LABELS = {
@@ -100,6 +102,107 @@ const addDays = (date, days) => {
     return value;
 };
 
+function IntakeGoalHierarchyPicker({
+    goals = [],
+    value = '',
+    onChange,
+    rootEmptyLabel = 'No goal'
+}) {
+    const emptySelections = useMemo(
+        () => Object.fromEntries(GOAL_LEVELS.map((level) => [level.code, ''])),
+        []
+    );
+
+    const goalsById = useMemo(() => buildGoalMap(goals), [goals]);
+
+    const sortedGoals = useMemo(() => (
+        [...(Array.isArray(goals) ? goals : [])].sort((left, right) => (
+            String(left?.title || '').localeCompare(String(right?.title || ''))
+        ))
+    ), [goals]);
+
+    const selections = useMemo(() => {
+        if (!value) {
+            return { ...emptySelections };
+        }
+
+        const path = buildGoalPath(goalsById, value);
+        const nextSelections = { ...emptySelections };
+
+        path.forEach((goal, index) => {
+            const level = GOAL_LEVELS[index];
+            if (level) {
+                nextSelections[level.code] = String(goal.id);
+            }
+        });
+
+        return nextSelections;
+    }, [emptySelections, goalsById, value]);
+
+    const optionsByLevel = useMemo(() => GOAL_LEVELS.reduce((accumulator, level, index) => {
+        const parentCode = GOAL_LEVELS[index - 1]?.code || null;
+        const parentId = parentCode ? selections[parentCode] : null;
+        accumulator[level.code] = index === 0
+            ? sortedGoals.filter((goal) => !goal.parentId || !goalsById.has(String(goal.parentId)))
+            : (parentId ? sortedGoals.filter((goal) => String(goal.parentId) === String(parentId)) : []);
+        return accumulator;
+    }, {}), [goalsById, selections, sortedGoals]);
+
+    const handleLevelChange = useCallback((levelCode, goalIdValue) => {
+        const levelIndex = GOAL_LEVELS.findIndex((level) => level.code === levelCode);
+        const nextSelections = { ...emptySelections };
+
+        GOAL_LEVELS.forEach((level, index) => {
+            if (index < levelIndex) {
+                nextSelections[level.code] = selections[level.code];
+            } else if (index === levelIndex) {
+                nextSelections[level.code] = goalIdValue || '';
+            }
+        });
+
+        const deepestSelectedGoalId = [...GOAL_LEVELS]
+            .reverse()
+            .map((level) => nextSelections[level.code])
+            .find(Boolean) || '';
+
+        onChange(deepestSelectedGoalId);
+    }, [emptySelections, onChange, selections]);
+
+    if (sortedGoals.length === 0) {
+        return (
+            <div className="form-hint">No goals are available for this organization.</div>
+        );
+    }
+
+    return (
+        <div className="intake-goal-hierarchy-picker">
+            {GOAL_LEVELS.map((level, index) => {
+                const parentCode = GOAL_LEVELS[index - 1]?.code || null;
+                const parentSelected = parentCode ? selections[parentCode] : true;
+                const options = optionsByLevel[level.code] || [];
+                const shouldShow = index === 0 || (parentSelected && options.length > 0);
+
+                if (!shouldShow) return null;
+
+                return (
+                    <label key={level.code} className="intake-goal-level-field">
+                        <span>{level.label}</span>
+                        <select
+                            value={selections[level.code]}
+                            onChange={(event) => handleLevelChange(level.code, event.target.value)}
+                        >
+                            <option value="">{index === 0 ? rootEmptyLabel : `No ${level.goalLabel}`}</option>
+                            {options.map((goal) => (
+                                <option key={goal.id} value={goal.id}>{goal.title}</option>
+                            ))}
+                        </select>
+                    </label>
+                );
+            })}
+        </div>
+    );
+}
+
 export function IntakeRequestsList({ initialFilter = 'all', showFilterTabs = true }) {
     const {
         intakeSubmissions,
@@ -125,7 +228,8 @@ export function IntakeRequestsList({ initialFilter = 'all', showFilterTabs = tru
         submitSubmissionGovernanceVote,
         decideSubmissionGovernance,
         applySubmissionGovernance,
-        skipSubmissionGovernance
+        skipSubmissionGovernance,
+        fetchOrganizations
     } = useData();
     const toast = useToast();
 
@@ -136,6 +240,9 @@ export function IntakeRequestsList({ initialFilter = 'all', showFilterTabs = tru
     const [newMessage, setNewMessage] = useState('');
     const [convertGoalId, setConvertGoalId] = useState('');
     const [convertBlueprintId, setConvertBlueprintId] = useState('governance-ready');
+    const [convertSharedOrgIds, setConvertSharedOrgIds] = useState([]);
+    const [convertSharedGoalIdsByOrg, setConvertSharedGoalIdsByOrg] = useState({});
+    const [organizations, setOrganizations] = useState([]);
     const [copiedLink, setCopiedLink] = useState('');
     const [governanceQueue, setGovernanceQueue] = useState([]);
     const [loadingGovernanceQueue, setLoadingGovernanceQueue] = useState(false);
@@ -196,6 +303,20 @@ export function IntakeRequestsList({ initialFilter = 'all', showFilterTabs = tru
     useEffect(() => {
         setFilter(initialFilter);
     }, [initialFilter]);
+
+    useEffect(() => {
+        let cancelled = false;
+        async function loadOrgs() {
+            try {
+                const orgs = await fetchOrganizations();
+                if (!cancelled) setOrganizations(Array.isArray(orgs) ? orgs : []);
+            } catch (err) {
+                console.error('Failed to load orgs for convert', err);
+            }
+        }
+        loadOrgs();
+        return () => { cancelled = true; };
+    }, [fetchOrganizations]);
 
     // Mark messages as read when viewing
     useEffect(() => {
@@ -432,6 +553,56 @@ export function IntakeRequestsList({ initialFilter = 'all', showFilterTabs = tru
             await loadGovernanceDetails(selected.id);
         }
     }, [filter, intakeSubmissions, loadGovernanceDetails, migrateInfoRequestsToConversation]);
+
+    const closeConvertModal = useCallback(() => {
+        setShowConvertModal(false);
+        setConvertGoalId('');
+        setConvertSharedOrgIds([]);
+        setConvertSharedGoalIdsByOrg({});
+        setConvertBlueprintId('governance-ready');
+    }, []);
+
+    const openConvertModal = useCallback(() => {
+        setConvertGoalId('');
+        setConvertSharedOrgIds([]);
+        setConvertSharedGoalIdsByOrg({});
+        setConvertBlueprintId('governance-ready');
+        setShowConvertModal(true);
+    }, []);
+
+    const toggleConvertSharedOrg = useCallback((orgId) => {
+        const normalizedOrgId = String(orgId);
+        setConvertSharedOrgIds((currentIds) => {
+            const isCurrentlySelected = currentIds.includes(normalizedOrgId);
+            if (isCurrentlySelected) {
+                setConvertSharedGoalIdsByOrg((currentGoalsByOrg) => {
+                    if (!(normalizedOrgId in currentGoalsByOrg)) {
+                        return currentGoalsByOrg;
+                    }
+
+                    const nextGoalsByOrg = { ...currentGoalsByOrg };
+                    delete nextGoalsByOrg[normalizedOrgId];
+                    return nextGoalsByOrg;
+                });
+                return currentIds.filter((id) => id !== normalizedOrgId);
+            }
+
+            return [...currentIds, normalizedOrgId];
+        });
+    }, []);
+
+    const setConvertSharedGoalForOrg = useCallback((orgId, goalId) => {
+        const normalizedOrgId = String(orgId);
+        setConvertSharedGoalIdsByOrg((currentGoalsByOrg) => {
+            const nextGoalsByOrg = { ...currentGoalsByOrg };
+            if (!goalId) {
+                delete nextGoalsByOrg[normalizedOrgId];
+            } else {
+                nextGoalsByOrg[normalizedOrgId] = String(goalId);
+            }
+            return nextGoalsByOrg;
+        });
+    }, []);
 
     useEffect(() => {
         const rawPayload = localStorage.getItem(INTAKE_FOCUS_STORAGE_KEY);
@@ -717,11 +888,22 @@ export function IntakeRequestsList({ initialFilter = 'all', showFilterTabs = tru
         const descField = getIntakeSystemField(form.fields, INTAKE_SYSTEM_FIELD_KEYS.PROJECT_DESCRIPTION)
             || form.fields.find(f => f.type === 'textarea');
 
+        const selectedSharedGoalIds = convertSharedOrgIds
+            .map((orgId) => convertSharedGoalIdsByOrg[String(orgId)])
+            .filter(Boolean);
+        const linkedGoalIds = [...new Set(
+            [convertGoalId, ...selectedSharedGoalIds]
+                .map((goalId) => String(goalId || '').trim())
+                .filter(Boolean)
+        )];
+
         const projectData = {
             title: selectedSubmission.formData?.[nameField?.id] || 'New Project',
             description: selectedSubmission.formData?.[descField?.id] || '',
             goalId: convertGoalId || null,
-            status: 'active'
+            goalIds: linkedGoalIds,
+            status: 'active',
+            sharedWithOrgIds: convertSharedOrgIds
         };
 
         const selectedBlueprint = CONVERSION_BLUEPRINTS.find((blueprint) => blueprint.id === convertBlueprintId) || CONVERSION_BLUEPRINTS[0];
@@ -761,6 +943,8 @@ export function IntakeRequestsList({ initialFilter = 'all', showFilterTabs = tru
             setShowConvertModal(false);
             setSelectedSubmission(null);
             setConvertGoalId('');
+            setConvertSharedOrgIds([]);
+            setConvertSharedGoalIdsByOrg({});
             setConvertBlueprintId('governance-ready');
 
             if (result?.seededTaskErrors?.length > 0) {
@@ -838,6 +1022,27 @@ export function IntakeRequestsList({ initialFilter = 'all', showFilterTabs = tru
     );
     const isGovernanceFilter = filter === 'governance';
     const selectedConvertBlueprint = CONVERSION_BLUEPRINTS.find((blueprint) => blueprint.id === convertBlueprintId) || CONVERSION_BLUEPRINTS[0];
+    const convertOwnerOrgId = selectedSubmission?.orgId ? String(selectedSubmission.orgId) : '';
+    const convertOwnerOrg = organizations.find((org) => String(org.id) === convertOwnerOrgId) || null;
+    const shareableConvertOrganizations = organizations.filter((org) => (
+        org?.isActive !== false && String(org.id) !== convertOwnerOrgId
+    ));
+    const goalsByOrganizationId = useMemo(() => {
+        const map = new Map();
+        goals.forEach((goal) => {
+            const goalOrgId = String(goal?.orgId || '').trim();
+            if (!goalOrgId) return;
+            if (!map.has(goalOrgId)) {
+                map.set(goalOrgId, []);
+            }
+            map.get(goalOrgId).push(goal);
+        });
+        return map;
+    }, [goals]);
+    const convertOwnerOrgGoals = goalsByOrganizationId.get(convertOwnerOrgId) || [];
+    const selectedSharedConvertOrganizations = shareableConvertOrganizations.filter((organization) => (
+        convertSharedOrgIds.includes(String(organization.id))
+    ));
 
     const updateQueueFilter = (updates) => {
         setQueuePage(1);
@@ -1684,7 +1889,7 @@ export function IntakeRequestsList({ initialFilter = 'all', showFilterTabs = tru
                                 {governanceAllowsConversion ? (
                                     <button
                                         className="btn-primary"
-                                        onClick={() => setShowConvertModal(true)}
+                                        onClick={openConvertModal}
                                     >
                                         <ArrowRight size={16} /> Convert to Project
                                     </button>
@@ -1745,22 +1950,94 @@ export function IntakeRequestsList({ initialFilter = 'all', showFilterTabs = tru
             {/* Convert to Project Modal */}
             <Modal
                 isOpen={showConvertModal}
-                onClose={() => setShowConvertModal(false)}
+                onClose={closeConvertModal}
                 title="Convert to Project"
                 closeOnOverlayClick={false}
             >
                 <div className="form-group">
                     <label>Link to Goal (optional)</label>
-                    <select
-                        value={convertGoalId}
-                        onChange={(e) => setConvertGoalId(e.target.value)}
-                    >
-                        <option value="">No goal</option>
-                        {goals.map(g => (
-                            <option key={g.id} value={g.id}>{g.title}</option>
-                        ))}
-                    </select>
+                    <div className="intake-convert-share-panel">
+                        <div className="intake-convert-share-owner">
+                            <span className="intake-convert-share-owner-label">Submission Organization Goal</span>
+                            <strong>{convertOwnerOrg?.name || 'Submission organization'}</strong>
+                        </div>
+                        <IntakeGoalHierarchyPicker
+                            goals={convertOwnerOrgGoals}
+                            value={convertGoalId}
+                            onChange={setConvertGoalId}
+                            rootEmptyLabel="No goal"
+                        />
+                    </div>
+                    <div className="form-hint">
+                        Only goals owned by the submission organization are shown here, using the goal hierarchy.
+                    </div>
                 </div>
+                <div className="form-group">
+                    <label>Share with Organizations (optional)</label>
+                    <div className="intake-convert-share-panel">
+                        <div className="intake-convert-share-owner">
+                            <span className="intake-convert-share-owner-label">Owning Organization</span>
+                            <strong>{convertOwnerOrg?.name || 'Submission organization'}</strong>
+                        </div>
+                        {shareableConvertOrganizations.length > 0 ? (
+                            <>
+                                <div className="intake-convert-share-summary">
+                                    {convertSharedOrgIds.length > 0
+                                        ? `${convertSharedOrgIds.length} organization${convertSharedOrgIds.length === 1 ? '' : 's'} selected`
+                                        : 'No recipient organizations selected'}
+                                </div>
+                                <div className="intake-convert-share-list">
+                                    {shareableConvertOrganizations.map((organization) => {
+                                        const isSelected = convertSharedOrgIds.includes(String(organization.id));
+                                        return (
+                                            <div
+                                                key={organization.id}
+                                                className={`intake-convert-share-option ${isSelected ? 'selected' : ''}`}
+                                            >
+                                                <label className="intake-convert-share-toggle">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={isSelected}
+                                                        onChange={() => toggleConvertSharedOrg(organization.id)}
+                                                    />
+                                                    <span>{organization.name}</span>
+                                                </label>
+                                                {isSelected && (
+                                                    <div className="intake-convert-share-goal-picker">
+                                                        <div className="form-hint">
+                                                            Optional linked goal from {organization.name}
+                                                        </div>
+                                                        <IntakeGoalHierarchyPicker
+                                                            goals={goalsByOrganizationId.get(String(organization.id)) || []}
+                                                            value={convertSharedGoalIdsByOrg[String(organization.id)] || ''}
+                                                            onChange={(goalId) => setConvertSharedGoalForOrg(organization.id, goalId)}
+                                                            rootEmptyLabel="No shared goal"
+                                                        />
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </>
+                        ) : (
+                            <div className="form-hint">No other active organizations are available to share this project with.</div>
+                        )}
+                    </div>
+                    <div className="form-hint">
+                        The owning organization is excluded automatically. Select as many recipient organizations as needed, and optionally link one goal from each shared organization.
+                    </div>
+                </div>
+                {selectedSharedConvertOrganizations.length > 0 && (
+                    <div className="form-hint" style={{ marginTop: '-0.5rem', marginBottom: '0.75rem' }}>
+                        Linked goals on conversion: {[
+                            convertGoalId ? 1 : 0,
+                            ...selectedSharedConvertOrganizations.map((organization) => (
+                                convertSharedGoalIdsByOrg[String(organization.id)] ? 1 : 0
+                            ))
+                        ].reduce((total, count) => total + count, 0)}
+                    </div>
+                )}
                 <div className="form-group">
                     <label>Kickoff Template</label>
                     <select
@@ -1793,7 +2070,7 @@ export function IntakeRequestsList({ initialFilter = 'all', showFilterTabs = tru
                     This will create a new project from this request and mark the request as approved.
                 </p>
                 <div className="form-actions">
-                    <button className="btn-secondary" onClick={() => setShowConvertModal(false)}>Cancel</button>
+                    <button className="btn-secondary" onClick={closeConvertModal}>Cancel</button>
                     <button className="btn-primary" onClick={handleConvert} disabled={!governanceAllowsConversion}>
                         <CheckCircle size={16} /> Create Project
                     </button>

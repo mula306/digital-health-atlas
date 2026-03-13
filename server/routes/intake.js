@@ -148,6 +148,18 @@ const normalizeConversionGoalIds = (projectData = {}) => {
     return normalized;
 };
 
+const normalizeConversionSharedOrgIds = (projectData = {}) => {
+    const rawOrgIds = Array.isArray(projectData?.sharedWithOrgIds)
+        ? projectData.sharedWithOrgIds
+        : (projectData?.sharedWithOrgId !== undefined && projectData?.sharedWithOrgId !== null && projectData?.sharedWithOrgId !== ''
+            ? [projectData.sharedWithOrgId]
+            : []);
+
+    return [...new Set(rawOrgIds
+        .map((orgId) => parseOptionalOrgId(orgId))
+        .filter((orgId) => Number.isFinite(orgId)))];
+};
+
 const normalizeKickoffTasks = (tasks = []) => (
     (Array.isArray(tasks) ? tasks : [])
         .filter((task) => task && String(task.title || '').trim())
@@ -2132,10 +2144,16 @@ router.post('/submissions/:id/convert', requireAuth, async (req, res) => {
             conversionContext
         );
         const projectStatus = String(projectData?.status || 'active').trim().toLowerCase() || 'active';
+        const sharedWithOrgIds = normalizeConversionSharedOrgIds(projectData)
+            .filter((orgId) => orgId !== resolvedSubmissionOrgId);
         const requestedGoalIds = normalizeConversionGoalIds(projectData);
         const goalIds = requestedGoalIds.length > 0
             ? requestedGoalIds
             : (submission.defaultGoalId ? [Number(submission.defaultGoalId)] : []);
+
+        for (const sharedOrgId of sharedWithOrgIds) {
+            await ensureOrganizationExists(pool, sharedOrgId, 'sharedWithOrgIds');
+        }
 
         if (goalIds.length > 1) {
             const allGoals = await loadGoalsForValidation();
@@ -2145,6 +2163,7 @@ router.post('/submissions/:id/convert', requireAuth, async (req, res) => {
             }
         }
 
+        let selectedGoalRows = [];
         if (goalIds.length > 0) {
             const { text, params } = buildInClause('convertGoalId', goalIds);
             const goalRequest = pool.request();
@@ -2159,6 +2178,31 @@ router.post('/submissions/:id/convert', requireAuth, async (req, res) => {
             if (missingGoalIds.length > 0) {
                 return res.status(400).json({
                     error: `Goal id(s) not found: ${missingGoalIds.join(', ')}`
+                });
+            }
+
+            selectedGoalRows = goalResult.recordset;
+            const allowedGoalOrgIds = new Set([resolvedSubmissionOrgId, ...sharedWithOrgIds].map((orgId) => Number(orgId)));
+            const disallowedGoalRows = selectedGoalRows.filter((goalRow) => !allowedGoalOrgIds.has(Number(goalRow.orgId)));
+            if (disallowedGoalRows.length > 0) {
+                return res.status(400).json({
+                    error: `Selected goals must belong to the owning organization or a selected shared organization: ${disallowedGoalRows.map((goal) => goal.title).join(', ')}`
+                });
+            }
+
+            const goalCountsByOrg = new Map();
+            for (const goalRow of selectedGoalRows) {
+                const goalOrgId = Number(goalRow.orgId);
+                goalCountsByOrg.set(goalOrgId, (goalCountsByOrg.get(goalOrgId) || 0) + 1);
+            }
+            const duplicateGoalOrgId = [...goalCountsByOrg.entries()]
+                .find(([, count]) => count > 1)?.[0];
+            if (duplicateGoalOrgId !== undefined) {
+                const duplicateGoals = selectedGoalRows
+                    .filter((goalRow) => Number(goalRow.orgId) === Number(duplicateGoalOrgId))
+                    .map((goalRow) => goalRow.title);
+                return res.status(400).json({
+                    error: `Only one goal per organization can be linked during conversion. Conflicting goals: ${duplicateGoals.join(', ')}`
                 });
             }
         }
@@ -2198,11 +2242,31 @@ router.post('/submissions/:id/convert', requireAuth, async (req, res) => {
                 `);
             const projectId = Number(projectInsert.recordset[0].id);
 
+            for (const sharedOrgId of sharedWithOrgIds) {
+                await new sql.Request(tx)
+                    .input('projectId', sql.Int, projectId)
+                    .input('orgId', sql.Int, sharedOrgId)
+                    .input('accessLevel', sql.NVarChar(20), 'write')
+                    .query(`
+                        INSERT INTO ProjectOrgAccess (projectId, orgId, accessLevel)
+                        VALUES (@projectId, @orgId, @accessLevel)
+                    `);
+            }
+
             for (const goalId of goalIds) {
                 await new sql.Request(tx)
                     .input('projectId', sql.Int, projectId)
                     .input('goalId', sql.Int, goalId)
                     .query('INSERT INTO ProjectGoals (projectId, goalId) VALUES (@projectId, @goalId)');
+            }
+
+            for (const sharedOrgId of sharedWithOrgIds) {
+                await ensureReadGoalAccessForOrg({
+                    dbOrTx: tx,
+                    goalIds,
+                    orgId: sharedOrgId,
+                    grantedByOid: user?.oid || null
+                });
             }
 
             for (const task of kickoffTasks) {
@@ -2244,6 +2308,7 @@ router.post('/submissions/:id/convert', requireAuth, async (req, res) => {
                 after: {
                     projectId,
                     orgId: resolvedSubmissionOrgId,
+                    sharedWithOrgIds,
                     goalIds,
                     kickoffTaskCount: kickoffTasks.length
                 },

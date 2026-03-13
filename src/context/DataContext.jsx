@@ -32,6 +32,7 @@ export function DataProvider({ children }) {
     const [loading, setLoading] = useState(true);
     const [loadingMore, setLoadingMore] = useState(false);
     const [error, setError] = useState(null);
+    const [projectsError, setProjectsError] = useState(null);
     const isTestAuthMock = String(import.meta.env.VITE_TEST_AUTH_MODE || '').toLowerCase() === 'mock';
 
 
@@ -115,6 +116,7 @@ export function DataProvider({ children }) {
             try {
                 console.log("DataContext: Starting data fetch...");
                 setLoading(true);
+                setProjectsError(null);
 
                 // 1. Fetch permissions + user profile first
                 let currentPermissions = [];
@@ -164,14 +166,13 @@ export function DataProvider({ children }) {
 
                 // 2. Fetch core data
                 const [goalsResult, projectsResult] = await Promise.allSettled([
-                    checkPerm('can_view_goals') ? authFetch(`${API_BASE}/goals`) : Promise.reject('skipped'),
-                    checkPerm('can_view_projects') ? authFetch(`${API_BASE}/projects?page=1&limit=50`) : Promise.reject('skipped')
+                    authFetch(`${API_BASE}/goals`),
+                    authFetch(`${API_BASE}/projects?page=1&limit=50`)
                 ]);
 
                 if (goalsResult.status === 'fulfilled') {
                     setGoals(await goalsResult.value.json());
-                } else if (goalsResult.reason !== 'skipped') {
-                    // Check if it was 403 (shouldn't happen if checkPerm works, but fallback)
+                } else {
                     if (goalsResult.reason?.status === 403) {
                         setGoals([]);
                     } else {
@@ -183,11 +184,15 @@ export function DataProvider({ children }) {
                     const projectsData = await projectsResult.value.json();
                     setProjects(projectsData.projects || projectsData);
                     if (projectsData.pagination) setProjectsPagination(projectsData.pagination);
-                } else if (projectsResult.reason !== 'skipped') {
+                    setProjectsError(null);
+                } else {
                     if (projectsResult.reason?.status === 403) {
                         setProjects([]);
+                        setProjectsError(projectsResult.reason?.message || 'You do not have access to any projects.');
                     } else {
                         console.error("Failed to load projects", projectsResult.reason);
+                        setProjects([]);
+                        setProjectsError(projectsResult.reason?.message || 'Failed to load projects.');
                     }
                 }
 
@@ -1774,6 +1779,7 @@ export function DataProvider({ children }) {
             addKpi, updateKpi, deleteKpi,
             projects: projectsWithCompletion,
             projectsPagination,
+            projectsError,
             loadMoreProjects,
             loading,
             loadingMore,

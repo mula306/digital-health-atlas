@@ -596,11 +596,15 @@ router.get('/', checkPermission(['can_view_projects', 'can_view_exec_dashboard']
         const tagIds = tagIdsParam
             ? tagIdsParam.split(',').map(id => parseInt(id)).filter(id => !isNaN(id))
             : [];
+        const ownershipParam = req.query.ownership || '';
+        const ownershipFilters = ownershipParam
+            ? ownershipParam.split(',').map(s => String(s).trim().toLowerCase()).filter(Boolean)
+            : [];
         const watchedOnly = parseTruthyQueryFlag(req.query.watchedOnly);
         const viewerOid = getUserOidFromReq(req) || '__none__';
 
         // Check cache first
-        const cacheKey = `${CACHE_KEYS.PROJECT_PREFIX}${req.orgId ?? 'all'}_${viewerOid}_${watchedOnly ? 'watched' : 'all'}_${page}_${limit}_${search}_${projectId || ''}_${statuses.join('-')}_${goalIds.join('-')}_${tagIds.join('-')}`;
+        const cacheKey = `${CACHE_KEYS.PROJECT_PREFIX}${req.orgId ?? 'all'}_${viewerOid}_${watchedOnly ? 'watched' : 'all'}_${page}_${limit}_${search}_${projectId || ''}_${statuses.join('-')}_${goalIds.join('-')}_${tagIds.join('-')}_${ownershipFilters.join('-')}`;
         const cached = cache.get(cacheKey);
         if (cached) {
             return res.json(cached);
@@ -621,15 +625,30 @@ router.get('/', checkPermission(['can_view_projects', 'can_view_exec_dashboard']
         // Build WHERE clause for filtering
         const conditions = [];
         if (req.orgId) {
-            conditions.push(`(
-                p.orgId = @orgId
-                OR p.id IN (
-                    SELECT projectId
-                    FROM ProjectOrgAccess
-                    WHERE orgId = @orgId
-                      AND (expiresAt IS NULL OR expiresAt > GETDATE())
-                )
-            )`);
+            const orgConditions = [];
+            const wantsOwned = ownershipFilters.length === 0 || ownershipFilters.includes('owner');
+            const wantsShared = ownershipFilters.length === 0 || ownershipFilters.includes('shared');
+
+            if (wantsOwned) {
+                orgConditions.push('p.orgId = @orgId');
+            }
+            if (wantsShared) {
+                orgConditions.push(`
+                    p.id IN (
+                        SELECT projectId
+                        FROM ProjectOrgAccess
+                        WHERE orgId = @orgId
+                          AND (expiresAt IS NULL OR expiresAt > GETDATE())
+                    )
+                `);
+            }
+
+            if (orgConditions.length > 0) {
+                conditions.push(`(${orgConditions.join(' OR ')})`);
+            } else {
+                conditions.push('1=0');
+            }
+
             requestParams.orgId = req.orgId;
             countParams.orgId = req.orgId;
         }

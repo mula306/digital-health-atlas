@@ -120,62 +120,144 @@ test('admin-created org-bound records require explicit orgId', async () => {
 
 test('cross-org governance conversion keeps submission org ownership and auto-shares external goal context', async () => {
     await resetSubmissionConversionState(TEST_FIXTURE_IDS.SUBMISSION_2);
-
-    const org2Manager = asPersona(request, 'org2_intake_manager');
-    const conversionResponse = await org2Manager
-        .post(`/api/intake/submissions/${TEST_FIXTURE_IDS.SUBMISSION_2}/convert`)
-        .send({
-            projectData: {
-                title: 'Converted by org2 manager',
-                goalId: TEST_FIXTURE_IDS.GOAL_2
-            },
-            conversionContext: 'Integration test conversion context',
-            kickoffTasks: [
-                {
-                    title: 'Launch kickoff'
-                }
-            ]
-        });
-
-    assert.equal(conversionResponse.status, 200);
-    assert.equal(conversionResponse.body.success, true);
-    assert.equal(String(conversionResponse.body.project?.orgId), String(TEST_FIXTURE_IDS.ORG_1));
-    assert.equal(String(conversionResponse.body.project?.goalId), String(TEST_FIXTURE_IDS.GOAL_2));
-    assert.equal(Number(conversionResponse.body.seededTaskCount), 1);
-
-    const projectId = Number.parseInt(conversionResponse.body.projectId, 10);
-    assert.ok(Number.isFinite(projectId));
-
     const pool = await getPool();
-    const submissionResult = await pool.request()
-        .input('submissionId', sql.Int, TEST_FIXTURE_IDS.SUBMISSION_2)
+    const tempOrgInsert = await pool.request()
+        .input('name', sql.NVarChar(255), `Temp Shared Org ${Date.now()}`)
+        .input('slug', sql.NVarChar(255), `temp-shared-org-${Date.now()}`)
         .query(`
-            SELECT status, convertedProjectId, orgId
-            FROM IntakeSubmissions
-            WHERE id = @submissionId
+            INSERT INTO Organizations (name, slug, isActive)
+            OUTPUT INSERTED.id
+            VALUES (@name, @slug, 1)
         `);
+    const tempOrgId = Number(tempOrgInsert.recordset[0]?.id);
 
-    assert.equal(String(submissionResult.recordset[0]?.status), 'approved');
-    assert.equal(Number(submissionResult.recordset[0]?.convertedProjectId), projectId);
-    assert.equal(Number(submissionResult.recordset[0]?.orgId), TEST_FIXTURE_IDS.ORG_1);
+    try {
+        const org2Manager = asPersona(request, 'org2_intake_manager');
+        const conversionResponse = await org2Manager
+            .post(`/api/intake/submissions/${TEST_FIXTURE_IDS.SUBMISSION_2}/convert`)
+            .send({
+                projectData: {
+                    title: 'Converted by org2 manager',
+                    goalId: TEST_FIXTURE_IDS.GOAL_1,
+                    goalIds: [TEST_FIXTURE_IDS.GOAL_1, TEST_FIXTURE_IDS.GOAL_2],
+                    sharedWithOrgIds: [TEST_FIXTURE_IDS.ORG_1, TEST_FIXTURE_IDS.ORG_2, tempOrgId]
+                },
+                conversionContext: 'Integration test conversion context',
+                kickoffTasks: [
+                    {
+                        title: 'Launch kickoff'
+                    }
+                ]
+            });
 
-    const projectResult = await pool.request()
-        .input('projectId', sql.Int, projectId)
-        .query('SELECT id, orgId FROM Projects WHERE id = @projectId');
-    assert.equal(Number(projectResult.recordset[0]?.orgId), TEST_FIXTURE_IDS.ORG_1);
+        assert.equal(conversionResponse.status, 200);
+        assert.equal(conversionResponse.body.success, true);
+        assert.equal(String(conversionResponse.body.project?.orgId), String(TEST_FIXTURE_IDS.ORG_1));
+        assert.equal(String(conversionResponse.body.project?.goalId), String(TEST_FIXTURE_IDS.GOAL_1));
+        assert.deepEqual(
+            (conversionResponse.body.project?.goalIds || []).map(String).sort(),
+            [String(TEST_FIXTURE_IDS.GOAL_1), String(TEST_FIXTURE_IDS.GOAL_2)].sort()
+        );
+        assert.equal(Number(conversionResponse.body.seededTaskCount), 1);
 
-    const goalShareResult = await pool.request()
-        .input('goalId', sql.Int, TEST_FIXTURE_IDS.GOAL_2)
-        .input('orgId', sql.Int, TEST_FIXTURE_IDS.ORG_1)
-        .query(`
-            SELECT TOP 1 accessLevel
-            FROM GoalOrgAccess
-            WHERE goalId = @goalId
-              AND orgId = @orgId
-        `);
-    assert.equal(String(goalShareResult.recordset[0]?.accessLevel), 'read');
+        const projectId = Number.parseInt(conversionResponse.body.projectId, 10);
+        assert.ok(Number.isFinite(projectId));
 
-    await resetSubmissionConversionState(TEST_FIXTURE_IDS.SUBMISSION_2);
+        const submissionResult = await pool.request()
+            .input('submissionId', sql.Int, TEST_FIXTURE_IDS.SUBMISSION_2)
+            .query(`
+                SELECT status, convertedProjectId, orgId
+                FROM IntakeSubmissions
+                WHERE id = @submissionId
+            `);
+
+        assert.equal(String(submissionResult.recordset[0]?.status), 'approved');
+        assert.equal(Number(submissionResult.recordset[0]?.convertedProjectId), projectId);
+        assert.equal(Number(submissionResult.recordset[0]?.orgId), TEST_FIXTURE_IDS.ORG_1);
+
+        const projectResult = await pool.request()
+            .input('projectId', sql.Int, projectId)
+            .query('SELECT id, orgId FROM Projects WHERE id = @projectId');
+        assert.equal(Number(projectResult.recordset[0]?.orgId), TEST_FIXTURE_IDS.ORG_1);
+
+        const projectGoalsResult = await pool.request()
+            .input('projectId', sql.Int, projectId)
+            .query(`
+                SELECT goalId
+                FROM ProjectGoals
+                WHERE projectId = @projectId
+                ORDER BY goalId ASC
+            `);
+        assert.deepEqual(
+            projectGoalsResult.recordset.map((row) => Number(row.goalId)),
+            [TEST_FIXTURE_IDS.GOAL_1, TEST_FIXTURE_IDS.GOAL_2].sort((a, b) => a - b)
+        );
+
+        const projectSharesResult = await pool.request()
+            .input('projectId', sql.Int, projectId)
+            .query(`
+                SELECT orgId, accessLevel
+                FROM ProjectOrgAccess
+                WHERE projectId = @projectId
+                ORDER BY orgId ASC
+            `);
+        assert.deepEqual(
+            projectSharesResult.recordset.map((row) => Number(row.orgId)),
+            [TEST_FIXTURE_IDS.ORG_2, tempOrgId].sort((a, b) => a - b)
+        );
+        assert.deepEqual(
+            projectSharesResult.recordset.map((row) => String(row.accessLevel)),
+            ['write', 'write']
+        );
+
+        const goalShareResult = await pool.request()
+            .input('goalId', sql.Int, TEST_FIXTURE_IDS.GOAL_2)
+            .input('orgId', sql.Int, TEST_FIXTURE_IDS.ORG_1)
+            .query(`
+                SELECT TOP 1 accessLevel
+                FROM GoalOrgAccess
+                WHERE goalId = @goalId
+                  AND orgId = @orgId
+            `);
+        assert.equal(String(goalShareResult.recordset[0]?.accessLevel), 'read');
+
+        const sharedContextGoalResult = await pool.request()
+            .input('goalId', sql.Int, TEST_FIXTURE_IDS.GOAL_1)
+            .input('orgId', sql.Int, TEST_FIXTURE_IDS.ORG_2)
+            .query(`
+                SELECT TOP 1 accessLevel
+                FROM GoalOrgAccess
+                WHERE goalId = @goalId
+                  AND orgId = @orgId
+            `);
+        assert.equal(String(sharedContextGoalResult.recordset[0]?.accessLevel), 'read');
+
+        const tempSharedContextGoalResult = await pool.request()
+            .input('goalIdA', sql.Int, TEST_FIXTURE_IDS.GOAL_1)
+            .input('goalIdB', sql.Int, TEST_FIXTURE_IDS.GOAL_2)
+            .input('orgId', sql.Int, tempOrgId)
+            .query(`
+                SELECT goalId, accessLevel
+                FROM GoalOrgAccess
+                WHERE goalId IN (@goalIdA, @goalIdB)
+                  AND orgId = @orgId
+                ORDER BY goalId ASC
+            `);
+        assert.deepEqual(
+            tempSharedContextGoalResult.recordset.map((row) => Number(row.goalId)),
+            [TEST_FIXTURE_IDS.GOAL_1, TEST_FIXTURE_IDS.GOAL_2].sort((a, b) => a - b)
+        );
+    } finally {
+        await resetSubmissionConversionState(TEST_FIXTURE_IDS.SUBMISSION_2);
+        if (Number.isFinite(tempOrgId)) {
+            await pool.request()
+                .input('orgId', sql.Int, tempOrgId)
+                .query(`
+                    DELETE FROM GoalOrgAccess WHERE orgId = @orgId;
+                    DELETE FROM Organizations WHERE id = @orgId;
+                `);
+        }
+    }
 });
 
 test('admin can transfer project ownership to another organization and redundant owner shares are removed', async () => {
@@ -219,4 +301,39 @@ test('admin can transfer project ownership to another organization and redundant
     assert.equal(String(goalShareResult.recordset[0]?.accessLevel), 'read');
 
     await resetProjectOwnershipState();
+});
+
+test('project ownership filter separates owned and shared projects for recipient org users', async () => {
+    await resetProjectOwnershipState();
+    const org2Editor = asPersona(request, 'org2_editor');
+
+    const [ownedResponse, sharedResponse, combinedResponse] = await Promise.all([
+        org2Editor.get('/api/projects?ownership=owner'),
+        org2Editor.get('/api/projects?ownership=shared'),
+        org2Editor.get('/api/projects?ownership=owner,shared')
+    ]);
+
+    assert.equal(ownedResponse.status, 200);
+    assert.equal(sharedResponse.status, 200);
+    assert.equal(combinedResponse.status, 200);
+
+    const ownedProjectIds = (ownedResponse.body?.projects || []).map((project) => String(project.id)).sort();
+    const sharedProjectIds = (sharedResponse.body?.projects || []).map((project) => String(project.id)).sort();
+    const combinedProjectIds = (combinedResponse.body?.projects || []).map((project) => String(project.id)).sort();
+
+    assert.deepEqual(ownedProjectIds, [String(TEST_FIXTURE_IDS.PROJECT_2)]);
+    assert.deepEqual(sharedProjectIds, [String(TEST_FIXTURE_IDS.PROJECT_1)]);
+    assert.deepEqual(
+        combinedProjectIds,
+        [String(TEST_FIXTURE_IDS.PROJECT_1), String(TEST_FIXTURE_IDS.PROJECT_2)].sort()
+    );
+
+    assert.deepEqual(
+        (ownedResponse.body?.projects || []).map((project) => String(project.accessLevel)),
+        ['owner']
+    );
+    assert.deepEqual(
+        (sharedResponse.body?.projects || []).map((project) => String(project.accessLevel)),
+        ['read']
+    );
 });

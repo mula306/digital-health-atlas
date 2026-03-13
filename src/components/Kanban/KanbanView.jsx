@@ -26,13 +26,17 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
         loading,
         loadMoreProjects,
         projectsPagination,
+        projectsError,
         loadingMore,
         authFetch,
         watchProject,
         unwatchProject,
-        hasPermission
+        hasPermission,
+        currentUser,
+        hasRole
     } = useData();
     const canCreateProject = hasPermission('can_create_project');
+    const isAdminUser = hasRole('Admin');
 
     // Persist selected project to survive remounts/refresh
     const [selectedProjectId, setSelectedProjectIdState] = useState(() => {
@@ -61,14 +65,16 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
     });
     const [exactProjectFilterId, setExactProjectFilterId] = useState('');
     const [isLoadingDetails, setIsLoadingDetails] = useState(false);
+    const [ownershipFilter, setOwnershipFilter] = useState([]);
 
     // Server-side filtered projects state
     const [filteredServerProjects, setFilteredServerProjects] = useState(null);
     const [filteredPagination, setFilteredPagination] = useState(null);
     const [filterLoading, setFilterLoading] = useState(false);
     const [filteredLoadingMore, setFilteredLoadingMore] = useState(false);
+    const [filterError, setFilterError] = useState('');
 
-    const hasActiveFilters = !!(goalFilter || selectedTags.length > 0 || selectedStatuses.length > 0 || searchTerm.trim() || exactProjectFilterId || watchedOnly);
+    const hasActiveFilters = !!(goalFilter || selectedTags.length > 0 || selectedStatuses.length > 0 || searchTerm.trim() || exactProjectFilterId || watchedOnly || ownershipFilter.length > 0);
 
     // Sync with external filter changes
     useEffect(() => {
@@ -109,6 +115,7 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
             setSelectedStatuses([]);
             setSearchTerm('');
             setWatchedOnly(false);
+            setOwnershipFilter([]);
             setExactProjectFilterId(projectId);
             localStorage.removeItem('dha_project_filter_payload');
         };
@@ -140,20 +147,26 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
         if (watchedOnly) {
             params.set('watchedOnly', '1');
         }
+        if (ownershipFilter.length > 0) {
+            params.set('ownership', ownershipFilter.join(','));
+        }
         return params;
-    }, [exactProjectFilterId, goalFilter, selectedTags, selectedStatuses, searchTerm, watchedOnly, goals]);
+    }, [exactProjectFilterId, goalFilter, selectedTags, selectedStatuses, searchTerm, watchedOnly, ownershipFilter, goals]);
 
     // Fetch filtered projects from server when filters change
     useEffect(() => {
         if (!hasActiveFilters) {
             setFilteredServerProjects(null);
             setFilteredPagination(null);
+            setFilterError('');
             return;
         }
 
         let cancelled = false;
+
         async function fetchFiltered() {
             setFilterLoading(true);
+            if (!cancelled) setFilterError('');
             try {
                 const params = buildFilterParams(1);
                 const res = await authFetch(`${API_BASE}/projects?${params.toString()}`);
@@ -166,7 +179,11 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
                 }
             } catch (err) {
                 console.error('Error fetching filtered projects:', err);
-                if (!cancelled) setFilteredServerProjects([]);
+                if (!cancelled) {
+                    setFilteredServerProjects(null);
+                    setFilteredPagination(null);
+                    setFilterError('Unable to load filtered projects. Showing the current list instead.');
+                }
             } finally {
                 if (!cancelled) setFilterLoading(false);
             }
@@ -174,7 +191,7 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
 
         fetchFiltered();
         return () => { cancelled = true; };
-    }, [exactProjectFilterId, goalFilter, selectedTags, selectedStatuses, searchTerm, watchedOnly, goals, authFetch, buildFilterParams, hasActiveFilters]);
+    }, [exactProjectFilterId, goalFilter, selectedTags, selectedStatuses, searchTerm, watchedOnly, ownershipFilter, goals, authFetch, buildFilterParams, hasActiveFilters]);
 
     // Load more filtered projects
     const loadMoreFilteredProjects = useCallback(async () => {
@@ -222,7 +239,51 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
     const selectedProject = projects.find(p => p.id == selectedProjectId);
 
     // Use server-filtered projects when filters are active, otherwise global paginated projects
-    const displayProjects = hasActiveFilters ? (filteredServerProjects || []) : projects;
+    const displayProjects = hasActiveFilters ? (filteredServerProjects ?? projects) : projects;
+    const needsOrganizationAssignment = !isAdminUser && currentUser && !currentUser.orgId;
+
+    const getEmptyStateConfig = () => {
+        if (!hasActiveFilters && needsOrganizationAssignment) {
+            return {
+                title: 'Organization Assignment Needed',
+                message: 'Your user account is not assigned to an organization. Projects are scoped by organization ownership and sharing, so ask an admin to assign you to an organization first.'
+            };
+        }
+        if (!hasActiveFilters && projectsError) {
+            return {
+                title: 'Unable to Load Projects',
+                message: projectsError
+            };
+        }
+        if (ownershipFilter.length === 1 && ownershipFilter[0] === 'owner') {
+            return {
+                title: 'No projects found',
+                message: 'No owned projects found for your organization.'
+            };
+        }
+        if (ownershipFilter.length === 1 && ownershipFilter[0] === 'shared') {
+            return {
+                title: 'No projects found',
+                message: 'No shared projects found for your organization.'
+            };
+        }
+        if (hasActiveFilters) {
+            return {
+                title: 'No projects found',
+                message: 'No projects match the current filters.'
+            };
+        }
+        if (goalFilter) {
+            return {
+                title: 'No projects found',
+                message: 'No projects found for this goal.'
+            };
+        }
+        return {
+            title: 'No projects found',
+            message: 'No projects found.'
+        };
+    };
 
     const setProjectListView = (mode) => {
         const normalized = mode === 'table' ? 'table' : 'cards';
@@ -404,6 +465,17 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
                 statusOptions={STATUS_OPTIONS}
                 watchedOnly={watchedOnly}
                 onWatchedOnlyChange={setWatchedOnly}
+                extraOptionGroups={[
+                    {
+                        label: 'Project Ownership',
+                        options: [
+                            { id: 'owner', label: 'Owned Projects' },
+                            { id: 'shared', label: 'Shared Projects' }
+                        ],
+                        selectedValues: ownershipFilter,
+                        onChange: setOwnershipFilter
+                    }
+                ]}
                 countLabel={hasActiveFilters
                     ? `${displayProjects.length} of ${filteredPagination?.total || displayProjects.length} project(s)`
                     : `${displayProjects.length} project(s)`
@@ -434,10 +506,16 @@ export default function KanbanView({ initialGoalFilter, onClearFilter }) {
                 </div>
             )}
 
+            {filterError && !filterLoading && (
+                <div className="filter-loading-indicator" style={{ textAlign: 'center', padding: '0 1rem 1rem', color: 'var(--warning)' }}>
+                    {filterError}
+                </div>
+            )}
+
             {displayProjects.length === 0 && !filterLoading ? (
                 <EmptyState
-                    title="No projects found"
-                    message={`No projects found${goalFilter ? ' for this goal' : ''}.`}
+                    title={getEmptyStateConfig().title}
+                    message={getEmptyStateConfig().message}
                 />
             ) : projectListView === 'table' ? (
                 <div className="projects-table-wrap">
