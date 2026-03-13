@@ -14,6 +14,8 @@
         "setup-db:with-faker": "npm run setup-db:full && npm run seed:faker",
         "backfill:org-ownership": "node scripts/backfill_org_ownership.js",
         "backfill:org-ownership:apply": "node scripts/backfill_org_ownership.js --apply",
+        "snapshot:db": "node scripts/snapshot.js",
+        "migrate:report-permissions:legacy": "node scripts/migrate_report_permissions.js",
         "seed:permissions": "node scripts/seed_permissions.js",
         "seed:test-fixtures": "node scripts/seed_test_fixtures.js",
         "seed:faker": "node scripts/seed_faker.js",

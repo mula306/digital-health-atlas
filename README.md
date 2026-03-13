@@ -123,6 +123,7 @@ Digital Health Atlas is an intake, governance, and portfolio execution platform 
 ### Quality baseline
 
 - Frontend linting: `npm run lint`
+- Release sign-off gate: `npm run verify:v1`
 - Backend contracts/integration/security/unit suites:
   - `cd server && npm run test:phase-a`
   - `cd server && npm run test:phase-b`
@@ -152,6 +153,15 @@ Digital Health Atlas is an intake, governance, and portfolio execution platform 
 - `src/tests/`: frontend unit and integration tests
 - `e2e/`: Playwright smoke and critical tests
 - `docker-compose.sqlserver.yml`: local SQL Server container
+
+### Maintenance scripts
+
+- Release sign-off: `npm run verify:v1`
+- DB snapshot to `server/backups/`: `cd server && npm run snapshot:db`
+  - Uses `DB_PASSWORD` by default
+  - Optional overrides: `SNAPSHOT_DB_PASSWORD`, `SNAPSHOT_DB_NAME`, `SNAPSHOT_CONTAINER_NAME`, `SNAPSHOT_FILENAME`
+- Legacy report permission migration for older upgraded databases only:
+  - `cd server && npm run migrate:report-permissions:legacy`
 
 ## Setup
 

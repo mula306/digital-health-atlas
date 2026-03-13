@@ -21,6 +21,7 @@
     "test:phase-b": "npm run test:phase-a && npm run test:ui && npm --prefix server run test:security && npm --prefix server run test:unit",
     "test:phase-c": "npm run test:phase-b && npm run test:ui:coverage && npm run test:e2e:critical",
     "test:all": "npm run test:server && npm run test:ui",
+    "verify:v1": "npm run lint && npm --prefix server run lint:rbac && npm run build && npm run test:phase-c",
     "db:up": "docker compose -f docker-compose.sqlserver.yml up -d",
     "db:down": "docker compose -f docker-compose.sqlserver.yml down"
   },
